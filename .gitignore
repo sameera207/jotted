@@ -1,0 +1,9 @@
+config.toml
+.secrets/
+cache/
+out/
+.venv/
+__pycache__/
+webstate.json
+data/
+*.db

@@ -1,6 +1,6 @@
 # rmtasks
 
-Reads a handwritten task notebook from a reMarkable 2 through reMarkable Cloud and finds the lines that start with a `[ ]` checkbox.
+Reads a handwritten task notebook from a reMarkable 2 through reMarkable Cloud, transcribes each line with Claude, and asks Jev (TypeSafe) whether it is a to-do.
 
 This is the **read-path spike**: it is read-only and never writes to the cloud or the tablet. See the spec doc for the design, detection algorithms and test plan.
 
@@ -12,6 +12,7 @@ This is the **read-path spike**: it is read-only and never writes to the cloud o
 - Python 3.11 or newer
 - [uv](https://docs.astral.sh/uv/)
 - [rmapi, ddvk fork](https://github.com/ddvk/rmapi): the original `juruen/rmapi` is archived and no longer works with the cloud
+- `ANTHROPIC_API_KEY` and `TYPESAFE_API_KEY` exported in your shell (for recognition and classification). Set `enabled = false` in `[recognition]` / `[classification]` to run without them; lines are then judged by the geometric checkbox detector.
 
 ## Setup
 
@@ -90,6 +91,8 @@ This finds the notebook, downloads it into `cache/`, analyses each page and prin
 
 Open the SVG next to the tablet page to see what was detected.
 
+Each page's lines are sent to Claude as images in one request, and the transcripts to Jev in one request. Both results are cached under `cache/ai/`, keyed by the line's stroke IDs, so re-running `analyse` on the same notebook makes no API calls. Diagrams are reported as `drawing` items, never tasks. A to-do that wraps onto a second line is merged into one item (shown as `10+11` in the table). Close spacing proposes the merge, and Jev can veto it. A line is a task when Jev's P(todo) is at least `classification.todo_threshold`; set `checkbox_is_task = true` to also treat every line that starts with a checkbox as a task.
+
 ### 7. Tune offline
 
 Once there's a copy in the cache, iterate without touching the network:
@@ -99,6 +102,10 @@ uv run rmtasks analyse cache/<notebook-id>.rmdoc
 ```
 
 `scan` prints the exact cache path. Change one threshold at a time in the `[lines]` or `[checkbox]` section of `config.toml`, re-run, and compare the overlays.
+
+In the overlay, solid orange boxes are tasks, dashed ones are empty checkboxes, and each label lists the checks that failed. `checkbox.required_checks` names the checks a style must pass before it's scored at all. Without that gate, ordinary letters such as `ll` pass enough of the weak checks to clear `min_confidence`.
+
+Run the tests with `uv run pytest`. They use synthetic pages, plus a fake `rmapi` for the cloud wrapper.
 
 ### 8. Check anchor stability
 

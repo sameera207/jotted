@@ -1,0 +1,160 @@
+"""rmapi wrapper. All reMarkable Cloud access goes through this module.
+
+rmapi is driven entirely from config.toml: each call gets RMAPI_CONFIG (the
+token file) and, when enabled, RMAPI_TRACE. rmapi never reads ~/.rmapi.
+Nothing here writes to the cloud.
+"""
+
+from __future__ import annotations
+
+import json
+import logging
+import os
+import shutil
+import subprocess
+import tempfile
+from dataclasses import asdict, dataclass
+from pathlib import Path
+
+from .config import Config
+
+log = logging.getLogger(__name__)
+
+
+class CloudError(Exception):
+    pass
+
+
+@dataclass(frozen=True)
+class DocRef:
+    id: str
+    name: str
+    version: int
+    modified: str
+    parent: str
+
+
+def ensure_secrets_dir(cfg: Config) -> None:
+    for d in {cfg.paths.secrets_dir, cfg.rmapi.token_file.parent}:
+        d.mkdir(parents=True, exist_ok=True)
+        os.chmod(d, 0o700)
+
+
+def _binary(cfg: Config) -> str:
+    b = cfg.rmapi.binary
+    found = shutil.which(b)
+    if not found:
+        raise CloudError(f"rmapi binary not found: {b!r}. Install the ddvk fork or set rmapi.binary to its absolute path")
+    return found
+
+
+def _env(cfg: Config) -> dict[str, str]:
+    env = dict(os.environ)
+    env["RMAPI_CONFIG"] = str(cfg.rmapi.token_file)
+    env.pop("RMAPI_TRACE", None)
+    if cfg.rmapi.trace:
+        env["RMAPI_TRACE"] = "1"
+    return env
+
+
+def _run(cfg: Config, args: list[str], *, cwd: Path | None = None, stdin: str | None = None) -> str:
+    cmd = [_binary(cfg), *args]
+    log.debug("running %s", " ".join(cmd))
+    try:
+        proc = subprocess.run(
+            cmd,
+            cwd=cwd,
+            env=_env(cfg),
+            input=stdin,
+            capture_output=True,
+            text=True,
+            timeout=cfg.rmapi.timeout_s,
+        )
+    except subprocess.TimeoutExpired as e:
+        raise CloudError(f"rmapi timed out after {cfg.rmapi.timeout_s}s: {' '.join(args)}") from e
+    if proc.stderr.strip():
+        log.debug("rmapi stderr:\n%s", proc.stderr.strip())
+    if proc.returncode != 0:
+        detail = (proc.stderr.strip() or proc.stdout.strip()).splitlines()[-5:]
+        hint = ""
+        if not cfg.rmapi.token_file.exists():
+            hint = "\nNo token file yet: run `rmtasks auth` first."
+        raise CloudError(f"rmapi {' '.join(args)} failed (exit {proc.returncode}):\n" + "\n".join(detail) + hint)
+    return proc.stdout
+
+
+def register(cfg: Config, code: str) -> None:
+    """Register rmapi as a desktop app with a one-time code; stores the token."""
+    code = code.strip()
+    if len(code) != 8:
+        raise CloudError("the one-time code should be 8 characters")
+    ensure_secrets_dir(cfg)
+    # Any online command triggers registration when the token file is missing;
+    # rmapi reads the code from stdin. `ls /` is read-only.
+    _run(cfg, ["ls", "/"], stdin=code + "\n")
+    if not cfg.rmapi.token_file.exists():
+        raise CloudError(f"rmapi finished but no token was written to {cfg.rmapi.token_file}")
+    os.chmod(cfg.rmapi.token_file, 0o600)
+
+
+def _parse_json_list(out: str) -> list[dict]:
+    start, end = out.find("["), out.rfind("]")
+    if start < 0 or end < start:
+        raise CloudError("rmapi did not return JSON; is it the ddvk fork, v0.0.30 or newer?\n" + out[:500])
+    try:
+        return json.loads(out[start : end + 1])
+    except json.JSONDecodeError as e:
+        raise CloudError(f"could not parse rmapi JSON output: {e}") from e
+
+
+def find_notebook(cfg: Config) -> DocRef:
+    if not cfg.rmapi.token_file.exists():
+        raise CloudError(f"no rmapi token at {cfg.rmapi.token_file}; run `rmtasks auth` first")
+    nodes = _parse_json_list(_run(cfg, ["-ni", "-json", "find", cfg.notebook.folder]))
+    matches = [n for n in nodes if n.get("name") == cfg.notebook.name and n.get("type") == "DocumentType"]
+    if not matches:
+        raise CloudError(
+            f"Notebook not found: {cfg.notebook.name!r} under {cfg.notebook.folder!r}. "
+            "notebook.name must match the visible name exactly."
+        )
+    if len(matches) > 1:
+        ids = ", ".join(m["id"] for m in matches)
+        raise CloudError(f"{len(matches)} notebooks named {cfg.notebook.name!r} ({ids}); narrow notebook.folder")
+    n = matches[0]
+    return DocRef(
+        id=n["id"],
+        name=n["name"],
+        version=int(n.get("version") or 0),
+        modified=n.get("modifiedClient", ""),
+        parent=n.get("parent", ""),
+    )
+
+
+def download(cfg: Config, doc: DocRef) -> Path:
+    """Download the notebook into the cache as <id>.rmdoc, with a <id>.json sidecar."""
+    cache = cfg.paths.cache_dir
+    cache.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(dir=cache, prefix=".dl-") as tmp:
+        _run(cfg, ["-ni", "get", "--id", doc.id], cwd=Path(tmp))
+        files = [p for p in Path(tmp).iterdir() if p.is_file()]
+        if len(files) != 1:
+            raise CloudError(f"expected one downloaded file, found {[p.name for p in files]}")
+        dest = cache / f"{doc.id}.rmdoc"
+        shutil.move(files[0], dest)
+    sidecar = cache / f"{doc.id}.json"
+    sidecar.write_text(json.dumps(asdict(doc), indent=2))
+    return dest
+
+
+def upload_pdf(cfg: Config, pdf: Path, *, content_only: bool) -> None:
+    """Upload a PDF into `notebook.folder`; the document is named after the file.
+
+    content_only=True swaps only the PDF inside an existing document: its page list
+    and handwriting (.rm files) are left as they are. Without it, a new document is
+    created and rmapi refuses if one with that name already exists.
+    """
+    if not cfg.rmapi.token_file.exists():
+        raise CloudError(f"no rmapi token at {cfg.rmapi.token_file}; run `rmtasks auth` first")
+    args = ["-ni", "put"] + (["--content-only"] if content_only else []) + [str(pdf), cfg.notebook.folder]
+    out = _run(cfg, args)
+    log.debug("rmapi put: %s", out.strip())
