@@ -1,7 +1,8 @@
 """SQLite implementation of the core's Repository port.
 
-Shares the database file with the Tasks-notebook store (`jotted.store`), so the
-combined list and the To-do document can include those tasks too.
+Every item lives in `actions`, whatever its origin (`source`): "remarkable" (collected
+from a watched document), "todo" (written by hand in an empty row of the To-do
+document) or "web" (added in the web app).
 """
 
 from __future__ import annotations
@@ -9,12 +10,41 @@ from __future__ import annotations
 import hashlib
 import json
 import sqlite3
+import uuid
 from contextlib import contextmanager
 from dataclasses import asdict, fields
+from datetime import UTC, datetime
 from pathlib import Path
 
 from ..core.model import DocInfo, Judgment, PageInfo, Settings, SourceLine, TodoEntry, WrittenItem
-from ..store import clean_text, now, to_utc
+
+BULLETS = "-–—•*·>"
+WEB_DOC = "web"  # doc_id of items added in the web app
+
+
+def clean_text(text: str) -> str:
+    """An item's text without the bullet it was written with: "- test prod" -> "test prod"."""
+    return text.strip().lstrip(BULLETS).strip()
+
+
+def now() -> str:
+    return datetime.now(UTC).isoformat(timespec="microseconds")
+
+
+def to_utc(stamp: str | None) -> str:
+    """Normalise a cloud timestamp (RFC 3339, maybe nanoseconds) to our format; now() if unusable."""
+    if not stamp:
+        return now()
+    s = stamp.strip().replace("Z", "+00:00")
+    if "." in s:  # trim sub-second digits beyond microseconds
+        head, _, rest = s.partition(".")
+        digits = "".join(ch for ch in rest if ch.isdigit())
+        tz = rest[len(digits):]
+        s = f"{head}.{digits[:6]}{tz}"
+    try:
+        return datetime.fromisoformat(s).astimezone(UTC).isoformat(timespec="microseconds")
+    except ValueError:
+        return now()
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS settings (
@@ -82,7 +112,7 @@ CREATE TABLE IF NOT EXISTS actions (
 );
 CREATE TABLE IF NOT EXISTS todo_slots (
     slot    INTEGER PRIMARY KEY,
-    kind    TEXT NOT NULL,
+    kind    TEXT NOT NULL,  -- always 'action' now; 'task' was the retired Tasks notebook
     item_id INTEGER NOT NULL,
     ticked  INTEGER NOT NULL DEFAULT 0,
     UNIQUE (kind, item_id)
@@ -107,6 +137,7 @@ class SqliteRepository:
             cols = {r["name"] for r in db.execute("PRAGMA table_info(actions)")}
             if "written" not in cols:  # 1 = written by hand on the To-do document itself
                 db.execute("ALTER TABLE actions ADD COLUMN written INTEGER NOT NULL DEFAULT 0")
+            self._migrate_tasks(db)
 
     @contextmanager
     def db(self):
@@ -118,8 +149,64 @@ class SqliteRepository:
         finally:
             conn.close()
 
-    def _has_tasks(self, db) -> bool:
-        return db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='tasks'").fetchone() is not None
+    @staticmethod
+    def _migrate_tasks(db) -> None:
+        """Once: turn the retired Tasks notebook's tasks into items.
+
+        A handwritten task keeps its notebook and anchor stroke, so if that notebook is
+        watched later its lines match these items instead of adding them again. A row it
+        held on the To-do document stays its row. The old tables are left in place.
+        """
+        if db.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'tasks'").fetchone() is None:
+            return
+        if db.execute("SELECT 1 FROM todo_meta WHERE key = 'tasks_migrated'").fetchone():
+            return
+        books = {r["id"]: r["name"] for r in db.execute("SELECT id, name FROM notebooks")}
+        page_ids = {(r["notebook_id"], r["page_index"]): r["page_id"] for r in db.execute("SELECT * FROM pages")}
+        stamp = now()
+        for t in db.execute("SELECT * FROM tasks WHERE missing = 0 ORDER BY id").fetchall():
+            paper = t["origin"] == "paper" and t["anchor_id"]
+            if paper:
+                doc_id, anchor, name = t["notebook_id"], t["anchor_id"], books.get(t["notebook_id"], "Tasks")
+                page_index = t["page_index"] or 1
+                page_id = page_ids.get((doc_id, page_index), "")
+                rows = json.loads(t["rows"]) if t["rows"] else []
+                bbox = [min(r[0] for r in rows), min(r[1] for r in rows),
+                        max(r[2] for r in rows), max(r[3] for r in rows)] if rows else None
+            else:
+                doc_id, anchor, name, page_index, page_id, rows, bbox = WEB_DOC, uuid.uuid4().hex, "", 0, "", [], None
+            cur = db.execute(
+                """INSERT OR IGNORE INTO actions (source, doc_id, doc_name, folder, page_id, page_index, anchor, bbox,
+                     text, paper_text, owner, p_action, status, text_changed_at, status_changed_at, created_at,
+                     updated_at) VALUES (?, ?, ?, '/', ?, ?, ?, ?, ?, ?, 'me', 1.0, ?, ?, ?, ?, ?)""",
+                ("remarkable" if paper else "web", doc_id, name, page_id, page_index, anchor,
+                 _bbox(bbox) if bbox else None, t["text"], t["paper_text"] or t["text"], t["status"],
+                 t["text_changed_at"], t["status_changed_at"], t["created_at"], stamp),
+            )
+            if cur.rowcount:
+                item_id = cur.lastrowid
+                if paper and page_id and bbox:  # so the web app can show the page and the handwritten line
+                    db.execute("INSERT OR IGNORE INTO source_pages (doc_id, page_id, idx, hash) VALUES (?, ?, ?, '')",
+                               (doc_id, page_id, page_index))
+                    db.execute(
+                        """INSERT OR IGNORE INTO source_lines (doc_id, page_id, anchor, key, text, bbox, rows)
+                           VALUES (?, ?, ?, '', ?, ?, ?)""",  # key '': judged afresh if the notebook is watched
+                        (doc_id, page_id, anchor, t["paper_text"] or t["text"], _bbox(bbox), json.dumps(rows)),
+                    )
+            else:  # already collected from that notebook: the more recent tick or untick wins
+                row = db.execute("SELECT id, status_changed_at FROM actions WHERE doc_id = ? AND anchor = ?",
+                                 (doc_id, anchor)).fetchone()
+                item_id = row["id"]
+                if t["status_changed_at"] > row["status_changed_at"]:
+                    db.execute("UPDATE actions SET status = ?, status_changed_at = ?, updated_at = ? WHERE id = ?",
+                               (t["status"], t["status_changed_at"], stamp, item_id))
+            if db.execute("SELECT 1 FROM todo_slots WHERE kind = 'action' AND item_id = ?", (item_id,)).fetchone():
+                db.execute("DELETE FROM todo_slots WHERE kind = 'task' AND item_id = ?", (t["id"],))
+            else:
+                db.execute("UPDATE todo_slots SET kind = 'action', item_id = ? WHERE kind = 'task' AND item_id = ?",
+                           (item_id, t["id"]))
+        db.execute("DELETE FROM todo_slots WHERE kind = 'task'")  # tasks gone from their notebook
+        db.execute("INSERT INTO todo_meta (key, value) VALUES ('tasks_migrated', ?)", (stamp,))
 
     # ------------------------------------------------------------ settings
 
@@ -279,33 +366,20 @@ class SqliteRepository:
     # ------------------------------------------------------------ the combined list
 
     def items(self, status: str | None = None, owner: str | None = None, folder: str | None = None) -> list[dict]:
-        """Collected actions plus the Tasks notebook's tasks, as one list for the web app."""
+        """Every item on the list, for the web app."""
         out: list[dict] = []
         with self.db() as db:
-            slots = {(r["kind"], r["item_id"]): r["slot"] for r in db.execute("SELECT * FROM todo_slots")}
+            slots = {r["item_id"]: r["slot"] for r in db.execute("SELECT * FROM todo_slots")}
             for r in db.execute("SELECT * FROM actions WHERE dismissed = 0 AND missing = 0 ORDER BY created_at, id"):
                 out.append({
-                    "kind": "action", "id": r["id"], "text": r["text"], "paper_text": r["paper_text"],
+                    "id": r["id"], "origin": r["source"], "text": r["text"], "paper_text": r["paper_text"],
                     "written": bool(r["written"]), "bbox": json.loads(r["bbox"]) if r["bbox"] else None,
                     "status": r["status"], "owner": r["owner"], "p_action": round(r["p_action"], 2),
                     "source": {"doc_id": r["doc_id"], "name": r["doc_name"], "folder": r["folder"],
                                "page": r["page_index"], "anchor": r["anchor"]},
-                    "edited": r["text"] != r["paper_text"], "slot": slots.get(("action", r["id"])),
+                    "edited": r["source"] != "web" and r["text"] != r["paper_text"], "slot": slots.get(r["id"]),
                     "created_at": r["created_at"],
                 })
-            if self._has_tasks(db):
-                nb = {n["id"]: n for n in db.execute("SELECT * FROM notebooks")}
-                for r in db.execute("SELECT * FROM tasks WHERE missing = 0 ORDER BY created_at, id"):
-                    book = nb.get(r["notebook_id"])
-                    out.append({
-                        "kind": "task", "id": r["id"], "text": r["text"], "paper_text": r["paper_text"],
-                        "status": r["status"], "owner": "me", "p_action": None,
-                        "source": {"doc_id": r["notebook_id"], "name": book["name"] if book else "Tasks",
-                                   "folder": "", "page": r["page_index"], "anchor": r["anchor_id"],
-                                   "origin": r["origin"]},
-                        "edited": r["origin"] == "paper" and r["paper_text"] is not None and r["text"] != r["paper_text"],
-                        "slot": slots.get(("task", r["id"])), "created_at": r["created_at"],
-                    })
         if status:
             out = [i for i in out if i["status"] == status]
         if owner == "mine":
@@ -314,8 +388,35 @@ class SqliteRepository:
             out = [i for i in out if i["owner"] == "someone_else"]
         if folder:
             f = "/" + folder.strip("/")
-            out = [i for i in out if i["kind"] == "action" and (i["source"]["folder"] + "/").startswith(f.rstrip("/") + "/")]
+            out = [i for i in out if (i["source"]["folder"] + "/").startswith(f.rstrip("/") + "/")]
         return out
+
+    def item(self, item_id: int) -> dict:
+        found = next((i for i in self.items() if i["id"] == item_id), None)
+        if found is None:
+            raise KeyError(item_id)
+        return found
+
+    def add_item(self, text: str) -> int:
+        """An item typed in the web app: yours, and printed on the To-do document at its next update."""
+        text = clean_text(text)
+        if not text:
+            raise ValueError("The item is empty")
+        stamp = now()
+        with self.db() as db:
+            cur = db.execute(
+                """INSERT INTO actions (source, doc_id, doc_name, folder, page_id, page_index, anchor, text,
+                     paper_text, owner, p_action, text_changed_at, status_changed_at, created_at, updated_at)
+                   VALUES ('web', ?, '', '', '', 0, ?, ?, ?, 'me', 1.0, ?, ?, ?, ?)""",
+                (WEB_DOC, uuid.uuid4().hex, text, text, stamp, stamp, stamp, stamp),
+            )
+            self._web_changed(db, stamp)
+        return int(cur.lastrowid)
+
+    @staticmethod
+    def _web_changed(db, stamp: str) -> None:
+        db.execute("INSERT INTO todo_meta (key, value) VALUES ('web_changed_at', ?) "
+                   "ON CONFLICT (key) DO UPDATE SET value = excluded.value", (stamp,))
 
     def edit_action(self, action_id: int, *, text: str | None = None, status: str | None = None,
                     dismissed: bool | None = None) -> dict:
@@ -335,9 +436,8 @@ class SqliteRepository:
                 values["dismissed"] = int(dismissed)
             if values:
                 self._update(db, "actions", action_id, values, stamp)
-                db.execute("INSERT INTO todo_meta (key, value) VALUES ('web_changed_at', ?) "
-                           "ON CONFLICT (key) DO UPDATE SET value = excluded.value", (stamp,))
-        return next(i for i in self.items() if i["kind"] == "action" and i["id"] == action_id) if not dismissed else {}
+                self._web_changed(db, stamp)
+        return self.item(action_id) if not dismissed else {}
 
     def source_line(self, doc_id: str, anchor: str) -> dict | None:
         with self.db() as db:
@@ -383,19 +483,19 @@ class SqliteRepository:
                 continue
             src = i["source"]
             # Handwriting is the item's text only while it is on the current document.
-            on_paper = bool(i.get("written")) and src["doc_id"] == current
+            on_paper = i["written"] and src["doc_id"] == current
             if on_paper:
                 label = "written here"
-            elif i["kind"] == "action" and i.get("written"):
+            elif i["written"]:
                 label = "written on an earlier To-do"
-            elif i["kind"] == "action":
+            elif i["origin"] == "web":
+                label = "added in Jotted"
+            else:
                 folder = src["folder"].strip("/") or "Library"
                 label = f"{folder} › {src['name']} · p{src['page']}"
                 if i["owner"] == "someone_else":
                     label = "others · " + label
-            else:
-                label = f"{src['name']}" + (f" · p{src['page']}" if src.get("page") else "")
-            entries.append(TodoEntry(kind=i["kind"], item_id=i["id"], text=i["text"],
+            entries.append(TodoEntry(item_id=i["id"], text=i["text"],
                                      done=i["status"] == "done", source_label=label, slot=i["slot"],
                                      handwritten=on_paper,
                                      ink=tuple(i["bbox"]) if on_paper and i.get("bbox") else None,
@@ -417,7 +517,7 @@ class SqliteRepository:
                 e.slot = None
             free.sort()
             for e, slot in zip(waiting, free):
-                db.execute("INSERT INTO todo_slots (slot, kind, item_id) VALUES (?, ?, ?)", (slot, e.kind, e.item_id))
+                db.execute("INSERT INTO todo_slots (slot, kind, item_id) VALUES (?, 'action', ?)", (slot, e.item_id))
                 e.slot = slot
         return sorted((e for e in entries if e.slot is not None), key=lambda e: e.slot), max(0, len(waiting) - len(free))
 
@@ -472,16 +572,8 @@ class SqliteRepository:
                 if row is None:
                     continue
                 db.execute("UPDATE todo_slots SET ticked = 1 WHERE slot = ?", (slot,))
-                if row["kind"] == "action":
-                    db.execute("UPDATE actions SET status = 'done', status_changed_at = ?, updated_at = ? "
-                               "WHERE id = ? AND status = 'open'", (stamp, stamp, row["item_id"]))
-                elif self._has_tasks(db):
-                    task = db.execute("SELECT notebook_id, status FROM tasks WHERE id = ?", (row["item_id"],)).fetchone()
-                    if task and task["status"] == "open":
-                        db.execute("UPDATE tasks SET status = 'done', status_changed_at = ?, updated_at = ? WHERE id = ?",
-                                   (stamp, stamp, row["item_id"]))
-                        # the Tasks notebook needs reprinting (its strike-through)
-                        db.execute("UPDATE notebooks SET web_changed_at = ? WHERE id = ?", (stamp, task["notebook_id"]))
+                db.execute("UPDATE actions SET status = 'done', status_changed_at = ?, updated_at = ? "
+                           "WHERE id = ? AND status = 'open'", (stamp, stamp, row["item_id"]))
                 changed += 1
             db.execute("INSERT INTO todo_meta (key, value) VALUES ('paper_marker', ?) "
                        "ON CONFLICT (key) DO UPDATE SET value = excluded.value", (marker,))
@@ -506,7 +598,3 @@ class SqliteRepository:
     def todo_meta(self) -> dict:
         with self.db() as db:
             return {r["key"]: r["value"] for r in db.execute("SELECT * FROM todo_meta")}
-
-
-
-

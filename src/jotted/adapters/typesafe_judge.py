@@ -2,7 +2,7 @@
 
 One request per page and question type. The state holds the page's written lines;
 each line or pair to judge gets its own question over that shared state: a Choice
-for line kinds and owners, a Noul for continuations and "is it an action".
+for owners, a Noul for continuations and "is it an action".
 Criteria texts come from `jotted.classify`; the question wording is Jev's.
 """
 
@@ -13,8 +13,7 @@ import os
 
 from typesafe_sdk import Choice, Noul, TypeSafeAuthenticationError, TypeSafeClient, TypeSafeError
 
-from ..classify import (ACTION, CRITERIA, NOTEBOOK, OWNER, ClassificationError, Continuation, Document, KindAnswer,
-                        state_line)
+from ..classify import ACTION, NOTEBOOK, OWNER, ClassificationError, Continuation, Document, state_line
 from ..config import ClassificationConfig
 from ..core.model import Judgment as ActionJudgment
 from ..recognise import Transcript
@@ -61,27 +60,6 @@ class TypeSafeJudge:
     @staticmethod
     def _page_state(lines: list[Transcript]) -> dict:
         return {"notebook": NOTEBOOK, "lines": [state_line(t) for t in lines]}
-
-    def kinds(self, lines: list[Transcript], targets: list[int], context: int) -> dict[int, KindAnswer]:
-        questions = {}
-        for i in targets:
-            neighbours = _neighbours(lines, i, context, "are its neighbours; use them only as context.")
-            questions[f"line_{lines[i].n}"] = Choice(
-                instructions={
-                    "line": f"`lines[{i}]`",
-                    "question": f"On this to-do notebook page, what kind of line is `lines[{i}]`? "
-                                f"Judge its `text`; `checkbox` says whether it was written with a checkbox."
-                                + (" Lines" + neighbours if neighbours else ""),
-                },
-                criteria=CRITERIA,
-            )
-        resp = self._ask(questions, self._page_state(lines))
-        out = {}
-        for i in targets:
-            ans = resp.choices.get(f"line_{lines[i].n}")
-            if ans is not None:
-                out[i] = KindAnswer(ans.choice, dict(ans.probabilities), ans.confidence)
-        return out
 
     def continues(self, lines: list[Transcript], pairs: list[Continuation]) -> dict[tuple[int, int], float]:
         questions, qids = {}, {}

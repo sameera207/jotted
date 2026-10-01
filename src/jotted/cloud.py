@@ -2,7 +2,7 @@
 
 rmapi is driven entirely from config.toml: each call gets RMAPI_CONFIG (the
 token file) and, when enabled, RMAPI_TRACE. rmapi never reads ~/.rmapi.
-Nothing here writes to the cloud.
+Callers hold `LOCK` around cloud work: two rmapi processes at once block each other.
 """
 
 from __future__ import annotations
@@ -13,12 +13,16 @@ import os
 import shutil
 import subprocess
 import tempfile
+import threading
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
 from .config import Config
 
 log = logging.getLogger(__name__)
+
+# One cloud job at a time: the web server may ask for the library while the scheduler runs.
+LOCK = threading.Lock()
 
 
 class CloudError(Exception):
@@ -162,20 +166,8 @@ def find_document(cfg: Config, name: str, folder: str = "/") -> DocRef | None:
     return matches[0] if matches else None
 
 
-def find_notebook(cfg: Config) -> DocRef:
-    if not cfg.rmapi.token_file.exists():
-        raise CloudError(f"no rmapi token at {cfg.rmapi.token_file}; run `jotted auth` first")
-    doc = find_document(cfg, cfg.notebook.name, cfg.notebook.folder)
-    if doc is None:
-        raise CloudError(
-            f"Notebook not found: {cfg.notebook.name!r} under {cfg.notebook.folder!r}. "
-            "notebook.name must match the visible name exactly."
-        )
-    return doc
-
-
 def download(cfg: Config, doc: DocRef) -> Path:
-    """Download the notebook into the cache as <id>.rmdoc, with a <id>.json sidecar."""
+    """Download the document into the cache as <id>.rmdoc, with a <id>.json sidecar."""
     cache = cfg.paths.cache_dir
     cache.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(dir=cache, prefix=".dl-") as tmp:
@@ -195,8 +187,8 @@ def delete(cfg: Config, name: str, folder: str = "/") -> None:
     _run(cfg, ["-ni", "rm", folder.rstrip("/") + "/" + name])
 
 
-def upload_pdf(cfg: Config, pdf: Path, *, content_only: bool, folder: str | None = None) -> None:
-    """Upload a PDF into `folder` (default `notebook.folder`); the document is named after the file.
+def upload_pdf(cfg: Config, pdf: Path, *, content_only: bool, folder: str = "/") -> None:
+    """Upload a PDF into `folder`; the document is named after the file.
 
     content_only=True swaps only the PDF inside an existing document: its page list
     and handwriting (.rm files) are left as they are. Without it, a new document is
@@ -204,6 +196,6 @@ def upload_pdf(cfg: Config, pdf: Path, *, content_only: bool, folder: str | None
     """
     if not cfg.rmapi.token_file.exists():
         raise CloudError(f"no rmapi token at {cfg.rmapi.token_file}; run `jotted auth` first")
-    args = ["-ni", "put"] + (["--content-only"] if content_only else []) + [str(pdf), folder or cfg.notebook.folder]
+    args = ["-ni", "put"] + (["--content-only"] if content_only else []) + [str(pdf), folder]
     out = _run(cfg, args)
     log.debug("rmapi put: %s", out.strip())

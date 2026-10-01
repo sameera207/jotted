@@ -10,14 +10,13 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parent))
 import synth  # noqa: E402
 
-from jotted import config, template  # noqa: E402
+from jotted import config, page  # noqa: E402
 from jotted.adapters import todo_document  # noqa: E402
 from jotted.adapters.sqlite_repo import SqliteRepository  # noqa: E402
 from jotted.core import service  # noqa: E402
 from jotted.core.model import (  # noqa: E402
     DocInfo, Judgment, PageInfo, PaperRead, Settings, SourceLine, TodoEntry, WrittenItem,
 )
-from jotted.store import Store  # noqa: E402
 from jotted.strokes import make_stroke  # noqa: E402
 
 ROOT = Path(__file__).parent.parent
@@ -146,7 +145,7 @@ def test_collect_reads_only_watched_documents_and_creates_actions(repo):
     summary = service.collect(source, judge, repo)
     assert summary.docs_seen == 1 and summary.docs_changed == 1 and summary.pages_read == 2
     assert summary.actions_new == 2
-    items = {i["text"]: i for i in repo.items() if i["kind"] == "action"}
+    items = {i["text"]: i for i in repo.items()}
     assert set(items) == {"TODO book the retro room", "@Simon TODO send the deck"}
     assert items["@Simon TODO send the deck"]["owner"] == "someone_else"
     assert items["TODO book the retro room"]["source"]["folder"] == "/Meetings"
@@ -182,7 +181,7 @@ def test_erased_line_marks_its_action_missing(repo):
                 "p2": [("1:40", "k40", "Notes only")]})
     summary = service.collect(source, judge, repo)
     assert summary.actions_missing == 1
-    assert [i["text"] for i in repo.items() if i["kind"] == "action"] == ["@Simon TODO send the deck"]
+    assert [i["text"] for i in repo.items()] == ["@Simon TODO send the deck"]
 
 
 def test_failed_document_is_retried_next_run(repo):
@@ -208,7 +207,7 @@ def from_now(repo, *doc_ids):
 
 
 def open_actions(repo):
-    return sorted(i["text"] for i in repo.items() if i["kind"] == "action")
+    return sorted(i["text"] for i in repo.items())
 
 
 def test_from_now_records_existing_writing_without_reading_it(repo):
@@ -322,7 +321,7 @@ def test_web_edits_win_over_older_paper_changes(repo):
                {"p1": [("1:10", "k10", "Agenda for the weekly"), ("1:20", "k21", "TODO book a retro room"),
                        ("1:30", "k30", "@Simon TODO send the deck")], "p2": [("1:40", "k40", "Notes only")]})
     service.collect(source, judge, repo)
-    item = next(i for i in repo.items() if i["id"] == action["id"] and i["kind"] == "action")
+    item = next(i for i in repo.items() if i["id"] == action["id"])
     assert item["text"] == "Book the big retro room" and item["status"] == "done"
     assert item["paper_text"] == "TODO book a retro room"
 
@@ -331,9 +330,9 @@ def test_dismissed_actions_leave_the_list(repo):
     source, judge = FakeSource(), FakeJudge()
     notes(source)
     service.collect(source, judge, repo)
-    action = next(i for i in repo.items() if i["kind"] == "action")
+    action = repo.items()[0]
     repo.edit_action(action["id"], dismissed=True)
-    assert action["id"] not in [i["id"] for i in repo.items() if i["kind"] == "action"]
+    assert action["id"] not in [i["id"] for i in repo.items()]
 
 
 def test_filters(repo):
@@ -371,7 +370,7 @@ def test_slots_are_permanent_and_ticks_mark_items_done(repo):
     pub.ticks = ({0}, "m2")
     r = service.sync_todo(repo, pub)
     assert r["ticked"] == 1 and pub.published[-1][0].done
-    item = next(i for i in repo.items() if i["kind"] == "action" and i["text"] == first.text)
+    item = next(i for i in repo.items() if i["text"] == first.text)
     repo.edit_action(item["id"], status="open")  # re-opened on the web
     assert service.sync_todo(repo, pub)["ticked"] == 0  # the old ink does not tick it again
     assert not next(e for e in pub.published[-1] if e.slot == 0).done
@@ -388,26 +387,70 @@ def test_include_others_setting(repo):
     assert [e.text for e in pub.published[-1]] == ["TODO book the retro room"]
 
 
-def test_tasks_notebook_items_join_the_list_and_ticks_reach_them(tmp_path, repo):
-    store = Store(repo.path)  # same database file
-    with store.db() as db:
-        db.execute("INSERT INTO notebooks (id, name, file_type) VALUES ('nb', 'Tasks', 'pdf')")
-    task_id = store.add_web_task("nb", "Call the plumber")
+def test_items_added_on_the_web_are_printed_and_ticked_like_any_other(repo):
+    item_id = repo.add_item("- Call the plumber")
     pub = FakePublisher()
     service.sync_todo(repo, pub)
-    entry = next(e for e in pub.published[-1] if e.kind == "task")
-    assert entry.text == "Call the plumber" and entry.source_label.startswith("Tasks")
+    entry = next(e for e in pub.published[-1] if e.item_id == item_id)
+    assert entry.text == "Call the plumber" and entry.source_label == "added in Jotted" and not entry.handwritten
+    assert repo.item(item_id)["origin"] == "web" and repo.item(item_id)["owner"] == "me"
     pub.ticks = ({entry.slot}, "m")
     assert service.sync_todo(repo, pub)["ticked"] == 1
-    assert store.task(task_id)["status"] == "done"
-    assert store.state("nb")["pending_push"]  # the Tasks notebook will be reprinted
+    assert repo.item(item_id)["status"] == "done"
+    with pytest.raises(ValueError):
+        repo.add_item("  - ")
+
+
+OLD_TASKS_SCHEMA = """
+CREATE TABLE notebooks (id TEXT PRIMARY KEY, name TEXT NOT NULL, file_type TEXT NOT NULL);
+CREATE TABLE pages (notebook_id TEXT, page_index INTEGER, page_id TEXT, PRIMARY KEY (notebook_id, page_index));
+CREATE TABLE tasks (id INTEGER PRIMARY KEY, notebook_id TEXT NOT NULL, origin TEXT NOT NULL, anchor_id TEXT,
+    page_index INTEGER, text TEXT NOT NULL, paper_text TEXT, status TEXT NOT NULL DEFAULT 'open',
+    text_changed_at TEXT NOT NULL, status_changed_at TEXT NOT NULL, rows TEXT, missing INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
+CREATE TABLE todo_slots (slot INTEGER PRIMARY KEY, kind TEXT NOT NULL, item_id INTEGER NOT NULL,
+    ticked INTEGER NOT NULL DEFAULT 0, UNIQUE (kind, item_id));
+INSERT INTO notebooks VALUES ('nb', 'Tasks', 'pdf');
+INSERT INTO pages VALUES ('nb', 1, 'nbp1');
+INSERT INTO tasks VALUES (1, 'nb', 'paper', '1:14', 1, 'call Bob about invoices', 'call Bob', 'open', 't', 't',
+    '[[-400, 200, 200, 280]]', 0, 't', 't');
+INSERT INTO tasks VALUES (2, 'nb', 'web', NULL, NULL, 'from the web', NULL, 'done', 't', 't', NULL, 0, 't', 't');
+INSERT INTO tasks VALUES (3, 'nb', 'paper', '1:99', 1, 'erased', 'erased', 'open', 't', 't', NULL, 1, 't', 't');
+INSERT INTO todo_slots VALUES (4, 'task', 1, 0);
+"""
+
+
+def test_tasks_from_the_retired_notebook_become_items_and_keep_their_rows(tmp_path):
+    import sqlite3
+
+    path = tmp_path / "old.sqlite"
+    with sqlite3.connect(path) as db:
+        db.executescript(OLD_TASKS_SCHEMA)
+    repo = SqliteRepository(path)
+    items = {i["text"]: i for i in repo.items()}
+    assert set(items) == {"call Bob about invoices", "from the web"}  # the erased task stays behind
+    paper, web = items["call Bob about invoices"], items["from the web"]
+    assert paper["origin"] == "remarkable" and paper["edited"] and paper["paper_text"] == "call Bob"
+    assert paper["source"] == {"doc_id": "nb", "name": "Tasks", "folder": "/", "page": 1, "anchor": "1:14"}
+    assert paper["slot"] == 4  # still in its row on the To-do document
+    assert repo.source_line("nb", "1:14")["bbox"] == [-400, 200, 200, 280]  # its handwriting can be shown
+    assert web["origin"] == "web" and web["status"] == "done"
+    SqliteRepository(path)  # once only
+    assert len(repo.items()) == 2
+
+    # Watching the old notebook later finds the same line instead of adding it again.
+    source, judge = FakeSource(), FakeJudge()
+    source.add("nb", "Tasks", "/", "2026-10-02T10:00:00Z", {"nbp1": [("1:14", "k14", "TODO call Bob")]})
+    repo.save_settings(Settings(watch=["/"]))
+    assert service.collect(source, judge, repo).actions_new == 0
+    assert [i["id"] for i in repo.items()].count(paper["id"]) == 1
 
 
 # ---------------------------------------------------------------- the To-do PDF
 
 
 def test_todo_pdf_has_fixed_page_count(tmp_path):
-    entries = [TodoEntry("action", i, f"item {i}", i % 2 == 0, "Meetings › Weekly · p1", i) for i in range(45)]
+    entries = [TodoEntry(i, f"item {i}", i % 2 == 0, "Meetings › Weekly · p1", i) for i in range(45)]
     pdf = todo_document.build_pdf(tmp_path / "To-do.pdf", entries, pages=todo_document.PAGES)
     import re
 
@@ -420,7 +463,7 @@ def test_tick_on_a_checkbox_is_read_back():
     cx, cy = (x0 + x1) / 2, (y0 + y1) / 2  # pt from the top-left
 
     def to_tablet(x_pt, y_pt):
-        return ((x_pt * template.UNITS_PER_PT) - template.RM_W / 2) * scale, y_pt * template.UNITS_PER_PT * scale
+        return ((x_pt * page.UNITS_PER_PT) - page.RM_W / 2) * scale, y_pt * page.UNITS_PER_PT * scale
 
     a, b = to_tablet(cx - 4, cy), to_tablet(cx + 5, cy + 4)
     tick = make_stroke("1:1", "fineliner", [a, to_tablet(cx, cy + 3), b])
@@ -441,7 +484,6 @@ def test_todo_endpoints(tmp_path, monkeypatch):
     from jotted.app import App
     from jotted.server import create_app
 
-    store = Store(cfg.server.db)
     repo = SqliteRepository(cfg.server.db)
     repo.save_settings(Settings(watch=["/Meetings"]))
     source, judge = FakeSource(), FakeJudge()
@@ -454,7 +496,7 @@ def test_todo_endpoints(tmp_path, monkeypatch):
 
     with repo.db() as db:  # line boxes for the source images
         db.execute("UPDATE source_lines SET bbox = '[0, 100, 400, 140]'")
-    app = App(cfg=cfg, store=store, repo=repo, source=PageSource(), judge=judge)
+    app = App(cfg=cfg, repo=repo, source=PageSource(), judge=judge)
     client = create_app(cfg, app_=app, background=False).test_client()
 
     data = client.get("/api/todo").get_json()
@@ -462,9 +504,19 @@ def test_todo_endpoints(tmp_path, monkeypatch):
     assert client.get("/api/todo?owner=others").get_json()["items"][0]["owner"] == "someone_else"
 
     action = next(i for i in data["items"] if i["owner"] == "me")
-    r = client.patch(f"/api/items/action/{action['id']}", json={"status": "done"}).get_json()
+    r = client.patch(f"/api/items/{action['id']}", json={"status": "done"}).get_json()
     assert next(i for i in r["items"] if i["id"] == action["id"])["status"] == "done"
-    assert client.patch("/api/items/nope/1", json={}).status_code == 404
+    assert client.patch("/api/items/999", json={}).status_code == 404
+
+    r = client.post("/api/items", json={"text": "Renew the passport"})
+    assert r.status_code == 201
+    added = r.get_json()["item"]
+    assert added["origin"] == "web" and added["text"] == "Renew the passport"
+    assert added["id"] in [i["id"] for i in r.get_json()["items"]]
+    assert client.post("/api/items", json={"text": "   "}).status_code == 400
+    assert client.post("/api/items", json={}).status_code == 400
+    assert client.patch(f"/api/items/{added['id']}", json={"dismissed": True}).status_code == 200
+    assert added["id"] not in [i["id"] for i in client.get("/api/todo").get_json()["items"]]
 
     line = client.get(f"/api/sources/doc-a/line/{action['source']['anchor']}.svg")
     assert line.status_code == 200 and line.data.startswith(b"<svg")
@@ -543,7 +595,7 @@ def test_written_rows_groups_handwriting_by_row():
     lines_cfg = config.LinesConfig()
 
     def tablet(x_pt, y_pt):
-        return ((x_pt * template.UNITS_PER_PT) - template.RM_W / 2) * scale, y_pt * template.UNITS_PER_PT * scale
+        return ((x_pt * page.UNITS_PER_PT) - page.RM_W / 2) * scale, y_pt * page.UNITS_PER_PT * scale
 
     top = todo_document.TOP + 4 * todo_document.ROW  # row 4
     letters = [make_stroke(f"1:{i}", "fineliner", [tablet(60 + 18 * i, top + 16), tablet(68 + 18 * i, top + 6),

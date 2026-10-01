@@ -94,7 +94,6 @@ class CollectSummary:
 @dataclass
 class TodoEntry:
     """One row of the To-do document: an item and where it is printed."""
-    kind: str  # "action" (collected or written on the To-do document) or "task" (the Tasks notebook)
     item_id: int
     text: str
     done: bool

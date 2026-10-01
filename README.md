@@ -71,7 +71,7 @@ If you don't put it on your `PATH`, set `rmapi.binary` in the config to its abso
 cp src/jotted/config.example.toml config.toml
 ```
 
-Edit `config.toml`. For a first run, the only value you're likely to change is `notebook.name`. Then check it:
+Edit `config.toml` if you need to (the defaults work for a first run), then check it:
 
 ```bash
 uv run jotted config check
@@ -91,56 +91,17 @@ uv run jotted auth
 
 That token grants full access to your library. Never commit it. If it leaks, revoke the device on my.remarkable.com and run `auth` again.
 
-### 5. Prepare a test page on the tablet
-
-Create a page in the `Tasks` notebook with:
-
-- 5–6 tasks, each starting with a `[ ]` (and a couple drawn as a single box)
-- 3–4 ordinary lines of notes
-- one lone `[ ]` with nothing after it
-
-Wait for the cloud-sync icon to settle before scanning.
-
-### 6. Scan
+### 5. Run it
 
 ```bash
-uv run jotted scan
+uv run jotted serve
 ```
 
-This finds the notebook, downloads it into `cache/`, analyses each page and prints a table. Each run also writes:
+Then open http://127.0.0.1:8765, tick a folder in Settings, and write a line like "book the retro room" in a document in it. `uv run jotted collect --dry-run` shows what changed without reading anything, and `uv run jotted collect` reads it.
 
-- `out/<timestamp>/report.json`: tasks, confidence and checkbox stroke IDs
-- `out/<timestamp>/page-NN.svg`: an overlay showing line bands and detected checkboxes
-
-Open the SVG next to the tablet page to see what was detected.
-
-Each page's lines are sent to Claude as images in one request, and the transcripts to Jev in one request. Both results are cached under `cache/ai/`, keyed by the line's stroke IDs, so re-running `analyse` on the same notebook makes no API calls. Diagrams are reported as `drawing` items, never tasks. A to-do that wraps onto a second line is merged into one item (shown as `10+11` in the table). Close spacing proposes the merge, and Jev can veto it. A line is a task when Jev's P(todo) is at least `classification.todo_threshold`; set `checkbox_is_task = true` to also treat every line that starts with a checkbox as a task.
-
-### 7. Tune offline
-
-Once there's a copy in the cache, iterate without touching the network:
-
-```bash
-uv run jotted analyse cache/<notebook-id>.rmdoc
-```
-
-`scan` prints the exact cache path. Change one threshold at a time in the `[lines]` or `[checkbox]` section of `config.toml`, re-run, and compare the overlays.
-
-In the overlay, solid orange boxes are tasks, dashed ones are empty checkboxes, and each label lists the checks that failed. `checkbox.required_checks` names the checks a style must pass before it's scored at all. Without that gate, ordinary letters such as `ll` pass enough of the weak checks to clear `min_confidence`.
+Each page's new lines are sent to Claude as images in one request, and the transcripts to Jev in one request. Both results are cached under `cache/ai/`, keyed by the line's stroke IDs, so reading a page again makes no API calls. Diagrams are never actions. A line that wraps onto a second line is merged into one item: close spacing proposes the merge, and Jev can veto it.
 
 Run the tests with `uv run pytest`. They use synthetic pages, plus a fake `rmapi` for the cloud wrapper.
-
-### 8. Check anchor stability
-
-1. Run `scan`.
-2. Add a new line somewhere mid-page on the tablet and let it sync.
-3. Run `scan` again, then compare the two runs:
-
-```bash
-uv run jotted diff out/<first-run> out/<second-run>
-```
-
-Every task that existed in the first run should keep identical checkbox IDs.
 
 ## The common to-do list
 
@@ -148,8 +109,10 @@ Every task that existed in the first run should keep identical checkbox IDs.
 
 1. Open **Settings**, load your folders, tick the ones to watch (for example `/Meeting Notes`), and save.
 2. In the background, the app checks the tablet every minute. Only documents whose cloud copy changed are downloaded; only pages whose content changed are parsed; only lines with new strokes are sent to Claude (as images) and Jev (as text). Jev decides whether each line is an action and who owns it.
-3. **To-do** shows everything: collected actions, with an image of the handwritten line and a link to its page, plus the Tasks notebook's tasks. Filter by open/done, mine/others and source. Mark "×" on a line that isn't an action.
-4. Turn on **To-do document on the tablet** in Settings. Each item gets a fixed slot with a printed checkbox. Tick a box with the pen and the item is marked done on the next check. The document has two pages. When its rows run out, Jotted deletes it and prints a fresh one with only the open items.
+3. **To-do** shows everything: collected actions, with an image of the handwritten line and a link to its page, and items you type into the empty line at the bottom. Filter by open/done, mine/others and source. Mark "×" on a line that isn't an action, or to delete an item you typed.
+4. Turn on **To-do document on the tablet** in Settings. Each item gets a fixed slot with a printed checkbox. Tick a box with the pen and the item is marked done on the next check. Write in an empty row and it becomes a new item. The document has two pages. When its rows run out, Jotted deletes it and prints a fresh one with only the open items.
+
+There used to be a separate Tasks notebook as well. It's gone: write tasks in any watched notebook, in an empty row of the To-do document, or in the web app. The first time a new version starts, the old notebook's tasks become items on the list and keep their rows on the To-do document. To keep using that notebook, watch it like any other; its lines match the items they already became.
 
 From the command line: `jotted library`, `jotted watch add "/Meeting Notes"`, `jotted collect --dry-run` (what changed, nothing read), `jotted collect`, `jotted todo`.
 
@@ -159,20 +122,19 @@ Code layout: `jotted/core` holds the model, ports and services and imports no ad
 
 | Symptom | Fix |
 | --- | --- |
-| `auth` or `scan` fails with an auth error | Delete `.secrets/rmapi.conf` and run `jotted auth` again |
+| `auth` or `collect` fails with an auth error | Delete `.secrets/rmapi.conf` and run `jotted auth` again |
 | Need to see what rmapi is doing | Set `rmapi.trace = true` in `config.toml` |
-| "Notebook not found" | `notebook.name` must match the visible name exactly; narrow `notebook.folder` if names repeat |
 | Warnings about unreadable blocks | Newer firmware than rmscene knows: `uv lock --upgrade-package rmscene && uv sync` |
-| Page count doesn't match the tablet | The tablet hadn't finished syncing; wait and re-run `scan` |
+| A page's latest writing is missing | The tablet hadn't finished syncing; wait for the next check, or click **Check now** |
 
 ## Layout
 
 ```text
 src/jotted/config.example.toml   every setting with its default; `jotted start` copies it
 config.toml           your settings (gitignored)
-src/jotted/          cli, config, cloud, notebook, strokes, lines, checkbox, report
-tests/fixtures/       .rm pages with known expected results
+src/jotted/          cli, config, cloud, strokes, lines, recognise, classify, app, server
+src/jotted/core/     model, ports and services (imports no adapter)
+src/jotted/adapters/ reMarkable library, To-do document, SQLite, AI providers
 .secrets/             rmapi token (gitignored)
-cache/                downloaded notebooks (gitignored)
-out/                  run reports (gitignored)
+cache/                downloaded documents (gitignored)
 ```

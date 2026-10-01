@@ -1,11 +1,11 @@
-"""Judging lines: what kind each one is, whether it continues the line above, and
-whether it is an action (and whose).
+"""Judging lines: whether each one continues the line above, and whether it is an
+action (and whose).
 
 The model is behind a port, `LineJudge`, with an adapter per provider
 (`adapters/typesafe_judge.py` for Jev). Policy stays here and is shared: which lines
 are judged and with what context, the criteria, thresholds, geometry, and a cache per
-question. To add a provider: write an adapter with `kinds()`, `continues()` and
-`actions()`, then register it in `PROVIDERS` and `config.CLASSIFICATION_PROVIDERS`.
+question. To add a provider: write an adapter with `continues()` and `actions()`,
+then register it in `PROVIDERS` and `config.CLASSIFICATION_PROVIDERS`.
 """
 
 from __future__ import annotations
@@ -25,7 +25,7 @@ from .recognise import Transcript
 log = logging.getLogger(__name__)
 
 # Part of the cache keys: bump when the questions change, in any adapter.
-PROMPT_VERSION = 3  # line kinds and continuations
+PROMPT_VERSION = 3  # continuations
 ACTION_PROMPT_VERSION = 1  # actions and owners
 
 NOTEBOOK = (
@@ -33,15 +33,6 @@ NOTEBOOK = (
     "some with a checkbox and some without, mixed with notes, dates and headings. "
     "Lines were transcribed from handwriting, so expect abbreviations and small reading errors."
 )
-
-CRITERIA = {
-    "todo": "An action the writer intends to do or follow up: call, email, fix, buy, prepare, book, "
-            "review, decide, or a meeting or conversation to have. A short noun phrase counts when, "
-            "on a to-do list, it names something to get done.",
-    "note": "Information rather than an action: a fact, an observation, a thought, a quote, "
-            "or a record of what already happened.",
-    "heading": "A date, a day name, a title or a section label that organises the lines below it.",
-}
 
 ACTION = {
     "true": "Something someone should do, follow up, decide or deliver: a task, a request, a commitment, "
@@ -64,27 +55,7 @@ class ClassificationError(Exception):
     pass
 
 
-@dataclass
-class Judgment:
-    n: int
-    choice: str
-    probabilities: dict[str, float]
-    confidence: float
-    cached: bool = False
-
-    @property
-    def p_todo(self) -> float:
-        return self.probabilities.get("todo", 0.0)
-
-
 # ---------------------------------------------------------------- the port
-
-
-@dataclass(frozen=True)
-class KindAnswer:
-    choice: str  # a key of CRITERIA
-    probabilities: dict[str, float]
-    confidence: float
 
 
 @dataclass(frozen=True)
@@ -114,9 +85,6 @@ class LineJudge(Protocol):
 
     def verify(self) -> None:
         """Check the key works, without judging anything (setup calls this)."""
-
-    def kinds(self, lines: list[Transcript], targets: list[int], context: int) -> dict[int, KindAnswer]:
-        """Per target: todo, note or heading (CRITERIA). `context` neighbours each side matter."""
 
     def continues(self, lines: list[Transcript], pairs: list[Continuation]) -> dict[tuple[int, int], float]:
         """Per (above, below): the probability that below continues above."""
@@ -263,30 +231,30 @@ def continuations(lines: list[Line], transcripts: dict[int, Transcript], cfg: Cl
     return sorted(confirmed)
 
 
-def classify(transcripts: dict[int, Transcript], cfg: ClassificationConfig, cache: AICache,
-             judge: LineJudge | None = None) -> dict[int, Judgment]:
-    ordered = _judgeable(transcripts)
-    out: dict[int, Judgment] = {}
-    keys: dict[int, str] = {}  # position -> cache key, for lines to ask about
-    for i, t in enumerate(ordered):
-        lo, hi = max(0, i - cfg.context_lines), min(len(ordered) - 1, i + cfg.context_lines)
-        context = [state_line(x) for x in ordered[lo : hi + 1]]
-        key = AICache.key("judgment", PROMPT_VERSION, cfg.model, cfg.context_lines, state_line(t), context)
-        hit = cache.get("judgments", key)
-        if hit is not None:
-            out[t.n] = Judgment(n=t.n, cached=True, **hit)
-        else:
-            keys[i] = key
-    if not keys:
-        return out
+def merge_continuations(
+    page_lines: list[Line], transcripts: dict[int, Transcript], pairs: list[tuple[int, int]]
+) -> tuple[list[Line], dict[int, Transcript], dict[int, list[int]]]:
+    """Fold each confirmed continuation into the line it continues (chains allowed).
+    The merged line keeps the first line's number, so its anchor is the first line's."""
+    root: dict[int, int] = {}
+    for above, below in pairs:
+        root[below] = root.get(above, above)
+    by_n = {ln.n: ln for ln in page_lines}
+    parts: dict[int, list[int]] = {}
+    for ln in sorted(page_lines, key=lambda x: x.n):
+        parts.setdefault(root.get(ln.n, ln.n), []).append(ln.n)
 
-    answers = (judge or judge_for(cfg)).kinds(ordered, list(keys), cfg.context_lines)
-    for i, key in keys.items():
-        n, ans = ordered[i].n, answers.get(i)
-        if ans is None:
-            log.warning("no judgment returned for line %d", n)
-            continue
-        j = Judgment(n=n, choice=ans.choice, probabilities=dict(ans.probabilities), confidence=ans.confidence)
-        cache.put("judgments", key, {"choice": j.choice, "probabilities": j.probabilities, "confidence": j.confidence})
-        out[n] = j
-    return out
+    merged_lines, merged_ts = [], {}
+    for first, ns in parts.items():
+        line = Line(strokes=[s for n in ns for s in by_n[n].strokes], n=first)
+        if len(ns) > 1:
+            line.rows = [by_n[n].bbox for n in ns]
+        line.strokes.sort(key=lambda s: s.x0)
+        merged_lines.append(line)
+        ts = [transcripts[n] for n in ns if n in transcripts]
+        if ts:
+            merged_ts[first] = Transcript(
+                n=first, checkbox=ts[0].checkbox, text=" ".join(t.text for t in ts if t.text),
+                drawing=ts[0].drawing, cached=all(t.cached for t in ts),
+            )
+    return merged_lines, merged_ts, {first: ns for first, ns in parts.items() if len(ns) > 1}

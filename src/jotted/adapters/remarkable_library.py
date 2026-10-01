@@ -11,7 +11,7 @@ import time
 import zipfile
 from pathlib import Path
 
-from .. import analysis, classify, cloud, lines as lines_mod, recognise, strokes
+from .. import classify, cloud, lines as lines_mod, recognise, strokes
 from ..aicache import AICache
 from ..config import Config
 from ..core.model import DocInfo, PageInfo, SourceLine
@@ -99,7 +99,7 @@ class RemarkableLibrary:
         if self.cfg.classification.enabled:
             pairs = sorted(classify.adjacent_drawings(page_lines, transcripts, self.cfg.classification)
                            + classify.continuations(page_lines, transcripts, self.cfg.classification, self.cache))
-            page_lines, transcripts, merged = analysis.merge_continuations(page_lines, transcripts, pairs)
+            page_lines, transcripts, merged = classify.merge_continuations(page_lines, transcripts, pairs)
         out = []
         for ln in sorted(page_lines, key=lambda x: x.n):
             t = transcripts.get(ln.n)

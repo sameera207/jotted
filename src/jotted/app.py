@@ -1,6 +1,6 @@
 """Composition root: builds the adapters and runs the background scheduler.
 
-Everything that talks to the cloud goes through `sync.LOCK`: two rmapi processes at
+Everything that talks to the cloud goes through `cloud.LOCK`: two rmapi processes at
 once block each other.
 """
 
@@ -11,7 +11,7 @@ import threading
 import time
 from dataclasses import dataclass, field
 
-from . import cloud, sync
+from . import cloud
 from .adapters.action_judge import ModelActionJudge
 from .adapters.remarkable_library import RemarkableLibrary
 from .adapters.sqlite_repo import SqliteRepository
@@ -20,28 +20,24 @@ from .aicache import AICache
 from .classify import ClassificationError
 from .config import Config
 from .core import service
-from .notebook import NotebookError
 from .recognise import RecognitionError
-from .store import Store, to_utc
 
 log = logging.getLogger("jotted")
 
-SYNC_ERRORS = (cloud.CloudError, sync.SyncError, NotebookError, RecognitionError, ClassificationError)
+SYNC_ERRORS = (cloud.CloudError, RecognitionError, ClassificationError)
 
 
 @dataclass
 class App:
     cfg: Config
-    store: Store  # the Tasks notebook
-    repo: SqliteRepository  # collected actions, settings, the To-do document
+    repo: SqliteRepository  # items, settings, the To-do document
     source: RemarkableLibrary
     judge: ModelActionJudge
 
     @classmethod
-    def build(cls, cfg: Config, store: Store | None = None) -> "App":
+    def build(cls, cfg: Config) -> "App":
         cache = AICache(cfg.paths.cache_dir / "ai")
-        store = store or Store(cfg.server.db)
-        return cls(cfg=cfg, store=store, repo=SqliteRepository(cfg.server.db),
+        return cls(cfg=cfg, repo=SqliteRepository(cfg.server.db),
                    source=RemarkableLibrary(cfg, cache), judge=ModelActionJudge(cfg.classification, cache))
 
     def todo_document(self) -> TodoDocument:
@@ -49,15 +45,9 @@ class App:
         return TodoDocument(self.cfg, s.todo_name, s.todo_folder, self.source.cache)
 
     def own_doc_ids(self) -> set[str]:
-        """Documents we write ourselves (the Tasks notebook, the To-do list): never collected."""
-        ids = set()
-        nb = self.store.notebook_by_name(self.cfg.notebook.name)
-        if nb:
-            ids.add(nb["id"])
-        meta = self.repo.todo_meta()
-        if meta.get("doc_id"):
-            ids.add(meta["doc_id"])
-        return ids
+        """Documents we write ourselves (the To-do list): never collected."""
+        doc_id = self.repo.todo_meta().get("doc_id")
+        return {doc_id} if doc_id else set()
 
     def collect(self, progress=lambda _: None):
         return service.collect(self.source, self.judge, self.repo, exclude=self.own_doc_ids(), progress=progress)
@@ -74,26 +64,6 @@ class App:
                            "ON CONFLICT (key) DO UPDATE SET value = excluded.value", (found.id,))
         return result
 
-    def tasks_pull_if_changed(self) -> bool:
-        """Pull the Tasks notebook when its cloud copy is newer than the stored one."""
-        doc = cloud.find_document(self.cfg, self.cfg.notebook.name, self.cfg.notebook.folder)
-        if doc is None:
-            return False
-        known = self.store.notebook(doc.id)
-        if known and known["paper_modified"] and to_utc(doc.modified) <= known["paper_modified"]:
-            return False
-        sync.pull(self.cfg, self.store)
-        return True
-
-    def tasks_push_if_pending(self) -> bool:
-        nb = self.store.notebook_by_name(self.cfg.notebook.name)
-        if not nb or nb["file_type"] != "pdf":
-            return False
-        if not self.store.state(nb["id"])["pending_push"]:
-            return False
-        sync.push(self.cfg, self.store)
-        return True
-
 
 @dataclass
 class Status:
@@ -105,9 +75,9 @@ class Status:
 
 
 class Scheduler:
-    """One background loop for everything that reads from the cloud:
-    the Tasks notebook, the watched folders, and ticks on the To-do document.
-    `push_soon()` runs the writing side a few seconds after a web edit."""
+    """One background loop for everything that reads from the cloud: the watched folders
+    and the To-do document. `push_soon()` updates the To-do document a few seconds after
+    a web edit."""
 
     def __init__(self, app: App, push_delay_s: float):
         self.app = app
@@ -132,14 +102,9 @@ class Scheduler:
 
     def poll_once(self) -> dict:
         summary: dict = {}
-        with sync.LOCK:
+        with cloud.LOCK:
             self.status.running = True
             try:
-                self.status.step = "Checking the Tasks notebook"
-                try:
-                    summary["tasks_pulled"] = self.app.tasks_pull_if_changed()
-                except cloud.CloudError as e:
-                    summary["tasks_error"] = str(e)
                 self.status.step = "Checking watched folders"
                 collected = self.app.collect(progress=lambda m: setattr(self.status, "step", m))
                 summary["collect"] = collected.as_dict()
@@ -151,8 +116,6 @@ class Scheduler:
             finally:
                 self.status.running = False
                 self.status.step = ""
-        if summary.get("todo", {}).get("ticked"):
-            self.push_soon()  # ticks on Task-notebook items need their strike-through printed
         return summary
 
     def _poll_loop(self) -> None:
@@ -161,7 +124,7 @@ class Scheduler:
                 self.status.last_summary = self.poll_once()
                 errors = self.status.last_summary.get("collect", {}).get("errors") or []
                 s = self.status.last_summary
-                self.status.last_error = "; ".join(errors + [e for e in (s.get("tasks_error"), s.get("todo_error")) if e]) or None
+                self.status.last_error = "; ".join(errors + ([s["todo_error"]] if s.get("todo_error") else [])) or None
             except SYNC_ERRORS as e:
                 log.error("background poll failed: %s", e)
                 self.status.last_error = str(e)
@@ -182,10 +145,10 @@ class Scheduler:
             self._cond.notify_all()
 
     def push_once(self) -> dict:
-        with sync.LOCK:
+        with cloud.LOCK:
             self.push_status.running = True
             try:
-                return {"tasks_pushed": self.app.tasks_push_if_pending(), "todo": self.app.sync_todo()}
+                return {"todo": self.app.sync_todo()}
             finally:
                 self.push_status.running = False
 

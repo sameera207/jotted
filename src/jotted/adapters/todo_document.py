@@ -5,7 +5,7 @@ another item when the list changes. The page count never changes after creation:
 `put --content-only` keeps the page list, and the ink with it. So the document is
 small, and rebuilt (deleted, then created again) when its rows run out.
 
-Ticks are read with the same calibrated mapping as the Tasks template
+Ticks are read with the calibrated mapping from the tablet's page size
 (`template.scale`): a stroke whose centre falls on a slot's checkbox area ticks it.
 """
 
@@ -23,7 +23,7 @@ from reportlab.pdfgen.canvas import Canvas
 
 
 
-from .. import cloud, lines as lines_mod, recognise, strokes, template
+from .. import cloud, lines as lines_mod, page, recognise, strokes
 from ..aicache import AICache
 from ..config import Config
 from ..core.model import PaperRead, TodoEntry, WrittenItem
@@ -59,7 +59,7 @@ def _fit(c: Canvas, text: str, font: str, size: float, width: float) -> str:
 
 def to_pt(x: float, y: float, scale: float) -> tuple[float, float]:
     """Tablet units to pt from the page's top-left."""
-    return (x / scale + template.RM_W / 2) / template.UNITS_PER_PT, (y / scale) / template.UNITS_PER_PT
+    return (x / scale + page.RM_W / 2) / page.UNITS_PER_PT, (y / scale) / page.UNITS_PER_PT
 
 
 def row_of(y_pt: float) -> int:
@@ -67,7 +67,7 @@ def row_of(y_pt: float) -> int:
 
 
 def build_pdf(path: Path, entries: list[TodoEntry], pages: int = PAGES, scale: float = 1.0) -> Path:
-    w, h = template.PAGE_W, template.PAGE_H
+    w, h = page.PAGE_W, page.PAGE_H
     by_page: dict[int, list[TodoEntry]] = {}
     for e in entries:
         by_page.setdefault(e.slot // SLOTS_PER_PAGE, []).append(e)

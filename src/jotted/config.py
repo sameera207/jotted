@@ -30,7 +30,6 @@ class ConfigError(Exception):
 @dataclass(frozen=True)
 class PathsConfig:
     cache_dir: Path = Path("./cache")
-    output_dir: Path = Path("./out")
     secrets_dir: Path = Path("./.secrets")
 
 
@@ -40,13 +39,6 @@ class RmapiConfig:
     token_file: Path = Path("./.secrets/rmapi.conf")
     timeout_s: int = 120
     trace: bool = False
-
-
-@dataclass(frozen=True)
-class NotebookConfig:
-    name: str = "Tasks"
-    folder: str = "/"
-    pages: str | list[int] = "all"
 
 
 @dataclass(frozen=True)
@@ -65,24 +57,6 @@ class LinesConfig:
 
 
 @dataclass(frozen=True)
-class CheckboxConfig:
-    styles: list[str] = field(default_factory=lambda: ["bracket_pair", "single_box"])
-    lead_zone: float = 3.0
-    size_min: float = 0.6
-    size_max: float = 2.5
-    bracket_aspect_min: float = 1.5
-    bracket_height_ratio: list[float] = field(default_factory=lambda: [0.7, 1.4])
-    bracket_gap: list[float] = field(default_factory=lambda: [0.3, 2.0])
-    bracket_overlap_min: float = 0.7
-    box_aspect: list[float] = field(default_factory=lambda: [0.6, 1.6])
-    box_closure_max: float = 0.25
-    box_path_ratio: list[float] = field(default_factory=lambda: [0.7, 1.5])
-    required_checks: list[str] = field(default_factory=lambda: ["bracket_aspect", "gap", "closure"])
-    require_text: bool = True
-    min_confidence: float = 0.5
-
-
-@dataclass(frozen=True)
 class RecognitionConfig:
     enabled: bool = True
     provider: str = "anthropic"  # which HandwritingReader adapter reads the lines
@@ -98,21 +72,14 @@ class ClassificationConfig:
     provider: str = "typesafe"  # which LineJudge adapter judges the lines
     model: str = "jev-latest"
     api_key_env: str = "TYPESAFE_API_KEY"
-    todo_threshold: float = 0.6
     continuation_threshold: float = 0.25
     continuation_spacing: float = 0.75
-    checkbox_is_task: bool = False
     context_lines: int = 2
     timeout_s: int = 30
 
 
 @dataclass(frozen=True)
 class TemplateConfig:
-    pages: int = 20
-    header_height: float = 0.08
-    footer_height: float = 0.22
-    line_spacing: float = 0.045
-    strike_width: float = 1.2
     scale: float = 1.0525
 
 
@@ -126,13 +93,6 @@ class ServerConfig:
 
 
 @dataclass(frozen=True)
-class OutputConfig:
-    formats: list[str] = field(default_factory=lambda: ["table", "json", "svg"])
-    svg_scale: float = 0.5
-    keep_runs: int = 50  # run folders kept under output_dir; older ones are deleted. 0 = keep all
-
-
-@dataclass(frozen=True)
 class LoggingConfig:
     level: str = "INFO"
 
@@ -142,15 +102,12 @@ class Config:
     source: Path
     paths: PathsConfig
     rmapi: RmapiConfig
-    notebook: NotebookConfig
     strokes: StrokesConfig
     lines: LinesConfig
-    checkbox: CheckboxConfig
     recognition: RecognitionConfig
     classification: ClassificationConfig
     template: TemplateConfig
     server: ServerConfig
-    output: OutputConfig
     logging: LoggingConfig
 
     def as_dict(self) -> dict[str, Any]:
@@ -171,26 +128,24 @@ class Config:
 SECTIONS: dict[str, type] = {
     "paths": PathsConfig,
     "rmapi": RmapiConfig,
-    "notebook": NotebookConfig,
     "strokes": StrokesConfig,
     "lines": LinesConfig,
-    "checkbox": CheckboxConfig,
     "recognition": RecognitionConfig,
     "classification": ClassificationConfig,
     "template": TemplateConfig,
     "server": ServerConfig,
-    "output": OutputConfig,
     "logging": LoggingConfig,
 }
 
-KNOWN_STYLES = {"bracket_pair", "single_box"}
-KNOWN_FORMATS = {"table", "json", "svg"}
 RECOGNITION_PROVIDERS = {"anthropic"}  # kept in step with recognise.PROVIDERS
 CLASSIFICATION_PROVIDERS = {"typesafe"}  # kept in step with classify.PROVIDERS
-KNOWN_CHECKS = {
-    "bracket_aspect", "height_ratio", "overlap", "gap", "clear_between",  # bracket_pair
-    "box_aspect", "closure", "path_ratio", "clear_inside",  # single_box
-    "size",  # both
+
+# Settings of the retired Tasks notebook: still accepted in old config files, and ignored.
+RETIRED_SECTIONS = {"notebook", "checkbox", "output"}
+RETIRED_KEYS = {
+    "paths": {"output_dir"},
+    "classification": {"todo_threshold", "checkbox_is_task"},
+    "template": {"pages", "header_height", "footer_height", "line_spacing", "strike_width"},
 }
 
 
@@ -267,7 +222,7 @@ def load(path: Path | None = None) -> Config:
     except tomllib.TOMLDecodeError as e:
         raise ConfigError(f"{path}: {e}") from e
 
-    unknown = set(raw) - set(SECTIONS)
+    unknown = set(raw) - set(SECTIONS) - RETIRED_SECTIONS
     if unknown:
         raise ConfigError(f"{path}: unknown section(s): {', '.join(sorted(unknown))}")
 
@@ -282,6 +237,7 @@ def _section(name: str, cls: type, values: dict[str, Any], base: Path) -> Any:
     if not isinstance(values, dict):
         raise ConfigError(f"[{name}] must be a table")
     hints = get_type_hints(cls)
+    values = {k: v for k, v in values.items() if k not in RETIRED_KEYS.get(name, set())}
     unknown = set(values) - set(hints)
     if unknown:
         raise ConfigError(f"[{name}] unknown key(s): {', '.join(sorted(unknown))}")
@@ -311,40 +267,16 @@ def _section(name: str, cls: type, values: dict[str, Any], base: Path) -> Any:
             if not isinstance(value, str):
                 raise ConfigError(f"{where} must be a string")
             kwargs[key] = value
-        elif hint == list[float]:
-            if not (isinstance(value, list) and len(value) == 2 and all(isinstance(x, (int, float)) for x in value)):
-                raise ConfigError(f"{where} must be a [min, max] pair of numbers")
-            lo, hi = (float(x) for x in value)
-            if lo > hi:
-                raise ConfigError(f"{where}: min {lo} is greater than max {hi}")
-            kwargs[key] = [lo, hi]
         elif hint == list[str]:
             if not (isinstance(value, list) and all(isinstance(x, str) for x in value)):
                 raise ConfigError(f"{where} must be a list of strings")
             kwargs[key] = list(value)
-        else:  # notebook.pages: "all", "last" or a list of 1-based page numbers
-            if value in ("all", "last"):
-                kwargs[key] = value
-            elif isinstance(value, list) and value and all(isinstance(x, int) and x >= 1 for x in value):
-                kwargs[key] = list(value)
-            else:
-                raise ConfigError(f'{where} must be "all", "last", or a list of page numbers such as [1, 3]')
+        else:
+            raise ConfigError(f"{where}: unsupported setting type")
     return cls(**kwargs)
 
 
 def _validate(cfg: Config) -> None:
-    cb = cfg.checkbox
-    bad = set(cb.styles) - KNOWN_STYLES
-    if bad:
-        raise ConfigError(f"checkbox.styles: unknown style(s) {sorted(bad)}; known: {sorted(KNOWN_STYLES)}")
-    bad = set(cb.required_checks) - KNOWN_CHECKS
-    if bad:
-        raise ConfigError(f"checkbox.required_checks: unknown check(s) {sorted(bad)}; known: {sorted(KNOWN_CHECKS)}")
-    if not 0 <= cb.min_confidence <= 1:
-        raise ConfigError("checkbox.min_confidence must be between 0 and 1")
-    bad = set(cfg.output.formats) - KNOWN_FORMATS
-    if bad:
-        raise ConfigError(f"output.formats: unknown format(s) {sorted(bad)}; known: {sorted(KNOWN_FORMATS)}")
     if cfg.logging.level.upper() not in ("DEBUG", "INFO", "WARNING", "ERROR"):
         raise ConfigError("logging.level must be DEBUG, INFO, WARNING or ERROR")
     if cfg.recognition.provider not in RECOGNITION_PROVIDERS:
@@ -355,18 +287,13 @@ def _validate(cfg: Config) -> None:
     if cfg.classification.provider not in CLASSIFICATION_PROVIDERS:
         raise ConfigError(f"classification.provider: unknown {cfg.classification.provider!r}; "
                           f"known: {sorted(CLASSIFICATION_PROVIDERS)}")
-    if not 0 <= cfg.classification.todo_threshold <= 1:
-        raise ConfigError("classification.todo_threshold must be between 0 and 1")
     if not 0 <= cfg.classification.continuation_threshold <= 1:
         raise ConfigError("classification.continuation_threshold must be between 0 and 1")
     if cfg.classification.context_lines < 0:
         raise ConfigError("classification.context_lines must be 0 or more")
     if cfg.classification.enabled and not cfg.recognition.enabled:
         raise ConfigError("classification needs recognition: the judge reads the transcribed text")
-    t = cfg.template
-    if t.pages < 1:
-        raise ConfigError("template.pages must be at least 1")
-    if not (0 < t.header_height < 1 and 0 < t.footer_height < 1 and t.header_height + t.footer_height < 0.9):
-        raise ConfigError("template.header_height and footer_height must leave room for the body")
+    if not 0.5 < cfg.template.scale < 2:
+        raise ConfigError("template.scale must be between 0.5 and 2")
     if cfg.rmapi.timeout_s <= 0:
         raise ConfigError("rmapi.timeout_s must be positive")

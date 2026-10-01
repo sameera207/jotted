@@ -50,10 +50,10 @@ def test_set_value_edits_in_place_and_keeps_comments(home):
     text = path.read_text()
     assert 'binary     = "/opt/rm api/rmapi"' in text and "# name on PATH" in text
     assert config.load(path).rmapi.binary == "/opt/rm api/rmapi"
-    config.set_value(path, "notebook", "brand_new", "x")  # a key not there yet goes at the end of its section
+    config.set_value(path, "rmapi", "brand_new", "x")  # a key not there yet goes at the end of its section
     import tomllib
     raw = tomllib.loads(path.read_text())
-    assert raw["notebook"]["brand_new"] == "x" and raw["notebook"]["name"] == "Tasks" and "brand_new" not in raw["strokes"]
+    assert raw["rmapi"]["brand_new"] == "x" and raw["rmapi"]["timeout_s"] == 120 and "brand_new" not in raw["strokes"]
 
 
 # ---------------------------------------------------------------- saved keys

@@ -1,6 +1,6 @@
 # rM Tasks — Common to-do list spec
 
-Oct 1, 2026 · @Sam · stages 1–4 built; stage 5 partly (see Status)
+Oct 2, 2026 · @Sam · stages 1–4 built; stage 5 replaced by retiring the Tasks notebook (see Status)
 
 ## Purpose
 
@@ -45,7 +45,7 @@ The core imports no adapter, no Flask, no rmapi and no SDK. It sees only the por
 | `Repository` | Sources, page hashes, lines seen, action items, settings | `sqlite.Repository` (extends the current store) |
 | `TodoPublisher` | Render the list where you can tick it, and read ticks back | `remarkable.TodoDocument` |
 
-Existing modules stay where they are and are wrapped by the reMarkable adapter. The Tasks notebook flow moves onto the same core in the last stage.
+Existing modules stay where they are and are wrapped by the reMarkable adapter. The separate Tasks notebook flow was retired rather than moved onto the core (stage 5).
 
 ## Incremental reading
 
@@ -81,7 +81,7 @@ Items that disappear from their source are flagged, not deleted.
 
 ### Web app
 
-- **One combined list.** Filter by open or done, owner (mine, others, all) and source folder or document. The Tasks notebook appears as one source among others.
+- **One combined list.** Filter by open or done, owner (mine, others, all) and source folder or document. Items can also be typed in the web app; they are yours and are printed on the To-do document like any other.
 - **Each item shows** an image of its handwritten line and a link to its source page with the line highlighted. reMarkable has no stable deep link into its own apps, so the link goes to our page view, labelled with folder, document and page number.
 - **Settings panel:** pick watched folders from your library's folder tree; set the action threshold, the poll interval, and whether to include others' actions on the tablet.
 
@@ -92,7 +92,7 @@ A generated PDF, `To-do`, in a folder you choose:
 - **Pre-allocated pages:** 2 pages of 20 slots. The page count can't change after creation without losing ticks (`--content-only` keeps the page list).
 - **Fixed slots.** An item keeps its slot (page, row) from the first time it's printed, so your ticks never drift onto another item. A new open item takes the first free slot with no ink on it: ink is never erased, so a row with a tick or writing is never reused.
 - **Each slot shows** a checkbox, the text, and a small source line ("Meeting notes › Weekly sync · p3"). Done items are struck through.
-- **Ticks.** A hand-drawn tick or cross inside a slot's checkbox marks the item done on the next pull. It is read with the same calibrated mapping as the Tasks template (`template.scale`). As in the current store, a paper tick only counts when the ink changed, so re-opening an item on the web isn't undone by the old tick.
+- **Ticks.** A hand-drawn tick or cross inside a slot's checkbox marks the item done on the next pull. It is read with the tablet's calibrated page mapping (`template.scale`). As in the current store, a paper tick only counts when the ink changed, so re-opening an item on the web isn't undone by the old tick.
 - **When the slots run out:** done items on rows without ink leave the document first, and their rows are reused. If that isn't enough, the document is deleted and created again with the open items only, from the top. Ticks are read before that, so none are lost; items written by hand on the old document are printed as text. A document with another page count (an older version's) is rebuilt the same way, and so is one deleted on the tablet.
 
 ## Scheduling
@@ -148,4 +148,4 @@ Every stage keeps the current app working and adds tests that use fake adapters 
 | 2 | Jev action and owner judge; combined list with line images and highlighted source pages | Done. Live on the old `/Tasks` notebook: 7 lines judged, 4 actions |
 | 3 | Settings in the web UI; one background scheduler | Done. Saving settings triggers a check immediately |
 | 4 | To-do document: fixed slots, publish, read ticks | Done. Published live with 11 items. Tick reading is tested with synthetic strokes; a pen test on the tablet is still to do |
-| 5 | Tasks notebook on the core | Partly. Tasks items are in the combined list and on the To-do document, and a tick there marks them done and reprints the Tasks notebook. One scheduler drives everything. Reading and printing the Tasks notebook still run through `sync.py` and `analysis.py` rather than a core port: its kind rules (checkbox, zones, footer) differ from the action judge and need their own port |
+| 5 | Tasks notebook on the core | Replaced (Oct 2): the Tasks notebook was retired instead. The To-do document already covered capture (empty rows) and ticking, so the only gap, adding items in the web app, is now `POST /api/items`. On first start, the old tasks become items (same document and anchor, so watching that notebook later matches them) and keep their To-do rows. `store.py`, `sync.py`, `analysis.py`, `report.py`, `checkbox.py`, the template notebook and the `scan`/`analyse`/`diff`/`push`/`template` commands are gone; old config keys for them are ignored |

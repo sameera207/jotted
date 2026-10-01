@@ -58,7 +58,7 @@
 
   /* ---------------------------------------------------------------- sheets */
   .sheet { position: relative; background: var(--paper); border-radius: 6px; box-shadow: var(--shadow); overflow: hidden; }
-  .sheet + .sheet, .sheet + #pages > .sheet:first-child { margin-top: 16px; }
+  .sheet + .sheet { margin-top: 16px; }
   .ruled { background-image:
       linear-gradient(to right, transparent calc(var(--left) - 1px), var(--margin) calc(var(--left) - 1px),
                       var(--margin) var(--left), transparent var(--left)),
@@ -135,20 +135,6 @@
   .foot { display: flex; flex-direction: column; gap: 2px; padding: 12px 24px 14px calc(var(--left) + 20px);
           font-size: 12.5px; color: var(--muted); border-top: 1px solid var(--rule); background: var(--paper); }
 
-  /* ---------------------------------------------------------------- Tasks notebook: a sheet per page */
-  .toolbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 0 4px 14px; }
-  .page h2 { display: flex; justify-content: space-between; align-items: baseline; margin: 0; height: var(--row);
-             padding: 14px 24px 0 calc(var(--left) + 20px); font-size: 15px; border-bottom: 1px solid var(--rule); }
-  .page h2 a { color: var(--muted); font-weight: normal; font-size: 12px; }
-  .page-body { display: grid; grid-template-columns: minmax(0, 1fr) 260px; }
-  .page-body .item { border-bottom: 1px solid var(--rule); }
-  .no-tasks { color: var(--muted); padding: 14px 24px 14px calc(var(--left) + 20px); font-size: 14px; }
-  .preview { border-left: 1px solid var(--rule); padding: 16px; background: var(--hover); }
-  .preview img { display: block; width: 100%; height: auto; aspect-ratio: 3 / 4; background: #fff;
-                 border-radius: 3px; box-shadow: 0 1px 3px rgba(0, 0, 0, .15); }
-  .preview .cap { color: var(--muted); font-size: 11px; margin-top: 8px; text-align: center; }
-  .log { margin: 14px 4px 0; color: var(--faint); font-size: 12px; }
-
   /* ---------------------------------------------------------------- Settings */
   .settings { padding: 8px 28px 16px; }
   .field { padding: 18px 0; border-top: 1px solid var(--rule); }
@@ -220,10 +206,6 @@
     .icon { opacity: 1; }
     form.write input { padding: 0 14px; }
     .foot { padding: 10px 14px 12px calc(var(--left) + 14px); }
-    .page h2 { padding-left: calc(var(--left) + 14px); padding-right: 14px; }
-    .page-body { grid-template-columns: 1fr; }
-    .preview { border-left: 0; border-top: 1px solid var(--rule); }
-    .preview img { max-width: 320px; margin: 0 auto; }
     .settings { padding: 4px 16px 12px; }
   }
   @media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
@@ -235,12 +217,11 @@
     <span class="brand">Jotted</span>
     <nav class="tabs" role="tablist">
       <button role="tab" data-tab="todo" aria-selected="true">To-do</button>
-      <button role="tab" data-tab="tasks" aria-selected="false">Tasks notebook</button>
       <button role="tab" data-tab="settings" aria-selected="false">Settings</button>
     </nav>
     <div class="status">
       <span id="status" class="row" style="gap:6px" aria-live="polite">Loading…</span>
-      <button id="poll" class="link" title="Check the Tasks notebook, watched folders and the To-do document now">Check now</button>
+      <button id="poll" class="link" title="Check watched folders and the To-do document now">Check now</button>
     </div>
   </div>
   <div id="banner" class="banner" hidden></div>
@@ -281,24 +262,6 @@
     </div>
   </section>
 
-  <!-- The Tasks notebook, page by page -->
-  <section id="tab-tasks" hidden>
-    <div class="toolbar">
-      <button id="pull">Pull from tablet</button>
-      <button id="push" class="primary">Push now</button>
-      <span class="sub" id="tasks-status"></span>
-    </div>
-    <div class="sheet" id="add-sheet">
-      <form class="write" id="add">
-        <span class="gutter" aria-hidden="true"><span></span></span>
-        <input id="new" placeholder="Add a task…" autocomplete="off" aria-label="New task">
-      </form>
-      <footer class="foot" id="addhint"></footer>
-    </div>
-    <div id="pages"></div>
-    <div class="log" id="log"></div>
-  </section>
-
   <!-- Settings -->
   <section id="tab-settings" hidden>
     <div class="sheet"><div class="settings">
@@ -306,7 +269,7 @@
         <div class="label">Watched folders</div>
         <div class="help">Handwriting in these folders is read for action items. New lines are sent to
           Anthropic (as images) and TypeSafe (as text); nothing else leaves this machine.
-          Your Tasks notebook and the To-do document are always handled separately.
+          The To-do document itself is never read this way.
           For a long document, tick <em>New writing only</em> (before or after you watch it): what is
           already in it is skipped, and only pages and lines you add afterwards are read.</div>
         <div class="watching" id="watching" aria-live="polite"></div>
@@ -351,16 +314,16 @@
 
 <dialog id="viewer">
   <header><strong id="viewer-title"></strong><button class="icon" id="viewer-close" aria-label="Close">×</button></header>
-  <div class="ink-line" id="viewer-ink" hidden><img id="viewer-ink-img" alt="The handwritten line"></div>
+  <div class="ink-line" id="viewer-ink"><img id="viewer-ink-img" alt="The handwritten line"></div>
   <img id="viewer-img" alt="">
 </dialog>
 
 <script>
 const $ = (id) => document.getElementById(id);
 let tab = "todo";
-let todo = null, tasks = null, settings = null, library = null;
+let todo = null, settings = null, library = null;
 let filters = { status: "open", owner: "", folder: "" };
-let pollTimer = null, busy = false, lastError = null;
+let pollTimer = null, lastError = null;
 
 function el(tag, attrs = {}, ...children) {
   const node = document.createElement(tag);
@@ -424,10 +387,8 @@ function schedule(active) {
 }
 
 async function refresh() {
-  if (busy) return schedule(true);
   try {
-    if (tab === "tasks") { tasks = await api("GET", "/api/state"); renderTasks(); schedule(renderStatus(tasks.background)); }
-    else { await loadTodo(); }
+    await loadTodo();
   } catch (e) { banner(e.message, "error"); schedule(false); }
 }
 
@@ -443,14 +404,14 @@ async function loadTodo() {
 
 function sourceLabel(item) {
   const s = item.source;
-  if (item.kind === "task") return `${s.name}${s.page ? ` · p${s.page}` : ""}`;
+  if (item.origin === "web") return "added here";
   if (item.written) return `${s.name} · p${s.page}`;
   return `${(s.folder || "/").replace(/^\//, "") || "Library"} › ${s.name} · p${s.page}`;
 }
 
 // Where an item came from, as a mark and a label. New sources (Google Tasks…) add a mark here.
 function sourceMark(item) {
-  if (item.kind === "task" && item.source.origin === "web") return { cls: "web", mark: "+", title: "Added here" };
+  if (item.origin === "web") return { cls: "web", mark: "+", title: "Added here" };
   return { cls: "rm", mark: "rM", title: "reMarkable" };
 }
 
@@ -486,7 +447,8 @@ function renderTodo() {
   const watched = todo.settings.watch || [];
   $("todo-hint").textContent = (watched.length ? `Collecting from ${watched.join(", ")}.` :
       "No folders watched yet: choose some in Settings.") +
-    " New tasks go to the Tasks notebook." + (todo.settings.todo_enabled ? " Also on the tablet as “" + todo.settings.todo_name + "”." : "");
+    (todo.settings.todo_enabled ? ` Everything open is also on the tablet as “${todo.settings.todo_name}”, including what you add here.`
+                                : " Turn on the To-do document in Settings to tick items on the tablet.");
 
   const mine = (i) => i.owner === "me";
   const groups = [
@@ -510,34 +472,28 @@ function renderTodo() {
 }
 
 function todoRow(it) {
-  const path = `/api/items/${it.kind}/${it.id}`;
+  const path = `/api/items/${it.id}`;
   const tags = [];
   if (it.owner === "someone_else") tags.push(el("span", { class: "tag other" }, "→ someone else"));
   if (it.owner === "unclear") tags.push(el("span", { class: "tag" }, "owner unclear"));
-  const hasSource = it.kind === "action" || !!it.source.anchor;
+  const web = it.origin === "web";
   return itemRow({
     done: it.status === "done", text: it.text,
     onToggle: async (on) => { await api("PATCH", path, { status: on ? "done" : "open" }); await loadTodo(); },
     onEdit: (v) => api("PATCH", path, { text: v }).then(loadTodo),
     tags, was: it.edited && it.paper_text ? it.paper_text : null,
     source: { ...sourceMark(it), label: sourceLabel(it) },
-    onSource: hasSource ? () => openSource(it) : null,
-    onRemove: it.kind === "action" ? async () => { await api("PATCH", path, { dismissed: true }); await loadTodo(); } : null,
-    removeTitle: "Not an action: remove from the list",
+    onSource: web ? null : () => openSource(it),
+    onRemove: async () => { await api("PATCH", path, { dismissed: true }); await loadTodo(); },
+    removeTitle: web ? "Delete" : "Not an action: remove from the list",
   });
 }
 
 function openSource(it) {
-  const s = it.source;
-  const src = it.kind === "action"
-    ? `/api/sources/${encodeURIComponent(s.doc_id)}/${s.page}/preview.svg?anchor=${encodeURIComponent(s.anchor)}`
-    : `/api/pages/${s.page}/preview.svg`;
+  const s = it.source, doc = encodeURIComponent(s.doc_id);
   $("viewer-title").textContent = sourceLabel(it);
-  $("viewer-ink").hidden = it.kind !== "action";
-  if (it.kind === "action") {
-    $("viewer-ink-img").src = `/api/sources/${encodeURIComponent(s.doc_id)}/line/${encodeURIComponent(s.anchor)}.svg`;
-  }
-  $("viewer-img").src = src;
+  $("viewer-ink-img").src = `/api/sources/${doc}/line/${encodeURIComponent(s.anchor)}.svg`;
+  $("viewer-img").src = `/api/sources/${doc}/${s.page}/preview.svg?anchor=${encodeURIComponent(s.anchor)}`;
   $("viewer-img").alt = `Page ${s.page} of ${s.name}`;
   $("viewer").showModal();
 }
@@ -563,73 +519,6 @@ function bindSeg(id, key) {
     filters[key] = b.dataset.v;
     act(loadTodo);
   });
-}
-
-// ------------------------------------------------------------ Tasks notebook
-
-function renderTasks() {
-  const s = tasks, nb = s.notebook;
-  $("tasks-status").textContent = nb ? `Pulled ${ago(nb.last_pull_at)} · pushed ${ago(nb.last_push_at)}` +
-    (s.pending_push ? " · changes waiting to be written" : "") : `${s.notebook_name}: not pulled yet.`;
-  $("push").disabled = busy || !s.writable;
-  $("push").title = s.writable ? "Print web changes into the notebook's PDF" : "Only template notebooks can be written to";
-  $("pull").disabled = busy;
-  $("new").disabled = !nb;
-  $("add-sheet").hidden = !nb;
-  $("addhint").textContent = nb ? `New tasks go in the footer of page ${s.current_page}.` +
-    (s.writable ? " Changes are written to the tablet automatically." : "") : "";
-  const root = $("pages");
-  root.replaceChildren();
-  if (!s.pages.length) root.append(el("div", { class: "sheet" }, el("div", { class: "empty" },
-    nb ? "No tasks found yet." : `${s.notebook_name} hasn't been pulled from the tablet yet.`)));
-  const version = nb ? encodeURIComponent([nb.last_pull_at, nb.web_changed_at, nb.last_push_at].join("|")) : "";
-  for (const page of s.pages) {
-    const head = el("h2", {}, el("span", {}, `Page ${page.index}` + (page.date ? ` · ${page.date}` : "")),
-      el("a", { href: `/api/pages/${page.index}.svg`, target: "_blank", title: "Line bands, kinds and text" }, "what was read"));
-    const list = el("ul");
-    for (const t of page.tasks) list.append(taskRow(t));
-    const src = `/api/pages/${page.index}/preview.svg?v=${version}`;
-    const preview = el("div", { class: "preview" },
-      el("a", { href: src, target: "_blank", title: "Open full size" },
-        el("img", { src, alt: `Page ${page.index} as the tablet shows it`, loading: "lazy" })),
-      el("div", { class: "cap" }, s.pending_push ? "After the next write" : "As on the tablet"));
-    root.append(el("section", { class: "sheet page" }, head,
-      el("div", { class: "page-body" }, page.tasks.length ? list : el("div", { class: "no-tasks" }, "No tasks on this page."), preview)));
-  }
-  const log = $("log");
-  log.replaceChildren();
-  for (const x of s.syncs || []) {
-    const d = x.detail ? JSON.parse(x.detail) : {};
-    const what = x.kind === "pull" ? `${d.new ?? 0} new, ${(d.text_from_paper ?? 0) + (d.status_from_paper ?? 0)} changed on paper`
-      : `${d.strikes ?? 0} done, ${d.moved ?? 0} edited, ${d.footer ?? 0} in the footer`;
-    log.append(el("div", {}, `${x.kind} · ${ago(x.at)} · ${what}`));
-  }
-}
-
-function taskRow(t) {
-  const patch = async (body) => { tasks = (await api("PATCH", `/api/tasks/${t.id}`, body)).state; renderTasks(); };
-  const tags = t.edited ? [el("span", { class: "tag edited" }, "new text goes in the footer")] : [];
-  return itemRow({
-    done: t.status === "done", text: t.text,
-    onToggle: (on) => patch({ status: on ? "done" : "open" }),
-    onEdit: (v) => patch({ text: v }),
-    tags, was: t.edited ? t.paper_text : null,
-    source: t.origin === "web" ? { cls: "web", mark: "+", title: "Added here", label: "added here" }
-                               : { cls: "rm", mark: "rM", title: "reMarkable", label: "handwritten" },
-    onRemove: t.origin === "web" ? async () => { tasks = (await api("DELETE", `/api/tasks/${t.id}`)).state; renderTasks(); } : null,
-    removeTitle: "Delete",
-  });
-}
-
-async function syncAction(kind) {
-  const btn = $(kind), label = btn.textContent;
-  busy = true; btn.replaceChildren(el("span", { class: "spinner" }), kind === "pull" ? "Pulling…" : "Writing…");
-  try {
-    const r = await api("POST", `/api/${kind}`);
-    tasks = r.state; renderTasks();
-    banner(kind === "pull" ? `Pulled: ${r.summary.new} new task(s).` : `Written: ${r.strikes} done, ${r.moved} edited, ${r.footer} in the footer.`);
-  } catch (e) { banner(e.message, "error"); }
-  finally { busy = false; btn.textContent = label; refresh(); }
 }
 
 // ------------------------------------------------------------ Settings
@@ -809,7 +698,7 @@ $("todo-name").addEventListener("change", () => saveSoon());
 function showTab(name) {
   tab = name;
   for (const b of document.querySelectorAll("nav.tabs button")) b.setAttribute("aria-selected", b.dataset.tab === name ? "true" : "false");
-  for (const s of ["todo", "tasks", "settings"]) $("tab-" + s).hidden = s !== name;
+  for (const s of ["todo", "settings"]) $("tab-" + s).hidden = s !== name;
   banner("");
   if (name === "settings") act(loadSettings);
   refresh();
@@ -819,17 +708,14 @@ bindSeg("f-status", "status");
 bindSeg("f-owner", "owner");
 $("f-folder").addEventListener("change", () => { filters.folder = $("f-folder").value; act(loadTodo); });
 $("poll").addEventListener("click", () => act(async () => { await api("POST", "/api/poll"); setTimeout(refresh, 500); }));
-$("pull").addEventListener("click", () => syncAction("pull"));
-$("push").addEventListener("click", () => syncAction("push"));
 $("viewer-close").addEventListener("click", () => $("viewer").close());
 $("viewer").addEventListener("click", (e) => { if (e.target === $("viewer")) $("viewer").close(); });
-async function addTask(input) {
+async function addItem(input) {
   const text = input.value.trim(); if (!text) return;
-  await act(async () => { await api("POST", "/api/tasks", { text }); input.value = ""; await refresh(); });
+  await act(async () => { await api("POST", "/api/items", { text }); input.value = ""; await loadTodo(); });
 }
-$("add").addEventListener("submit", (e) => { e.preventDefault(); addTask($("new")); });
 $("today").textContent = new Date().toLocaleDateString(undefined, { weekday: "long", day: "numeric", month: "long" });
-$("add-todo").addEventListener("submit", (e) => { e.preventDefault(); addTask($("new-todo")); });
+$("add-todo").addEventListener("submit", (e) => { e.preventDefault(); addItem($("new-todo")); });
 
 if (location.hash === "#settings") { history.replaceState(null, "", location.pathname); showTab("settings"); }  // `jotted start`, first time
 else refresh();

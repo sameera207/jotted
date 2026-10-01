@@ -3,7 +3,6 @@ import os
 import random
 import stat
 import sys
-import textwrap
 from pathlib import Path
 
 import pytest
@@ -11,8 +10,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parent))
 import synth  # noqa: E402
 
-from jotted import analysis, cli, cloud, config, notebook, strokes  # noqa: E402
-from jotted.checkbox import candidate, detect  # noqa: E402
+from jotted import cloud, config, notebook, strokes  # noqa: E402
 from jotted.lines import Line, cluster  # noqa: E402
 from jotted.strokes import make_stroke  # noqa: E402
 
@@ -40,7 +38,15 @@ def to_strokes(paths, first_id=100):
 def test_example_config_loads_and_resolves_paths(cfg, tmp_path):
     assert cfg.paths.cache_dir == (tmp_path / "cache").resolve()
     assert cfg.rmapi.token_file == (tmp_path / ".secrets/rmapi.conf").resolve()
-    assert cfg.checkbox.bracket_gap == [0.3, 2.0]
+    assert cfg.template.scale == 1.0525
+
+
+def test_old_config_files_still_load(tmp_path):
+    p = tmp_path / "c.toml"
+    p.write_text('[paths]\noutput_dir = "./out"\n[notebook]\nname = "Tasks"\n[checkbox]\nlead_zone = 3.0\n'
+                 '[output]\nkeep_runs = 50\n[classification]\ntodo_threshold = 0.6\n'
+                 '[template]\npages = 20\nscale = 1.05\n')
+    assert config.load(p).template.scale == 1.05
 
 
 @pytest.mark.parametrize(
@@ -48,9 +54,7 @@ def test_example_config_loads_and_resolves_paths(cfg, tmp_path):
     [
         ("[nope]\n", "unknown section"),
         ("[lines]\nband_tolrance = 1\n", "unknown key"),
-        ('[notebook]\npages = "first"\n', "notebook.pages"),
-        ("[checkbox]\nbox_aspect = [2, 1]\n", "greater than max"),
-        ('[checkbox]\nstyles = ["circle"]\n', "unknown style"),
+        ("[template]\nscale = 3\n", "template.scale"),
         ('[recognition]\nprovider = "nope"\n', "recognition.provider"),
         ('[classification]\nprovider = "nope"\n', "classification.provider"),
     ],
@@ -79,7 +83,7 @@ def test_load_strokes_drops_deleted_ignored_and_dots(tmp_path, cfg):
     assert strokes.load_strokes(tmp_path / "b.rm", cfg.strokes) == []
 
 
-# ---------------------------------------------------------------- lines and checkboxes
+# ---------------------------------------------------------------- lines
 
 
 def test_cluster_separates_lines_and_places_tall_strokes(cfg):
@@ -93,77 +97,14 @@ def test_cluster_separates_lines_and_places_tall_strokes(cfg):
     assert [s.points[0] for s in unassigned] == [far[0]]
 
 
-def test_demo_page_detection_matches_expected(cfg):
-    paths, expected = synth.demo_page()
-    lines, _ = cluster(to_strokes(paths), cfg.lines)
-    got = []
-    for ln in lines:
-        cb = detect(ln, cfg.checkbox)
-        got.append("note" if cb is None else ("task" if cb.text else "empty_checkbox"))
-    assert got == expected
+# ---------------------------------------------------------------- documents
 
 
-def test_letters_do_not_pass_as_brackets(cfg):
-    # Two tall narrow letters close together, e.g. "ll": aspect passes, gap must not.
-    paths = [[(0, 0), (4, 40)], [(8, 0), (12, 40)]] + synth.text(20, 20, 2)
-    line = Line(to_strokes(paths))
-    line.strokes.sort(key=lambda s: s.x0)
-    assert detect(line, cfg.checkbox) is None
-
-
-def test_scribble_is_not_a_box(cfg):
-    rng = random.Random(5)
-    scribble = [(rng.uniform(0, 40), rng.uniform(0, 40)) for _ in range(30)] + [(1, 1)]
-    paths = [[(0, 0)] + scribble] + synth.text(60, 20, 2)
-    line = Line(sorted(to_strokes(paths), key=lambda s: s.x0))
-    cb = candidate(line, cfg.checkbox)
-    assert cb is None or cb.style != "single_box" or cb.checks["path_ratio"] is False
-
-
-def test_lone_checkbox_has_no_text(cfg):
-    line = Line(to_strokes(synth.bracket_pair(0, 20)))
-    assert detect(line, cfg.checkbox).text == []
-
-
-# ---------------------------------------------------------------- notebook and end to end
-
-
-def test_notebook_page_order_and_selection(tmp_path, cfg):
-    p = synth.rmdoc(tmp_path / "x.rmdoc", [synth.rm_bytes([[(0, 0), (1, 1)]])] * 3)
-    nb = notebook.open_notebook(p, tmp_path / "unpacked")
-    assert [pg.index for pg in nb.pages] == [1, 2, 3]
-    assert nb.name == "Tasks" and nb.id == "doc-0001"
-    assert all(pg.rm_path and pg.rm_path.is_file() for pg in nb.pages)
-    assert [pg.index for pg in notebook.select_pages(nb.pages, "last")] == [3]
-    assert [pg.index for pg in notebook.select_pages(nb.pages, [1, 3, 9])] == [1, 3]
-
-
-def _scan(tmp_path, paths, ids, name):
-    doc = synth.rmdoc(tmp_path / f"{name}.rmdoc", [synth.rm_bytes(paths, ids=ids)])
-    assert cli.main(["analyse", str(doc)]) == 0
-    return sorted((tmp_path / "out").iterdir())[-1]
-
-
-def test_analyse_then_diff_proves_anchor_stability(tmp_path, cfg, capsys):
-    paths, expected = synth.demo_page()
-    ids = list(range(100, 100 + len(paths)))
-    run_a = _scan(tmp_path, paths, ids, "a")
-    report = json.loads((run_a / "report.json").read_text())
-    kinds = [ln["kind"] for ln in report["pages"][0]["lines"]]
-    assert kinds == expected
-    assert (run_a / "page-01.svg").read_text().startswith("<svg")
-
-    # Edit elsewhere: a new note line mid-page, with fresh stroke IDs. Existing strokes keep theirs.
-    new = synth.text(-600, 245, 3)
-    run_b = _scan(tmp_path, paths + new, ids + list(range(900, 900 + len(new))), "b")
-    assert cli.main(["diff", str(run_a), str(run_b)]) == 0
-    assert "missing 0" in capsys.readouterr().out
-
-    # If the strokes were re-created (new IDs), diff must fail.
-    shifted = [i + 5000 for i in ids]
-    run_c = _scan(tmp_path, paths, shifted, "c")
-    assert cli.main(["diff", str(run_a), str(run_c)]) == 1
-    assert "MISSING" in capsys.readouterr().out
+def test_page_order_follows_the_tablet_and_skips_deleted_pages():
+    content = {"cPages": {"pages": [{"id": "b", "idx": {"value": "bb"}}, {"id": "a", "idx": {"value": "ba"}},
+                                    {"id": "x", "idx": {"value": "aa"}, "deleted": {"value": 1}}]}}
+    assert notebook.page_order(content) == ["a", "b"]
+    assert notebook.page_order({"pages": ["p1", "p2"]}) == ["p1", "p2"]
 
 
 # ---------------------------------------------------------------- cloud wrapper, with a fake rmapi
@@ -195,12 +136,11 @@ def test_cloud_flow_with_fake_rmapi(tmp_path, cfg, monkeypatch):
     assert stat.S_IMODE(token.parent.stat().st_mode) == 0o700
     assert stat.S_IMODE(token.stat().st_mode) == 0o600
 
-    ref = cloud.find_notebook(cfg)
+    ref = cloud.find_document(cfg, "Tasks")  # the document, not the folder of the same name
     assert (ref.id, ref.version) == ("abc", 42)
     path = cloud.download(cfg, ref)
     assert path == cfg.paths.cache_dir / "abc.rmdoc"
-    nb = notebook.open_notebook(path, cfg.paths.cache_dir / "unpacked")
-    assert nb.version == 42  # from the sidecar written by download()
+    assert json.loads(path.with_suffix(".json").read_text())["version"] == 42
 
     for line in calls.read_text().splitlines():
         conf, trace, _ = line.split("|")
@@ -209,42 +149,9 @@ def test_cloud_flow_with_fake_rmapi(tmp_path, cfg, monkeypatch):
 
 # ---------------------------------------------------------------- recognition and classification (stubbed)
 
-from jotted import classify as classify_mod, recognise, report  # noqa: E402
+from jotted import classify as classify_mod, recognise  # noqa: E402
 from jotted.aicache import AICache  # noqa: E402
-from jotted.classify import Judgment  # noqa: E402
 from jotted.recognise import Transcript  # noqa: E402
-
-
-def _result(t=None, j=None, geo="note"):
-    line = Line(to_strokes([[(0, 0), (10, 10)]]))
-    return report.LineResult(line=line, kind="note", checkbox=None, geometric_kind=geo, transcript=t, judgment=j)
-
-
-def _j(p_todo, choice=None):
-    rest = (1 - p_todo) / 2
-    probs = {"todo": p_todo, "note": rest, "heading": rest}
-    return Judgment(n=1, choice=choice or max(probs, key=probs.get), probabilities=probs, confidence=0.9)
-
-
-@pytest.mark.parametrize(
-    "t, j, checkbox_is_task, expected",
-    [
-        (None, None, False, "task"),  # recognition off: geometry decides
-        (Transcript(1, "empty", ""), None, False, "empty_checkbox"),
-        (Transcript(1, "empty", "call Bob"), _j(0.9), False, "task"),
-        (Transcript(1, "checked", "call Bob"), _j(0.9), False, "done"),
-        (Transcript(1, "none", "buy milk"), _j(0.8), False, "task"),  # no box, still a task
-        (Transcript(1, "empty", "o options"), _j(0.5), False, "note"),
-        (Transcript(1, "empty", "o options"), _j(0.5), True, "task"),  # the box wins when configured
-        (Transcript(1, "none", "Monday 29 Sep"), _j(0.05, "heading"), False, "heading"),
-        (Transcript(1, "empty", "call Bob"), None, False, "task"),  # classification off
-    ],
-)
-def test_kind_policy(cfg, t, j, checkbox_is_task, expected):
-    import dataclasses
-
-    cfg = dataclasses.replace(cfg, classification=dataclasses.replace(cfg.classification, checkbox_is_task=checkbox_is_task))
-    assert analysis.decide(_result(t, j, geo="task"), cfg) == expected
 
 
 def test_render_line_is_png(cfg):
@@ -339,15 +246,11 @@ def test_providers_are_registered_and_checked(cfg, monkeypatch):
 
 
 class _FakeJudge:
-    """Any provider: every line is a todo, every pair continues (P 0.9), every line is my action."""
+    """Any provider: every pair continues (P 0.9), every line is my action."""
     model = "fake-judge"
 
     def __init__(self):
         self.calls: list[tuple] = []
-
-    def kinds(self, lines, targets, context):
-        self.calls.append(("kinds", [lines[i].n for i in targets], context))
-        return {i: classify_mod.KindAnswer("todo", {"todo": 0.9, "note": 0.05, "heading": 0.05}, 0.9) for i in targets}
 
     def continues(self, lines, pairs):
         self.calls.append(("continues", [(lines[q.above].n, lines[q.below].n) for q in pairs]))
@@ -357,15 +260,6 @@ class _FakeJudge:
         from jotted.core.model import Judgment as ActionJudgment
         self.calls.append(("actions", document, [lines[i].text for i in targets]))
         return {i: ActionJudgment(p_action=0.95, owner="me") for i in targets}
-
-
-def test_any_judge_plugs_in_for_line_kinds_and_is_cached(tmp_path, cfg):
-    ts = {1: Transcript(1, "empty", "call Bob"), 2: Transcript(2, "none", ""), 3: Transcript(3, "none", "notes")}
-    judge, cache = _FakeJudge(), AICache(tmp_path / "ai")
-    got = classify_mod.classify(ts, cfg.classification, cache, judge=judge)
-    assert judge.calls == [("kinds", [1, 3], cfg.classification.context_lines)]  # empty lines are not judged
-    assert got[1].p_todo == 0.9 and not got[1].cached
-    assert classify_mod.classify(ts, cfg.classification, cache, judge=judge)[3].cached and len(judge.calls) == 1
 
 
 def test_any_judge_plugs_in_for_continuations(tmp_path, cfg):
@@ -407,40 +301,6 @@ def test_judge_providers_are_registered_and_checked(cfg, monkeypatch):
         classify_mod.judge_for(cfg.classification)
     with pytest.raises(classify_mod.ClassificationError, match="unknown classification provider"):
         classify_mod.judge_for(dataclasses.replace(cfg.classification, provider="nope"))
-
-
-def test_classify_builds_one_question_per_line_and_caches(tmp_path, cfg, monkeypatch):
-    seen = {}
-
-    class FakeClient:
-        def __init__(self, **kw):
-            pass
-
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *a):
-            return False
-
-        def system_one(self, state, questions):
-            from types import SimpleNamespace as NS
-            seen["state"], seen["questions"] = state, questions
-            choices = {q: NS(choice="todo", probabilities={"todo": 0.8, "note": 0.15, "heading": 0.05}, confidence=0.7)
-                       for q in questions}
-            return NS(choices=choices, model="jev-test", request_id="req_test")
-
-    from jotted.adapters import typesafe_judge
-
-    monkeypatch.setattr(typesafe_judge, "TypeSafeClient", FakeClient)
-    monkeypatch.setenv(cfg.classification.api_key_env, "test-key")
-    ts = {1: Transcript(1, "empty", "call Bob"), 2: Transcript(2, "empty", ""), 3: Transcript(3, "none", "notes")}
-    cache = AICache(tmp_path / "ai")
-    got = classify_mod.classify(ts, cfg.classification, cache)
-    assert set(seen["questions"]) == {"line_1", "line_3"}  # the empty line is not sent
-    assert [ln["n"] for ln in seen["state"]["lines"]] == [1, 3]  # empty lines stay out of Jev's state
-    assert got[1].p_todo == 0.8
-    seen.clear()
-    assert classify_mod.classify(ts, cfg.classification, cache)[3].cached and not seen
 
 
 # ---------------------------------------------------------------- drawings and wrapped lines
@@ -502,129 +362,18 @@ def test_merge_continuations_keeps_first_line_and_anchor():
     a, b, c = _line(synth.text(0, 100, 1), 1, 100), _line(synth.text(0, 140, 1), 2, 200), _line(synth.text(0, 180, 1), 3, 300)
     ts = {1: Transcript(1, "empty", "email the landlord"), 2: Transcript(2, "none", "about the"),
           3: Transcript(3, "none", "broken heater")}
-    merged_lines, merged_ts, parts = analysis.merge_continuations([a, b, c], ts, [(1, 2), (2, 3)])
+    merged_lines, merged_ts, parts = classify_mod.merge_continuations([a, b, c], ts, [(1, 2), (2, 3)])
     assert [ln.n for ln in merged_lines] == [1] and parts == {1: [1, 2, 3]}
     assert merged_ts[1].text == "email the landlord about the broken heater"
     assert merged_ts[1].checkbox == "empty"
     assert merged_lines[0].anchor_id == a.anchor_id
 
 
-def test_drawing_kind(cfg):
-    assert analysis.decide(_result(Transcript(1, "none", "aws → CI", drawing=True), None), cfg) == "drawing"
-
-
-# ---------------------------------------------------------------- PDF template (write path)
-
-import re  # noqa: E402
-
-from jotted import template  # noqa: E402
-
-
-def test_to_pdf_maps_page_corners():
-    assert template.to_pdf(-702, 0) == (0, template.PAGE_H)
-    assert template.to_pdf(702, 1872) == (template.PAGE_W, 0)
-    assert template.to_pdf(0, 936) == (template.PAGE_W / 2, template.PAGE_H / 2)
-    x, y = template.to_pdf(-425 * 1.0525, 1118 * 1.0525, 1.0525)
-    assert abs(x - (702 - 425) / 3) < 1e-6 and abs(y - (template.PAGE_H - 1118 / 3)) < 1e-6
-
-
-def test_zones(cfg):
-    z = template.zones(cfg.template)
-    assert z.of(50) == "header" and z.of(900) == "body" and z.of(1800) == "footer"
-
-
-def test_build_keeps_requested_page_count(tmp_path, cfg):
-    pdf = template.build(tmp_path / "T.pdf", cfg.template, {2: template.PageState(strikes=[(-300, 200, 600)],
-                                                                                 footer=["buy milk"])}, page_count=3)
-    data = pdf.read_bytes()
-    assert data.startswith(b"%PDF") and len(re.findall(rb"/Type /Page[^s]", data)) == 3
-
-
-def test_zoned_analysis_reads_only_body_as_tasks(tmp_path, cfg):
-    z = template.zones(cfg.template)
-    header = synth.text(-600, z.header_bottom / 2, 1)
-    body = synth.bracket_pair(-600, 700) + synth.text(-480, 700, 2)
-    footer = synth.bracket_pair(-600, z.footer_top + 100) + synth.text(-480, z.footer_top + 100, 2)
-    doc = synth.rmdoc(tmp_path / "t.rmdoc", [synth.rm_bytes(header + body + footer)], file_type="pdf")
-    run = analysis.analyse_notebook(doc, cfg)
-    kinds = [(r.zone, r.kind) for r in run.pages[0].lines]
-    assert kinds == [("header", "header"), ("body", "task"), ("footer", "footer")]
-    assert run.notebook["file_type"] == "pdf" and run.page_count == 1
-
-
-# ---------------------------------------------------------------- task store and web app
-
-from jotted.server import create_app  # noqa: E402
-from jotted.store import Store  # noqa: E402
-
-
-def _template_run(tmp_path, cfg, paths, ids=None, name="t"):
-    doc = synth.rmdoc(tmp_path / f"{name}.rmdoc", [synth.rm_bytes(paths, ids=ids)], file_type="pdf")
-    return analysis.analyse_notebook(doc, cfg)
-
-
-def _stub_ai(monkeypatch, texts):
-    """Transcripts by line order; every line with text is a todo."""
-    def transcribe(lines_, cfg_, cache):
-        return {ln.n: Transcript(ln.n, "none", texts.get(ln.n, f"task {ln.n}")) for ln in lines_}
-
-    def judge(ts, cfg_, cache):
-        return {n: Judgment(n, "todo", {"todo": 0.9, "note": 0.05, "heading": 0.05}, 0.9) for n in ts}
-
-    monkeypatch.setattr(recognise, "transcribe", transcribe)
-    monkeypatch.setattr(classify_mod, "classify", judge)
-    monkeypatch.setattr(classify_mod, "continuations", lambda *a: [])
-
-
-@pytest.fixture
-def ai_cfg(cfg):
-    import dataclasses
-
-    return dataclasses.replace(
-        cfg,
-        recognition=dataclasses.replace(cfg.recognition, enabled=True),
-        classification=dataclasses.replace(cfg.classification, enabled=True),
-    )
-
-
-BODY = synth.text(-600, 600, 2) + synth.text(-600, 800, 2)
-
-
-def test_store_pull_then_web_edits_become_print_instructions(tmp_path, ai_cfg, monkeypatch):
-    _stub_ai(monkeypatch, {})
-    store = Store(tmp_path / "db.sqlite")
-    run = _template_run(tmp_path, ai_cfg, BODY)
-    s = store.apply_run(run, "2026-09-29T10:00:00Z")
-    assert s.new == 2
-    nid = run.notebook["id"]
-    tasks = [t for p in store.state(nid)["pages"] for t in p["tasks"]]
-    first, second = tasks
-    store.edit_task(first["id"], status="done")
-    store.edit_task(second["id"], text="new wording")
-    store.add_web_task(nid, "from the web")
-    assert store.state(nid)["pending_push"]
-
-    pages, snapshot = store.page_states(nid)
-    ps = pages[1]
-    assert len(ps.strikes) == 1 and abs(ps.strikes[0][2] - 600) < 20  # done: struck through
-    assert len(ps.moved) == 1 and ps.moved[0][1] == 1  # edited: outlined and numbered, not struck
-    assert abs((ps.moved[0][0][0][1] + ps.moved[0][0][0][3]) / 2 - 800) < 20
-    assert ps.footer == [("new wording", False, 1), ("from the web", False)]
-
-    store.record_push(nid, run.run_id, {}, snapshot)
-    assert not store.state(nid)["pending_push"]
-    store.edit_task(first["id"], status="open")  # a change after the snapshot stays pending
-    assert store.state(nid)["pending_push"]
-
-
-def test_template_draws_moved_marks_and_numbered_footer(tmp_path, cfg):
-    ps = template.PageState(moved=[([(-600, 580, -200, 620), (-600, 640, -300, 680)], 1)],
-                            footer=[("new wording", False, 1), ("web task", True)])
-    pdf = template.build(tmp_path / "m.pdf", cfg.template, {1: ps}, page_count=1)
-    assert pdf.read_bytes().startswith(b"%PDF")
+# ---------------------------------------------------------------- web edits reach the tablet once
 
 
 def test_scheduler_coalesces_bursts_of_edits():
+    import threading
     import time as _time
 
     from jotted.app import Scheduler
@@ -632,16 +381,11 @@ def test_scheduler_coalesces_bursts_of_edits():
     class FakeApp:
         pushes = 0
 
-        def tasks_push_if_pending(self):
-            FakeApp.pushes += 1
-            return True
-
         def sync_todo(self):
+            FakeApp.pushes += 1
             return {}
 
     sched = Scheduler(FakeApp(), push_delay_s=0.2)
-    import threading
-
     threading.Thread(target=sched._push_loop, daemon=True).start()
     for _ in range(5):
         sched.push_soon()
@@ -655,85 +399,8 @@ def test_scheduler_coalesces_bursts_of_edits():
     assert FakeApp.pushes == 1 and not sched.describe()["push"]["scheduled"]
 
 
-def test_most_recent_change_wins(tmp_path, ai_cfg, monkeypatch):
-    _stub_ai(monkeypatch, {1: "call Bob"})
-    store = Store(tmp_path / "db.sqlite")
-    run = _template_run(tmp_path, ai_cfg, BODY)
-    store.apply_run(run, "2026-09-29T10:00:00Z")
-    nid = run.notebook["id"]
-    task = next(t for p in store.state(nid)["pages"] for t in p["tasks"] if t["text"] == "call Bob")
-
-    store.edit_task(task["id"], text="call Bob about invoices")  # web edit, now
-
-    # The paper text changes, but in a notebook version older than the web edit: the web wins.
-    _stub_ai(monkeypatch, {1: "call Robert"})
-    store.apply_run(_template_run(tmp_path, ai_cfg, BODY, name="t2"), "2026-09-29T10:05:00Z")
-    t = store.task(task["id"])
-    assert t["text"] == "call Bob about invoices" and t["paper_text"] == "call Robert"
-
-    # A newer paper change wins over the web edit.
-    _stub_ai(monkeypatch, {1: "call Roberta"})
-    store.apply_run(_template_run(tmp_path, ai_cfg, BODY, name="t3"), "2999-01-01T00:00:00Z")
-    assert store.task(task["id"])["text"] == "call Roberta"
-
-
-def test_task_missing_from_page_is_flagged(tmp_path, ai_cfg, monkeypatch):
-    _stub_ai(monkeypatch, {})
-    store = Store(tmp_path / "db.sqlite")
-    ids = list(range(100, 100 + len(BODY)))
-    run = _template_run(tmp_path, ai_cfg, BODY, ids=ids)
-    store.apply_run(run, "2026-09-29T10:00:00Z")
-    first_line = synth.text(-600, 600, 2)
-    run2 = _template_run(tmp_path, ai_cfg, first_line, ids=ids[: len(first_line)], name="t2")
-    assert store.apply_run(run2, "2026-09-29T10:05:00Z").missing == 1
-
-
-def test_web_api(tmp_path, ai_cfg, monkeypatch):
-    _stub_ai(monkeypatch, {})
-    store = Store(tmp_path / "db.sqlite")
-    run = _template_run(tmp_path, ai_cfg, BODY)
-
-    from jotted import sync
-
-    def fake_pull(cfg_, store_, console=None):
-        summary = store_.apply_run(run, "2026-09-29T10:00:00Z")
-        return sync.PullResult(doc=None, run=run, summary=summary, rmdoc=None)
-
-    pushes = []
-    monkeypatch.setattr(sync, "pull", fake_pull)
-    monkeypatch.setattr(sync, "push", lambda cfg_, store_, **kw: pushes.append(1))
-    import dataclasses
-
-    app_cfg = dataclasses.replace(
-        ai_cfg,
-        notebook=dataclasses.replace(ai_cfg.notebook, name=run.notebook["name"]),
-        server=dataclasses.replace(ai_cfg.server, auto_push_delay_s=0),
-    )
-    client = create_app(app_cfg, store, background=False).test_client()
-
-    assert client.get("/").status_code == 200
-    assert client.get("/api/state").get_json()["notebook"] is None
-    assert client.post("/api/tasks", json={"text": "x"}).status_code == 400  # not pulled yet
-
-    r = client.post("/api/pull").get_json()
-    assert r["summary"]["new"] == 2 and r["state"]["writable"]
-    r = client.post("/api/tasks", json={"text": "Book the retro room"})
-    assert r.status_code == 201
-    web_id = r.get_json()["task"]["id"]
-    paper_id = r.get_json()["state"]["pages"][0]["tasks"][0]["id"]
-
-    t = client.patch(f"/api/tasks/{paper_id}", json={"status": "done"}).get_json()["task"]
-    assert t["status"] == "done"
-    assert client.delete(f"/api/tasks/{paper_id}").status_code == 400  # paper tasks can't be deleted
-    assert client.delete(f"/api/tasks/{web_id}").status_code == 200
-    assert client.patch("/api/tasks/999", json={"status": "done"}).status_code == 404
-    import time as _time
-
-    assert client.get("/api/state").get_json()["background"]["push"]["scheduled"]  # edits schedule a write
-
-
-def test_bullets_are_stripped_from_task_text():
-    from jotted.store import clean_text
+def test_bullets_are_stripped_from_item_text():
+    from jotted.adapters.sqlite_repo import clean_text
 
     assert clean_text("- test prod") == "test prod"
     assert clean_text("• call Bob") == "call Bob"
