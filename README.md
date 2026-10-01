@@ -132,10 +132,6 @@ From the command line: `rmtasks library`, `rmtasks watch add "/Meeting Notes"`, 
 
 Code layout: `rmtasks/core` holds the model, ports and services and imports no adapter. `rmtasks/adapters` holds the reMarkable library, Jev, SQLite and To-do document implementations. `rmtasks/app.py` wires them together and runs the background scheduler. See `specs/Common-todo-spec.md`.
 
-## Hosting
-
-To run it on Railway instead of your laptop, see [DEPLOY.md](DEPLOY.md): one Docker service with a volume at `/data`, secrets in Railway variables, and Sign in with Google limited to listed emails (a password is an optional fallback). The server refuses to listen on a public address without a sign-in method.
-
 ## Troubleshooting
 
 | Symptom | Fix |

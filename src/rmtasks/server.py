@@ -11,9 +11,9 @@ from dataclasses import asdict, fields
 from importlib import resources
 from pathlib import Path
 
-from flask import Flask, Response, abort, jsonify, request, session
+from flask import Flask, Response, abort, jsonify, request
 
-from . import auth, sync, template
+from . import sync, template
 from .app import SYNC_ERRORS, App, Scheduler
 from .config import Config
 from .core import service
@@ -25,7 +25,19 @@ log = logging.getLogger("rmtasks")
 
 def create_app(cfg: Config, store: Store | None = None, background: bool = True, app_: App | None = None) -> Flask:
     flask = Flask(__name__)
-    auth_cfg = auth.setup(flask)
+
+    @flask.after_request
+    def security_headers(resp: Response) -> Response:
+        resp.headers.setdefault("X-Frame-Options", "DENY")
+        resp.headers.setdefault("X-Content-Type-Options", "nosniff")
+        resp.headers.setdefault("Referrer-Policy", "same-origin")
+        resp.headers.setdefault(
+            "Content-Security-Policy",
+            "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; "
+            "script-src 'self' 'unsafe-inline'; frame-ancestors 'none'; form-action 'self'; base-uri 'none'",
+        )
+        return resp
+
     core = app_ or App.build(cfg, store)
     store = core.store
     scheduler = Scheduler(core, cfg.server.auto_push_delay_s)
@@ -157,7 +169,6 @@ def create_app(cfg: Config, store: Store | None = None, background: bool = True,
         items = core.repo.items(status=args.get("status") or None, owner=args.get("owner") or None,
                                 folder=args.get("folder") or None)
         return {"items": items, "settings": asdict(core.repo.settings()), "background": scheduler.describe(),
-                "auth": auth_cfg.enabled, "user": session.get("email"),
                 "todo": core.repo.todo_meta(), "sources": core.repo.source_docs()}
 
     @flask.get("/api/todo")
