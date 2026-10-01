@@ -14,7 +14,9 @@ from rmtasks import config, template  # noqa: E402
 from rmtasks.adapters import todo_document  # noqa: E402
 from rmtasks.adapters.sqlite_repo import SqliteRepository  # noqa: E402
 from rmtasks.core import service  # noqa: E402
-from rmtasks.core.model import DocInfo, Judgment, PageInfo, Settings, SourceLine, TodoEntry  # noqa: E402
+from rmtasks.core.model import (  # noqa: E402
+    DocInfo, Judgment, PageInfo, PaperRead, Settings, SourceLine, TodoEntry, WrittenItem,
+)
 from rmtasks.store import Store  # noqa: E402
 from rmtasks.strokes import make_stroke  # noqa: E402
 
@@ -80,6 +82,8 @@ class FakePublisher:
         self.cap = capacity
         self.published: list[list[TodoEntry]] = []
         self.ticks: tuple[set[int], str] | None = None
+        self.written: list[WrittenItem] = []
+        self.occupied_seen: set[int] | None = None
 
     def capacity(self):
         return self.cap
@@ -87,8 +91,13 @@ class FakePublisher:
     def publish(self, entries):
         self.published.append([dataclasses.replace(e) for e in entries])
 
-    def read_ticks(self):
-        return self.ticks
+    def read_paper(self, occupied):
+        self.occupied_seen = set(occupied)
+        if self.ticks is None:
+            return None
+        slots, marker = self.ticks
+        return PaperRead(doc_id="todo-doc", marker=marker, ticks=set(slots),
+                         written=[w for w in self.written if w.slot not in occupied])
 
 
 @pytest.fixture
@@ -340,3 +349,77 @@ def test_todo_endpoints(tmp_path, monkeypatch):
     assert client.put("/api/settings", json={"bogus": 1}).status_code == 400
     s = client.put("/api/settings", json={"watch": ["Meetings/", "/Work"], "todo_enabled": True}).get_json()
     assert s["watch"] == ["/Meetings", "/Work"] and s["todo_enabled"]
+
+
+# ---------------------------------------------------------------- writing on the To-do document
+
+
+def written(slot, text, box_inked=False):
+    return WrittenItem(slot=slot, page_id="tp1", page_index=1, text=text, anchor=f"9:{slot}", key=f"k{slot}",
+                       bbox=(-500, 1000, -100, 1060), box_inked=box_inked)
+
+
+def test_writing_in_an_empty_row_adds_an_item_in_that_row(repo):
+    source, judge, pub = FakeSource(), FakeJudge(), FakePublisher()
+    notes(source)
+    service.collect(source, judge, repo)
+    service.sync_todo(repo, pub)  # slots 0 and 1
+    pub.ticks = (set(), "m1")
+    pub.written = [written(2, "- Book flights to Sydney")]
+    r = service.sync_todo(repo, pub)
+    assert r["written"] == 1 and r["published"]
+    entry = next(e for e in pub.published[-1] if e.slot == 2)
+    assert entry.handwritten and entry.text == "Book flights to Sydney"  # bullet stripped
+    assert entry.ink == (-500, 1000, -100, 1060)
+    item = next(i for i in repo.items() if i["text"] == "Book flights to Sydney")
+    assert item["owner"] == "me" and item["written"] and item["source"]["name"] == "To-do"
+    assert repo.source_line("todo-doc", "9:2") is not None  # its handwriting image works
+
+    # Read again: the row is now occupied, so nothing is added twice.
+    assert service.sync_todo(repo, pub)["written"] == 0 and 2 in pub.occupied_seen
+
+    # A newly collected action takes the next free slot, never the written one.
+    notes(source, modified="2026-10-01T11:00:00Z", extra=[("1:60", "k60", "TODO renew the licence")])
+    service.collect(source, judge, repo)
+    service.sync_todo(repo, pub)
+    assert next(e for e in pub.published[-1] if e.text == "TODO renew the licence").slot == 3
+
+
+def test_a_box_drawn_with_a_new_item_is_not_a_tick(repo):
+    pub = FakePublisher()
+    pub.ticks = ({0}, "m1")
+    pub.written = [written(0, "Call the bank", box_inked=True)]
+    r = service.sync_todo(repo, pub)
+    assert r["written"] == 1 and r["ticked"] == 0
+    item = next(i for i in repo.items() if i["text"] == "Call the bank")
+    assert item["status"] == "open"
+
+
+def test_done_and_edited_handwritten_items(tmp_path, repo):
+    pub = FakePublisher()
+    pub.ticks = (set(), "m1")
+    pub.written = [written(0, "Call the bank")]
+    service.sync_todo(repo, pub)
+    item = next(i for i in repo.items() if i["text"] == "Call the bank")
+    repo.edit_action(item["id"], text="Call the bank about the card", status="done")
+    service.sync_todo(repo, pub)
+    e = pub.published[-1][0]
+    assert e.handwritten and e.done and e.edited and e.text == "Call the bank about the card"
+    pdf = todo_document.build_pdf(tmp_path / "t.pdf", pub.published[-1], scale=1.0525)
+    assert pdf.read_bytes().startswith(b"%PDF")
+
+
+def test_written_rows_groups_handwriting_by_row():
+    scale = config.TemplateConfig().scale
+    lines_cfg = config.LinesConfig()
+
+    def tablet(x_pt, y_pt):
+        return ((x_pt * template.UNITS_PER_PT) - template.RM_W / 2) * scale, y_pt * template.UNITS_PER_PT * scale
+
+    top = todo_document.TOP + 4 * todo_document.ROW  # row 4
+    letters = [make_stroke(f"1:{i}", "fineliner", [tablet(60 + 18 * i, top + 16), tablet(68 + 18 * i, top + 6),
+                                                   tablet(74 + 18 * i, top + 17)]) for i in range(5)]
+    descender = make_stroke("1:9", "fineliner", [tablet(80, top + 10), tablet(80, top + 30)])  # crosses into row 5
+    box_tick = make_stroke("1:20", "fineliner", [tablet(30, top + 9), tablet(34, top + 13), tablet(38, top + 6)])
+    rows = todo_document.written_rows(letters + [descender, box_tick], scale, lines_cfg)
+    assert list(rows) == [4] and len(rows[4]) == 6  # the tick in the box is not writing

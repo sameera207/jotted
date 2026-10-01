@@ -65,16 +65,18 @@ def _collect_doc(source: DocumentSource, judge: ActionJudge, repo: Repository, d
 
 
 def sync_todo(repo: Repository, publisher: TodoPublisher, force: bool = False) -> dict:
-    """Read ticks from the To-do document, then republish it if anything changed.
+    """Read the To-do document, then republish it if anything changed.
 
-    Ticks are read before publishing, so a tick made on paper is never lost to a
-    republish. Slots are permanent: an item keeps the row it was first printed on.
+    Paper is read before publishing, so nothing done on paper is lost to a republish:
+    1. new items written by hand in empty rows are added, in the rows they were written in;
+    2. ticks mark items done;
+    3. remaining items get the next free slots (permanent), and the list is printed.
     """
-    ticked = 0
-    read = publisher.read_ticks()
+    ticked = written = 0
+    read = publisher.read_paper(repo.occupied_slots())
     if read is not None:
-        slots, marker = read
-        ticked = repo.apply_ticks(slots, marker)
+        written = repo.add_written(read.doc_id, read.written)
+        ticked = repo.apply_ticks(read.ticks, read.marker)
     settings = repo.settings()
     entries = repo.assign_slots(repo.todo_entries(settings.tablet_include_others))
     overflow = [e for e in entries if e.slot is not None and e.slot >= publisher.capacity()]
@@ -86,7 +88,8 @@ def sync_todo(repo: Repository, publisher: TodoPublisher, force: bool = False) -
         publisher.publish(printable)
         repo.mark_todo_published(printable)
         published = True
-    return {"ticked": ticked, "published": published, "items": len(printable), "overflow": len(overflow)}
+    return {"ticked": ticked, "written": written, "published": published, "items": len(printable),
+            "overflow": len(overflow)}
 
 
 def pending(source: DocumentSource, repo: Repository, exclude: set[str] | None = None,

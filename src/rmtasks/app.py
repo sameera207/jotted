@@ -46,7 +46,7 @@ class App:
 
     def todo_document(self) -> TodoDocument:
         s = self.repo.settings()
-        return TodoDocument(self.cfg, s.todo_name, s.todo_folder)
+        return TodoDocument(self.cfg, s.todo_name, s.todo_folder, self.source.cache)
 
     def own_doc_ids(self) -> set[str]:
         """Documents we write ourselves (the Tasks notebook, the To-do list): never collected."""

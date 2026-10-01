@@ -13,7 +13,7 @@ from contextlib import contextmanager
 from dataclasses import asdict, fields
 from pathlib import Path
 
-from ..core.model import DocInfo, Judgment, PageInfo, Settings, SourceLine, TodoEntry
+from ..core.model import DocInfo, Judgment, PageInfo, Settings, SourceLine, TodoEntry, WrittenItem
 from ..store import clean_text, now, to_utc
 
 SCHEMA = """
@@ -98,6 +98,9 @@ class SqliteRepository:
         path.parent.mkdir(parents=True, exist_ok=True)
         with self.db() as db:
             db.executescript(SCHEMA)
+            cols = {r["name"] for r in db.execute("PRAGMA table_info(actions)")}
+            if "written" not in cols:  # 1 = written by hand on the To-do document itself
+                db.execute("ALTER TABLE actions ADD COLUMN written INTEGER NOT NULL DEFAULT 0")
 
     @contextmanager
     def db(self):
@@ -239,6 +242,7 @@ class SqliteRepository:
             for r in db.execute("SELECT * FROM actions WHERE dismissed = 0 AND missing = 0 ORDER BY created_at, id"):
                 out.append({
                     "kind": "action", "id": r["id"], "text": r["text"], "paper_text": r["paper_text"],
+                    "written": bool(r["written"]), "bbox": json.loads(r["bbox"]) if r["bbox"] else None,
                     "status": r["status"], "owner": r["owner"], "p_action": round(r["p_action"], 2),
                     "source": {"doc_id": r["doc_id"], "name": r["doc_name"], "folder": r["folder"],
                                "page": r["page_index"], "anchor": r["anchor"]},
@@ -320,7 +324,9 @@ class SqliteRepository:
             if not include_others and i["owner"] == "someone_else":
                 continue
             src = i["source"]
-            if i["kind"] == "action":
+            if i["kind"] == "action" and i.get("written"):
+                label = "written here"
+            elif i["kind"] == "action":
                 folder = src["folder"].strip("/") or "Library"
                 label = f"{folder} › {src['name']} · p{src['page']}"
                 if i["owner"] == "someone_else":
@@ -328,7 +334,10 @@ class SqliteRepository:
             else:
                 label = f"{src['name']}" + (f" · p{src['page']}" if src.get("page") else "")
             entries.append(TodoEntry(kind=i["kind"], item_id=i["id"], text=i["text"],
-                                     done=i["status"] == "done", source_label=label, slot=i["slot"]))
+                                     done=i["status"] == "done", source_label=label, slot=i["slot"],
+                                     handwritten=bool(i.get("written")),
+                                     ink=tuple(i["bbox"]) if i.get("written") and i.get("bbox") else None,
+                                     edited=bool(i.get("edited"))))
         return entries
 
     def assign_slots(self, entries: list[TodoEntry]) -> list[TodoEntry]:
@@ -340,6 +349,46 @@ class SqliteRepository:
                     e.slot = nxt
                     nxt += 1
         return sorted(entries, key=lambda e: e.slot)
+
+    def occupied_slots(self) -> set[int]:
+        with self.db() as db:
+            return {r["slot"] for r in db.execute("SELECT slot FROM todo_slots")}
+
+    def add_written(self, doc_id: str, items: list[WrittenItem]) -> int:
+        """New items written by hand in empty rows of the To-do document: they keep that row,
+        so the handwriting stays next to its checkbox."""
+        if not items:
+            return 0
+        settings = self.settings()
+        stamp = now()
+        added = 0
+        with self.db() as db:
+            for w in items:
+                if db.execute("SELECT 1 FROM todo_slots WHERE slot = ?", (w.slot,)).fetchone():
+                    continue  # taken meanwhile
+                text = clean_text(w.text)
+                cur = db.execute(
+                    """INSERT OR IGNORE INTO actions (source, doc_id, doc_name, folder, page_id, page_index, anchor,
+                         bbox, text, paper_text, owner, p_action, text_changed_at, status_changed_at, created_at,
+                         updated_at, written) VALUES ('todo', ?, ?, ?, ?, ?, ?, ?, ?, ?, 'me', 1.0, ?, ?, ?, ?, 1)""",
+                    (doc_id, settings.todo_name, settings.todo_folder, w.page_id, w.page_index, w.anchor,
+                     _bbox(w.bbox), text, text, stamp, stamp, stamp, stamp),
+                )
+                if not cur.rowcount:
+                    continue
+                # Its line, so the web app can show the handwriting like any collected action.
+                db.execute("INSERT OR IGNORE INTO source_pages (doc_id, page_id, idx, hash) VALUES (?, ?, ?, '')",
+                           (doc_id, w.page_id, w.page_index))
+                db.execute(
+                    """INSERT OR REPLACE INTO source_lines (doc_id, page_id, anchor, key, text, bbox, rows, drawing,
+                         p_action, owner) VALUES (?, ?, ?, ?, ?, ?, ?, 0, 1.0, 'me')""",
+                    (doc_id, w.page_id, w.anchor, w.key, text, _bbox(w.bbox), json.dumps([list(w.bbox)])),
+                )
+                # A box that already had ink when the item was written isn't a tick.
+                db.execute("INSERT INTO todo_slots (slot, kind, item_id, ticked) VALUES (?, 'action', ?, ?)",
+                           (w.slot, cur.lastrowid, int(w.box_inked)))
+                added += 1
+        return added
 
     def apply_ticks(self, ticked_slots: set[int], marker: str) -> int:
         """A slot that gains ink marks its item done. Ink stays on paper, so each slot's tick
@@ -369,7 +418,7 @@ class SqliteRepository:
 
     @staticmethod
     def _fingerprint(entries: list[TodoEntry]) -> str:
-        data = json.dumps([(e.slot, e.text, e.done, e.source_label) for e in entries])
+        data = json.dumps([(e.slot, e.text, e.done, e.source_label, e.handwritten, e.edited) for e in entries])
         return hashlib.sha256(data.encode()).hexdigest()
 
     def todo_needs_publish(self, entries: list[TodoEntry]) -> bool:

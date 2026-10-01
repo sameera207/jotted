@@ -34,6 +34,8 @@ def _setup_logging(level: str) -> None:
     if level.upper() != "DEBUG":  # per-request lines from the HTTP clients are noise at INFO
         for name in ("httpx", "httpx2", "anthropic", "typesafe_sdk"):
             logging.getLogger(name).setLevel(logging.WARNING)
+        # rmscene repeats "data not read" for every page from newer firmware; known and harmless.
+        logging.getLogger("rmscene").setLevel(logging.ERROR)
 
 
 # ---------------------------------------------------------------- commands

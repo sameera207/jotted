@@ -89,9 +89,34 @@ class CollectSummary:
 @dataclass
 class TodoEntry:
     """One row of the To-do document: an item and where it is printed."""
-    kind: str  # "action" (collected) or "task" (the Tasks notebook)
+    kind: str  # "action" (collected or written on the To-do document) or "task" (the Tasks notebook)
     item_id: int
     text: str
     done: bool
     source_label: str
     slot: int | None  # 0-based slot on the document; None until first printed
+    handwritten: bool = False  # written by hand in its row: print only the checkbox, not the text
+    ink: BBox | None = None  # where that handwriting is (source units), for the done strike-through
+    edited: bool = False  # text changed on the web since it was written
+
+
+@dataclass
+class WrittenItem:
+    """A new item written by hand in an empty row of the To-do document."""
+    slot: int
+    page_id: str
+    page_index: int
+    text: str
+    anchor: str
+    key: str
+    bbox: BBox  # source units
+    box_inked: bool  # its checkbox already had ink when first read (not counted as a tick)
+
+
+@dataclass
+class PaperRead:
+    """What the To-do document says on paper."""
+    doc_id: str
+    marker: str
+    ticks: set[int] = field(default_factory=set)
+    written: list[WrittenItem] = field(default_factory=list)

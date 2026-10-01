@@ -10,6 +10,7 @@ Ticks are read with the same calibrated mapping as the Tasks template
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import tempfile
@@ -19,9 +20,12 @@ from pathlib import Path
 from reportlab.lib.colors import Color
 from reportlab.pdfgen.canvas import Canvas
 
-from .. import cloud, strokes, template
+
+
+from .. import cloud, lines as lines_mod, recognise, strokes, template
+from ..aicache import AICache
 from ..config import Config
-from ..core.model import TodoEntry
+from ..core.model import PaperRead, TodoEntry, WrittenItem
 from ..notebook import page_order
 
 log = logging.getLogger("rmtasks.todo")
@@ -52,7 +56,16 @@ def _fit(c: Canvas, text: str, font: str, size: float, width: float) -> str:
     return text + "…"
 
 
-def build_pdf(path: Path, entries: list[TodoEntry], pages: int = PAGES) -> Path:
+def to_pt(x: float, y: float, scale: float) -> tuple[float, float]:
+    """Tablet units to pt from the page's top-left."""
+    return (x / scale + template.RM_W / 2) / template.UNITS_PER_PT, (y / scale) / template.UNITS_PER_PT
+
+
+def row_of(y_pt: float) -> int:
+    return int((y_pt - TOP) // ROW)
+
+
+def build_pdf(path: Path, entries: list[TodoEntry], pages: int = PAGES, scale: float = 1.0) -> Path:
     w, h = template.PAGE_W, template.PAGE_H
     by_page: dict[int, list[TodoEntry]] = {}
     for e in entries:
@@ -77,6 +90,19 @@ def build_pdf(path: Path, entries: list[TodoEntry], pages: int = PAGES) -> Path:
             c.setLineWidth(0.9)
             c.rect(x0, h - y1, BOX, BOX, stroke=1, fill=0)
             base = h - (TOP + row * ROW) - 12
+            if e.handwritten:
+                # Written by hand in this row: the ink is the text. Print nothing over it; strike it when done,
+                # and show a web edit as a small note under it.
+                if e.done and e.ink:
+                    (ix0, iy0), (ix1, iy1) = to_pt(e.ink[0], e.ink[1], scale), to_pt(e.ink[2], e.ink[3], scale)
+                    c.setStrokeColor(INK)
+                    c.setLineWidth(1.1)
+                    c.line(ix0 - 2, h - (iy0 + iy1) / 2, ix1 + 2, h - (iy0 + iy1) / 2)
+                if e.edited:
+                    c.setFillColor(MUTED)
+                    c.setFont("Helvetica", 7.5)
+                    c.drawString(TEXT_X, base - 10, _fit(c, "edited: " + e.text, "Helvetica", 7.5, w - TEXT_X - 24))
+                continue
             text = _fit(c, e.text, "Helvetica", 11.5, w - TEXT_X - 24)
             c.setFillColor(MUTED if e.done else INK)
             c.setFont("Helvetica", 11.5)
@@ -96,24 +122,45 @@ def build_pdf(path: Path, entries: list[TodoEntry], pages: int = PAGES) -> Path:
     return path
 
 
+def _box_row(s, scale: float) -> int | None:
+    """The row whose checkbox area holds the stroke's centre, if any."""
+    x_pt, y_pt = to_pt(s.cx, s.cy, scale)
+    for row in range(SLOTS_PER_PAGE):
+        x0, y0, x1, y1 = slot_box(row)
+        if x0 - HIT_PAD <= x_pt <= x1 + HIT_PAD and y0 - HIT_PAD <= y_pt <= y1 + HIT_PAD:
+            return row
+    return None
+
+
 def ticked_rows(page_strokes: list, scale: float) -> set[int]:
     """Rows on one page whose checkbox area holds the centre of a stroke."""
-    rows = set()
-    for s in page_strokes:
-        x_pt = (s.cx / scale + template.RM_W / 2) / template.UNITS_PER_PT
-        y_pt = (s.cy / scale) / template.UNITS_PER_PT
-        for row in range(SLOTS_PER_PAGE):
-            x0, y0, x1, y1 = slot_box(row)
-            if x0 - HIT_PAD <= x_pt <= x1 + HIT_PAD and y0 - HIT_PAD <= y_pt <= y1 + HIT_PAD:
-                rows.add(row)
+    return {r for s in page_strokes if (r := _box_row(s, scale)) is not None}
+
+
+def written_rows(page_strokes: list, scale: float, lines_cfg) -> dict[int, list]:
+    """Handwriting outside the checkboxes, by row: {row: strokes}.
+
+    Strokes are clustered into lines first (a descender or a tall letter can cross
+    into the next row), and each line goes to the row holding its centre.
+    """
+    text_strokes = [s for s in page_strokes if _box_row(s, scale) is None]
+    found, _ = lines_mod.cluster(text_strokes, lines_cfg)
+    rows: dict[int, list] = {}
+    for line in found:
+        x0, y0, x1, y1 = line.bbox
+        _, cy = to_pt((x0 + x1) / 2, (y0 + y1) / 2, scale)
+        row = row_of(cy)
+        if 0 <= row < SLOTS_PER_PAGE:
+            rows.setdefault(row, []).extend(line.strokes)
     return rows
 
 
 class TodoDocument:
     """TodoPublisher for the reMarkable cloud."""
 
-    def __init__(self, cfg: Config, name: str, folder: str):
+    def __init__(self, cfg: Config, name: str, folder: str, cache: AICache | None = None):
         self.cfg, self.name, self.folder = cfg, name, folder
+        self.cache = cache or AICache(cfg.paths.cache_dir / "ai")
 
     def capacity(self) -> int:
         return PAGES * SLOTS_PER_PAGE
@@ -124,11 +171,11 @@ class TodoDocument:
     def publish(self, entries: list[TodoEntry]) -> None:
         existing = self._find()
         with tempfile.TemporaryDirectory() as tmp:
-            pdf = build_pdf(Path(tmp) / f"{self.name}.pdf", entries)
+            pdf = build_pdf(Path(tmp) / f"{self.name}.pdf", entries, scale=self.cfg.template.scale)
             cloud.upload_pdf(self.cfg, pdf, content_only=existing is not None, folder=self.folder)
         log.info("published %d item(s) to %s", len(entries), self.name)
 
-    def read_ticks(self) -> tuple[set[int], str] | None:
+    def read_paper(self, occupied: set[int]) -> PaperRead | None:
         doc = self._find()
         if doc is None:
             return None
@@ -136,7 +183,8 @@ class TodoDocument:
         sidecar = path.with_suffix(".json")
         if not (path.is_file() and sidecar.is_file() and json.loads(sidecar.read_text()).get("modified") == doc.modified):
             path = cloud.download(self.cfg, doc)
-        slots: set[int] = set()
+        scale = self.cfg.template.scale
+        read = PaperRead(doc_id=doc.id, marker=doc.modified)
         with zipfile.ZipFile(path) as z:
             names = z.namelist()
             content = next((n for n in names if n.endswith(".content")), None)
@@ -147,5 +195,24 @@ class TodoDocument:
                     continue
                 with z.open(member) as f:
                     page_strokes = strokes.load_strokes_from(f, member, self.cfg.strokes)
-                slots |= {p * SLOTS_PER_PAGE + r for r in ticked_rows(page_strokes, self.cfg.template.scale)}
-        return slots, doc.modified
+                ticks = ticked_rows(page_strokes, scale)
+                read.ticks |= {p * SLOTS_PER_PAGE + r for r in ticks}
+                for row, row_strokes in written_rows(page_strokes, scale, self.cfg.lines).items():
+                    slot = p * SLOTS_PER_PAGE + row
+                    if slot in occupied:
+                        continue  # writing next to an existing item: a note on it, not a new item
+                    item = self._read_row(row_strokes, slot, pid, p + 1, row in ticks)
+                    if item:
+                        read.written.append(item)
+        return read
+
+    def _read_row(self, row_strokes: list, slot: int, page_id: str, page_index: int,
+                  box_inked: bool) -> WrittenItem | None:
+        line = lines_mod.Line(strokes=sorted(row_strokes, key=lambda s: s.x0), n=1)
+        transcript = recognise.transcribe([line], self.cfg.recognition, self.cache).get(1)
+        if transcript is None or transcript.drawing or not transcript.text.strip():
+            return None
+        ids = ",".join(sorted(s.id for s in row_strokes))
+        return WrittenItem(slot=slot, page_id=page_id, page_index=page_index, text=transcript.text,
+                           anchor=line.anchor_id, key=hashlib.sha256(ids.encode()).hexdigest()[:24],
+                           bbox=line.bbox, box_inked=box_inked)

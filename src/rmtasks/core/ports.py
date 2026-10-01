@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Protocol
 
-from .model import CollectSummary, DocInfo, Judgment, PageInfo, Settings, SourceLine, TodoEntry
+from .model import CollectSummary, DocInfo, Judgment, PageInfo, PaperRead, Settings, SourceLine, TodoEntry, WrittenItem
 
 
 class DocumentSource(Protocol):
@@ -56,6 +56,12 @@ class Repository(Protocol):
     def assign_slots(self, entries: list[TodoEntry]) -> list[TodoEntry]:
         """Give unslotted entries the next free slots, permanently."""
 
+    def occupied_slots(self) -> set[int]:
+        """Slots already holding an item."""
+
+    def add_written(self, doc_id: str, items: list[WrittenItem]) -> int:
+        """Create items for rows written by hand on the To-do document, in those rows."""
+
     def apply_ticks(self, ticked_slots: set[int], marker: str) -> int:
         """Mark items done whose slot gained a tick on paper. Returns how many changed."""
 
@@ -72,8 +78,9 @@ class TodoPublisher(Protocol):
 
     def publish(self, entries: list[TodoEntry]) -> None: ...
 
-    def read_ticks(self) -> tuple[set[int], str] | None:
-        """Slots with a tick drawn on them, and the document's change marker; None if absent."""
+    def read_paper(self, occupied: set[int]) -> PaperRead | None:
+        """Ticks in checkboxes, and new items written in rows outside `occupied`. None if the
+        document doesn't exist yet."""
 
 
 class Progress(Protocol):
