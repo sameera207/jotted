@@ -16,7 +16,7 @@ from rich.logging import RichHandler
 from rich.markup import escape
 from rich.table import Table
 
-from . import analysis, cloud, notebook, report, sync, template
+from . import analysis, cloud, keys, notebook, report, sync, template
 from .store import Store
 from .config import Config, ConfigError, load, resolve_path
 
@@ -322,21 +322,96 @@ def cmd_todo(cfg: Config, args: argparse.Namespace) -> int:
 
 
 def cmd_serve(cfg: Config, args: argparse.Namespace) -> int:
-    from .server import create_app
-
     host, port = args.host or cfg.server.host, args.port or cfg.server.port
     if host not in ("127.0.0.1", "localhost", "::1"):
         console.print(f"[yellow]Warning[/yellow]: listening on {host}; the app has no login, so anyone who can "
                       "reach this address can read and change your tasks.")
-    console.print(f"rmtasks for [bold]{cfg.notebook.name}[/bold] at http://{host}:{port}  (store: {cfg.server.db})")
-    app = create_app(cfg, background=not args.no_background)
-    if args.dev:
-        app.run(host=host, port=port, debug=False, threaded=True)
-    else:
-        from waitress import serve
+    return _serve(cfg, host, port, background=not args.no_background, dev=args.dev)
 
-        # One process, many threads: the background scheduler must exist exactly once.
-        serve(app, host=host, port=port, threads=8, ident="rmtasks")
+
+def _running_here(url: str) -> bool:
+    """Whether rmtasks already answers at `url` (another start, or `rmtasks serve`)."""
+    import urllib.request
+
+    try:
+        with urllib.request.urlopen(url + "/api/settings", timeout=2) as resp:  # noqa: S310 - local URL
+            return "watch" in json.loads(resp.read())
+    except (OSError, ValueError):
+        return False
+
+
+def _serve(cfg: Config, host: str, port: int, *, background: bool = True, dev: bool = False,
+           open_path: str | None = None) -> int:
+    """Serve the web app; with `open_path`, open the browser there once it is listening."""
+    import socket
+    import webbrowser
+
+    from .server import create_app
+
+    url = f"http://{host}:{port}"
+    with socket.socket() as probe:
+        busy = probe.connect_ex((host, port)) == 0
+    if busy:
+        if _running_here(url):
+            console.print(f"rmtasks is already running at [bold]{url}[/bold]")
+            if open_path is not None:
+                webbrowser.open(url + open_path)
+            return 0
+        console.print(f"[red]Port {port} is in use[/red] by another program. Try `--port {port + 1}`.")
+        return 1
+    console.print(f"rmtasks for [bold]{cfg.notebook.name}[/bold] at [bold]{url}[/bold]  (store: {cfg.server.db})")
+    app = create_app(cfg, background=background)
+    if dev:
+        app.run(host=host, port=port, debug=False, threaded=True)
+        return 0
+    from waitress import create_server
+
+    # One process, many threads: the background scheduler must exist exactly once.
+    server = create_server(app, host=host, port=port, threads=8, ident="rmtasks")
+    if open_path is not None:
+        webbrowser.open(url + open_path)
+    console.print("[dim]Leave this window open while you use rmtasks. Press Ctrl+C to stop.[/dim]")
+    try:
+        server.run()
+    except KeyboardInterrupt:
+        console.print("Stopped.")
+    finally:
+        server.close()
+    return 0
+
+
+def _onboard(redo: bool) -> Config | None:
+    from . import onboarding
+
+    try:
+        return onboarding.run(onboarding.ConsoleUI(console), redo=redo)
+    except (onboarding.SetupError, ConfigError) as e:
+        console.print(f"\n[red]Setup stopped:[/red] {e}")
+    except (EOFError, KeyboardInterrupt):
+        console.print("\nSetup stopped. Run it again any time; finished steps are kept.")
+    return None
+
+
+def cmd_start(args: argparse.Namespace) -> int:
+    """Set up whatever is missing, then run the web app and open it in the browser."""
+    cfg = _onboard(redo=False)
+    if cfg is None:
+        return 1
+    _setup_logging(cfg.logging.level)
+    from .adapters.sqlite_repo import SqliteRepository
+
+    first_time = not SqliteRepository(cfg.server.db).settings().watch  # nothing watched yet: start in Settings
+    console.print()
+    return _serve(cfg, cfg.server.host, args.port or cfg.server.port,
+                  open_path=None if args.no_browser else ("/#settings" if first_time else "/"))
+
+
+def cmd_setup(args: argparse.Namespace) -> int:
+    """Go through every setup step again (change a key, reconnect the tablet)."""
+    cfg = _onboard(redo=True)
+    if cfg is None:
+        return 1
+    console.print("\n[green]All set.[/green] Run [bold]rmtasks start[/bold] to open the app.")
     return 0
 
 
@@ -380,6 +455,12 @@ def build_parser() -> argparse.ArgumentParser:
     td = sub.add_parser("todo", help="read ticks from, and republish, the To-do document")
     td.add_argument("--force", action="store_true", help="republish even if nothing changed")
     td.set_defaults(func=cmd_todo)
+    st = sub.add_parser("start", help="set up anything missing, then open the app (start here)")
+    st.add_argument("--port", type=int, help="default: server.port")
+    st.add_argument("--no-browser", action="store_true", help="don't open the browser")
+    st.set_defaults(func=cmd_start, no_config=True)
+    su = sub.add_parser("setup", help="go through setup again: reconnect the tablet, change API keys")
+    su.set_defaults(func=cmd_setup, no_config=True)
     sv = sub.add_parser("serve", help="run the local web app")
     sv.add_argument("--host", help="default: server.host")
     sv.add_argument("--port", type=int, help="default: server.port")
@@ -396,8 +477,11 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+    if getattr(args, "no_config", False):  # start and setup make the config when there is none
+        return args.func(args)
     try:
         cfg = load()
+        keys.load_into_env(cfg)
     except ConfigError as e:
         console.print(f"[red]Config error:[/red] {e}")
         console.print(f"[dim](config path: {resolve_path()}; set RMTASKS_CONFIG to use another)[/dim]")

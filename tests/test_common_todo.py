@@ -423,7 +423,7 @@ def test_tick_on_a_checkbox_is_read_back():
 
 
 def test_todo_endpoints(tmp_path, monkeypatch):
-    text = (ROOT / "config.example.toml").read_text().replace('db   = "./data/rmtasks.db"', f'db = "{tmp_path}/db.sqlite"')
+    text = config.EXAMPLE.read_text().replace('db   = "./data/rmtasks.db"', f'db = "{tmp_path}/db.sqlite"')
     path = tmp_path / "config.toml"
     path.write_text(text)
     monkeypatch.setenv(config.ENV_VAR, str(path))

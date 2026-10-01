@@ -28,12 +28,24 @@ def _neighbours(lines: list, i: int, context: int, phrase: str, always: bool = F
 
 
 class TypeSafeJudge:
+    LABEL = "TypeSafe"
+    KEY_URL = "https://typesafe.ai"
+
     def __init__(self, cfg: ClassificationConfig):
         self.cfg = cfg
         self.model = cfg.model
         self._key = os.environ.get(cfg.api_key_env)
         if not self._key:
             raise ClassificationError(f"{cfg.api_key_env} is not set; export it or set classification.enabled = false")
+
+    def verify(self) -> None:
+        try:
+            with TypeSafeClient(api_key=self._key, timeout=float(self.cfg.timeout_s)) as client:
+                client.models.list()
+        except TypeSafeAuthenticationError as e:
+            raise ClassificationError("TypeSafe rejected this key") from e
+        except TypeSafeError as e:
+            raise ClassificationError(f"could not check the key with TypeSafe: {e}") from e
 
     def _ask(self, questions: dict, state: dict):
         try:

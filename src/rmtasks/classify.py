@@ -106,9 +106,14 @@ class Document:
 class LineJudge(Protocol):
     """A model that judges transcribed lines. Every method gets the page's written lines in
     order and the positions to judge; the others are context. Raises ClassificationError.
-    Answers it cannot give are simply absent."""
+    Answers it cannot give are simply absent.
+
+    Adapter classes also carry LABEL and KEY_URL (where to get a key), for setup."""
 
     model: str
+
+    def verify(self) -> None:
+        """Check the key works, without judging anything (setup calls this)."""
 
     def kinds(self, lines: list[Transcript], targets: list[int], context: int) -> dict[int, KindAnswer]:
         """Per target: todo, note or heading (CRITERIA). `context` neighbours each side matter."""
@@ -125,12 +130,16 @@ class LineJudge(Protocol):
 PROVIDERS = {"typesafe": "rmtasks.adapters.typesafe_judge:TypeSafeJudge"}
 
 
-def judge_for(cfg: ClassificationConfig) -> LineJudge:
+def judge_class(cfg: ClassificationConfig) -> type:
     target = PROVIDERS.get(cfg.provider)
     if target is None:
         raise ClassificationError(f"unknown classification provider {cfg.provider!r}; known: {sorted(PROVIDERS)}")
     module, cls = target.split(":")
-    return getattr(importlib.import_module(module), cls)(cfg)
+    return getattr(importlib.import_module(module), cls)
+
+
+def judge_for(cfg: ClassificationConfig) -> LineJudge:
+    return judge_class(cfg)(cfg)
 
 
 # ---------------------------------------------------------------- shared policy

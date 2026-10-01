@@ -7,14 +7,19 @@ typo fails fast instead of silently falling back to a default.
 from __future__ import annotations
 
 import dataclasses
+import json
 import os
+import re
+import sys
 import tomllib
 from dataclasses import dataclass, field, fields
 from pathlib import Path
 from typing import Any, get_type_hints
 
 ENV_VAR = "RMTASKS_CONFIG"
-DEFAULT_PATH = Path("config.toml")
+HOME_VAR = "RMTASKS_HOME"
+DEFAULT_PATH = Path("config.toml")  # in the current folder: a development checkout
+EXAMPLE = Path(__file__).with_name("config.example.toml")  # every setting, with its default
 
 
 class ConfigError(Exception):
@@ -188,14 +193,65 @@ KNOWN_CHECKS = {
 }
 
 
+def app_home() -> Path:
+    """Where an installed rmtasks keeps its config, data and secrets. RMTASKS_HOME overrides."""
+    if os.environ.get(HOME_VAR):
+        return Path(os.environ[HOME_VAR]).expanduser()
+    if sys.platform == "darwin":
+        return Path.home() / "Library" / "Application Support" / "rmtasks"
+    if os.name == "nt":
+        return Path(os.environ.get("APPDATA") or Path.home() / "AppData" / "Roaming") / "rmtasks"
+    return Path(os.environ.get("XDG_DATA_HOME") or Path.home() / ".local" / "share") / "rmtasks"
+
+
 def resolve_path() -> Path:
-    return Path(os.environ.get(ENV_VAR) or DEFAULT_PATH)
+    """RMTASKS_CONFIG; else config.toml in the current folder (a checkout); else the app home's."""
+    if os.environ.get(ENV_VAR):
+        return Path(os.environ[ENV_VAR])
+    if DEFAULT_PATH.is_file():
+        return DEFAULT_PATH
+    return app_home() / "config.toml"
+
+
+def create(path: Path) -> Path:
+    """A new config file at `path` with every default; its relative paths resolve beside it."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(EXAMPLE.read_text())
+    return path
+
+
+def set_value(path: Path, section: str, key: str, value: str) -> None:
+    """Set a string `key` in `[section]` of a config file, keeping its comments and layout."""
+    lines = path.read_text().splitlines(keepends=True)
+    current, insert_at = None, None
+    rendered = f"{key} = {json.dumps(value)}\n"
+    for i, line in enumerate(lines):
+        head = re.match(r"\s*\[([^\]]+)\]", line)
+        if head:
+            if current == section:
+                break
+            current = head.group(1).strip()
+            if current == section:
+                insert_at = i + 1
+            continue
+        if current == section:
+            m = re.match(rf"(\s*{re.escape(key)}\s*=\s*)(\"[^\"]*\"|'[^']*'|[^#\s]+)(.*)", line)
+            if m:
+                lines[i] = m.group(1) + json.dumps(value) + m.group(3).rstrip("\n") + "\n"
+                path.write_text("".join(lines))
+                return
+            insert_at = i + 1 if line.strip() else insert_at
+    if insert_at is None:
+        lines.append(f"\n[{section}]\n")
+        insert_at = len(lines)
+    lines.insert(insert_at, rendered)
+    path.write_text("".join(lines))
 
 
 def load(path: Path | None = None) -> Config:
     path = (path or resolve_path()).expanduser()
     if not path.is_file():
-        raise ConfigError(f"config file not found: {path} (copy config.example.toml to config.toml)")
+        raise ConfigError(f"config file not found: {path}. Run `rmtasks start` to set up")
     try:
         raw = tomllib.loads(path.read_text())
     except tomllib.TOMLDecodeError as e:

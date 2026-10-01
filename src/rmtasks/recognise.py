@@ -90,12 +90,17 @@ class LineImage:
 
 
 class HandwritingReader(Protocol):
-    """A model that reads handwritten lines. Raises RecognitionError on failure."""
+    """A model that reads handwritten lines. Raises RecognitionError on failure.
+
+    Adapter classes also carry LABEL and KEY_URL (where to get a key), for setup."""
 
     model: str
 
     def read(self, images: list[LineImage]) -> dict[int, Transcript]:
         """A transcript per line number; lines the model skipped are simply absent."""
+
+    def verify(self) -> None:
+        """Check the key works, without reading anything (setup calls this)."""
 
 
 # provider name -> "module:class", imported only when used, so other providers'
@@ -103,12 +108,16 @@ class HandwritingReader(Protocol):
 PROVIDERS = {"anthropic": "rmtasks.adapters.anthropic_reader:AnthropicReader"}
 
 
-def reader_for(cfg: RecognitionConfig) -> HandwritingReader:
+def reader_class(cfg: RecognitionConfig) -> type:
     target = PROVIDERS.get(cfg.provider)
     if target is None:
         raise RecognitionError(f"unknown recognition provider {cfg.provider!r}; known: {sorted(PROVIDERS)}")
     module, cls = target.split(":")
-    return getattr(importlib.import_module(module), cls)(cfg)
+    return getattr(importlib.import_module(module), cls)
+
+
+def reader_for(cfg: RecognitionConfig) -> HandwritingReader:
+    return reader_class(cfg)(cfg)
 
 
 def render_line(line: Line) -> bytes:

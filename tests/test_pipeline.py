@@ -22,7 +22,7 @@ ROOT = Path(__file__).parent.parent
 @pytest.fixture
 def cfg(tmp_path, monkeypatch):
     # AI steps off: tests never call external APIs (they are stubbed where exercised).
-    text = (ROOT / "config.example.toml").read_text().replace("enabled     = true", "enabled     = false")
+    text = config.EXAMPLE.read_text().replace("enabled     = true", "enabled     = false")
     text = text.replace("enabled          = true", "enabled          = false")
     path = tmp_path / "config.toml"
     path.write_text(text)

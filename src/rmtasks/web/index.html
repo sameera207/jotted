@@ -831,7 +831,8 @@ $("add").addEventListener("submit", (e) => { e.preventDefault(); addTask($("new"
 $("today").textContent = new Date().toLocaleDateString(undefined, { weekday: "long", day: "numeric", month: "long" });
 $("add-todo").addEventListener("submit", (e) => { e.preventDefault(); addTask($("new-todo")); });
 
-refresh();
+if (location.hash === "#settings") { history.replaceState(null, "", location.pathname); showTab("settings"); }  // `rmtasks start`, first time
+else refresh();
 </script>
 </body>
 </html>

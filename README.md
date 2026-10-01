@@ -1,20 +1,31 @@
 # rmtasks
 
-Reads a handwritten task notebook from a reMarkable 2 through reMarkable Cloud, transcribes each line with Claude, and asks Jev (TypeSafe) whether it is a to-do.
+Turns handwriting on your reMarkable into a to-do list. It reads the notebooks you choose through reMarkable Cloud, works out which lines are tasks and whose they are, and keeps one list in a local web app. Tick items there or on the tablet.
 
-This is the **read-path spike**: it is read-only and never writes to the cloud or the tablet. See the spec doc for the design, detection algorithms and test plan.
+It runs on your computer. Nothing goes through a server of ours: images of new lines go to Anthropic to be read, and their text goes to TypeSafe to be judged, each with your own API key.
 
-## Prerequisites
+## Quick start
 
-- reMarkable 2 on software 3.x, with a **Connect** subscription and cloud sync switched on
-- A notebook named `Tasks` (or whatever you set in `config.toml`), handwriting only
-- macOS or Linux, with `git`
-- Python 3.11 or newer
-- [uv](https://docs.astral.sh/uv/)
-- [rmapi, ddvk fork](https://github.com/ddvk/rmapi): the original `juruen/rmapi` is archived and no longer works with the cloud
-- `ANTHROPIC_API_KEY` and `TYPESAFE_API_KEY` exported in your shell (for recognition and classification). Set `enabled = false` in `[recognition]` / `[classification]` to run without them; lines are then judged by the geometric checkbox detector.
+You need a reMarkable with cloud sync (a Connect subscription), an [Anthropic API key](https://console.anthropic.com/settings/keys), a [TypeSafe](https://typesafe.ai) key, and [uv](https://docs.astral.sh/uv/getting-started/installation/).
 
-## Setup
+```bash
+uv tool install git+https://github.com/sameera207/rmtasks
+rmtasks start
+```
+
+`rmtasks start` walks you through the rest, then opens the app in your browser:
+
+1. It creates a folder for settings, data and keys (`~/Library/Application Support/rmtasks` on a Mac, `~/.local/share/rmtasks` on Linux).
+2. It downloads [rmapi](https://github.com/ddvk/rmapi), which talks to reMarkable Cloud, and checks the download against its published checksum.
+3. It connects your reMarkable with a one-time code from my.remarkable.com.
+4. It asks for your API keys and checks them. They're saved in that folder, readable by your user only. Keys exported in your shell take precedence.
+5. It opens the app at Settings: tick the folders whose notes should feed your list.
+
+Run `rmtasks start` again whenever you want the app; finished steps are skipped. `rmtasks setup` goes through the steps again, to reconnect the tablet or change a key. Leave the terminal window open while you use the app.
+
+## Development setup
+
+To work on rmtasks itself. A `config.toml` in the folder you run from takes precedence over the app folder.
 
 ### 1. Get the code and dependencies
 
@@ -45,7 +56,7 @@ If you don't put it on your `PATH`, set `rmapi.binary` in the config to its abso
 ### 3. Create your config
 
 ```bash
-cp config.example.toml config.toml
+cp src/rmtasks/config.example.toml config.toml
 ```
 
 Edit `config.toml`. For a first run, the only value you're likely to change is `notebook.name`. Then check it:
@@ -145,7 +156,7 @@ Code layout: `rmtasks/core` holds the model, ports and services and imports no a
 ## Layout
 
 ```text
-config.example.toml   template for the single config file
+src/rmtasks/config.example.toml   every setting with its default; `rmtasks start` copies it
 config.toml           your settings (gitignored)
 src/rmtasks/          cli, config, cloud, notebook, strokes, lines, checkbox, report
 tests/fixtures/       .rm pages with known expected results

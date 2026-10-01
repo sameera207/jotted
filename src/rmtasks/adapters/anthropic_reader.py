@@ -20,6 +20,9 @@ log = logging.getLogger(__name__)
 
 
 class AnthropicReader:
+    LABEL = "Anthropic"
+    KEY_URL = "https://console.anthropic.com/settings/keys"
+
     def __init__(self, cfg: RecognitionConfig):
         self.cfg = cfg
         self.model = cfg.model
@@ -27,6 +30,14 @@ class AnthropicReader:
         if not api_key:
             raise RecognitionError(f"{cfg.api_key_env} is not set; export it or set recognition.enabled = false")
         self.client = anthropic.Anthropic(api_key=api_key, timeout=float(cfg.timeout_s))
+
+    def verify(self) -> None:
+        try:
+            self.client.models.list(limit=1)
+        except anthropic.AuthenticationError as e:
+            raise RecognitionError("Anthropic rejected this key") from e
+        except anthropic.APIError as e:
+            raise RecognitionError(f"could not check the key with Anthropic: {e}") from e
 
     def read(self, images: list[LineImage]) -> dict[int, Transcript]:
         content: list[dict] = [{"type": "text", "text": f"Transcribe these {len(images)} handwritten lines."}]
