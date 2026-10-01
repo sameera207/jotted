@@ -121,6 +121,7 @@ class ServerConfig:
 class OutputConfig:
     formats: list[str] = field(default_factory=lambda: ["table", "json", "svg"])
     svg_scale: float = 0.5
+    keep_runs: int = 50  # run folders kept under output_dir; older ones are deleted. 0 = keep all
 
 
 @dataclass(frozen=True)

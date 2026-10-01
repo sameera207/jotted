@@ -6,12 +6,17 @@ writing to the tablet run in the background (`app.Scheduler`); one at a time.
 
 from __future__ import annotations
 
+import hashlib
+import hmac
 import logging
+import os
+import time
 from dataclasses import asdict, fields
+from datetime import timedelta
 from importlib import resources
 from pathlib import Path
 
-from flask import Flask, Response, abort, jsonify, request
+from flask import Flask, Response, abort, jsonify, redirect, request, session
 
 from . import sync, template
 from .app import SYNC_ERRORS, App, Scheduler
@@ -25,6 +30,7 @@ log = logging.getLogger("rmtasks")
 
 def create_app(cfg: Config, store: Store | None = None, background: bool = True, app_: App | None = None) -> Flask:
     flask = Flask(__name__)
+    _setup_auth(flask)
     core = app_ or App.build(cfg, store)
     store = core.store
     scheduler = Scheduler(core, cfg.server.auto_push_delay_s)
@@ -156,6 +162,7 @@ def create_app(cfg: Config, store: Store | None = None, background: bool = True,
         items = core.repo.items(status=args.get("status") or None, owner=args.get("owner") or None,
                                 folder=args.get("folder") or None)
         return {"items": items, "settings": asdict(core.repo.settings()), "background": scheduler.describe(),
+                "auth": bool(os.environ.get("RMTASKS_PASSWORD")),
                 "todo": core.repo.todo_meta(), "sources": core.repo.source_docs()}
 
     @flask.get("/api/todo")
@@ -271,6 +278,82 @@ def create_app(cfg: Config, store: Store | None = None, background: bool = True,
         return _svg(svg)
 
     return flask
+
+
+# ---------------------------------------------------------------- login
+
+LOGIN_PAGE = """<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1"><title>rmtasks · sign in</title>
+<style>
+:root { --bg:#f6f5f1; --panel:#fff; --ink:#1d1d1b; --muted:#75736c; --line:#e4e2da; --accent:#2f6f4f; --danger:#b3261e; }
+@media (prefers-color-scheme: dark) { :root { --bg:#161614; --panel:#1f1f1c; --ink:#ecebe6; --muted:#9c9a92;
+  --line:#33322e; --accent:#6fbf94; --danger:#f08a82; } }
+body { margin:0; min-height:100vh; display:grid; place-items:center; background:var(--bg); color:var(--ink);
+  font:15px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; }
+form { background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:24px; width:min(340px, 90vw); }
+h1 { font-size:20px; margin:0 0 16px; }
+input { width:100%; box-sizing:border-box; font:inherit; padding:9px 12px; border-radius:8px; border:1px solid var(--line);
+  background:var(--panel); color:var(--ink); }
+button { margin-top:12px; width:100%; font:inherit; padding:9px; border-radius:8px; border:0; background:var(--accent);
+  color:#fff; cursor:pointer; }
+.err { color:var(--danger); font-size:14px; margin-top:10px; }
+</style></head><body><form method="post" action="/login">
+<h1>rmtasks</h1><label for="pw" style="display:block;margin-bottom:6px">Password</label>
+<input id="pw" name="password" type="password" autocomplete="current-password" autofocus required>
+<button type="submit">Sign in</button>{error}</form></body></html>"""
+
+
+def _setup_auth(flask: Flask) -> None:
+    """Password login when RMTASKS_PASSWORD is set (always, when hosted).
+
+    The session cookie is signed with RMTASKS_SECRET_KEY (or a key derived from the
+    password, so sessions survive restarts), HttpOnly and SameSite=Lax; Secure when
+    served over HTTPS (RMTASKS_SECURE_COOKIES=1, set in the Railway image).
+    """
+    password = os.environ.get("RMTASKS_PASSWORD", "")
+    secret = os.environ.get("RMTASKS_SECRET_KEY") or hashlib.sha256(f"rmtasks:{password}".encode()).hexdigest()
+    flask.config.update(
+        SECRET_KEY=secret,
+        SESSION_COOKIE_HTTPONLY=True,
+        SESSION_COOKIE_SAMESITE="Lax",
+        SESSION_COOKIE_SECURE=os.environ.get("RMTASKS_SECURE_COOKIES") == "1",
+        PERMANENT_SESSION_LIFETIME=timedelta(days=30),
+    )
+
+    @flask.get("/healthz")
+    def healthz():
+        return jsonify(ok=True)
+
+    if not password:
+        return
+
+    @flask.before_request
+    def require_login():
+        if request.path in ("/login", "/healthz") or session.get("signed_in"):
+            return None
+        if request.path.startswith("/api/"):
+            return jsonify(error="Signed out: reload the page to sign in"), 401
+        return redirect("/login")
+
+    @flask.get("/login")
+    def login_form():
+        return Response(LOGIN_PAGE.replace("{error}", ""), mimetype="text/html")
+
+    @flask.post("/login")
+    def login():
+        if hmac.compare_digest(request.form.get("password", "").encode(), password.encode()):
+            session.clear()
+            session["signed_in"] = True
+            session.permanent = True
+            return redirect("/")
+        time.sleep(1)  # slow down guessing
+        return Response(LOGIN_PAGE.replace("{error}", '<div class="err">Wrong password.</div>'), status=401,
+                        mimetype="text/html")
+
+    @flask.post("/logout")
+    def logout():
+        session.clear()
+        return redirect("/login")
 
 
 def _svg(text: str) -> Response:

@@ -137,6 +137,7 @@ def analyse_notebook(path: Path, cfg: Config) -> report.Run:
     while out_dir.exists():  # two runs in the same second
         suffix += 1
         out_dir = cfg.paths.output_dir / f"{run_id}-{suffix}"
+    prune_runs(cfg.paths.output_dir, cfg.output.keep_runs)
     run = report.Run(run_id=out_dir.name, out_dir=out_dir, notebook=nb.meta(), source=str(path))
     cache = AICache(cfg.paths.cache_dir / "ai")
     zoned = nb.file_type == "pdf"
@@ -146,3 +147,14 @@ def analyse_notebook(path: Path, cfg: Config) -> report.Run:
     return run
 
 
+
+
+def prune_runs(output_dir: Path, keep: int) -> None:
+    """Delete all but the newest `keep` run folders (named by timestamp, so they sort by age)."""
+    if keep <= 0 or not output_dir.is_dir():
+        return
+    import shutil
+
+    runs = sorted(p for p in output_dir.iterdir() if p.is_dir() and p.name[:8].isdigit())
+    for old in runs[: max(0, len(runs) - (keep - 1))]:  # leave room for the run about to be written
+        shutil.rmtree(old, ignore_errors=True)

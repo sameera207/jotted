@@ -303,13 +303,23 @@ def cmd_todo(cfg: Config, args: argparse.Namespace) -> int:
 def cmd_serve(cfg: Config, args: argparse.Namespace) -> int:
     from .server import create_app
 
-    host, port = args.host or cfg.server.host, args.port or cfg.server.port
-    if host not in ("127.0.0.1", "localhost", "::1"):
-        console.print(f"[yellow]Warning[/yellow]: listening on {host}; the app has no login, so anyone who can "
-                      "reach this address can read and change your tasks.")
-    console.print(f"rmtasks for [bold]{cfg.notebook.name}[/bold] at [link]http://{host}:{port}[/link]  "
-                  f"(store: {cfg.server.db})")
-    create_app(cfg).run(host=host, port=port, debug=False, threaded=True)
+    host = args.host or cfg.server.host
+    port = args.port or int(os.environ.get("PORT") or cfg.server.port)
+    local = host in ("127.0.0.1", "localhost", "::1")
+    if not local and not os.environ.get("RMTASKS_PASSWORD"):
+        console.print(f"[red]Refusing to listen on {host}[/red] without a password: anyone who can reach it could "
+                      "read your notes and use your reMarkable token. Set RMTASKS_PASSWORD.")
+        return 2
+    console.print(f"rmtasks for [bold]{cfg.notebook.name}[/bold] at http://{host}:{port}  (store: {cfg.server.db})"
+                  + ("  · login required" if os.environ.get("RMTASKS_PASSWORD") else ""))
+    app = create_app(cfg)
+    if args.dev:
+        app.run(host=host, port=port, debug=False, threaded=True)
+    else:
+        from waitress import serve
+
+        # One process, many threads: the background scheduler must exist exactly once.
+        serve(app, host=host, port=port, threads=8, ident="rmtasks")
     return 0
 
 
@@ -353,7 +363,8 @@ def build_parser() -> argparse.ArgumentParser:
     td.set_defaults(func=cmd_todo)
     sv = sub.add_parser("serve", help="run the local web app")
     sv.add_argument("--host", help="default: server.host")
-    sv.add_argument("--port", type=int, help="default: server.port")
+    sv.add_argument("--port", type=int, help="default: $PORT, else server.port")
+    sv.add_argument("--dev", action="store_true", help="use Flask's development server")
     sv.set_defaults(func=cmd_serve)
     df = sub.add_parser("diff", help="compare checkbox stroke IDs between two runs")
     df.add_argument("run_a")

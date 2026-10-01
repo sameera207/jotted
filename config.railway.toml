@@ -1,17 +1,19 @@
-# rmtasks configuration: the single source of settings.
-# Copy to config.toml (gitignored). Override the path with RMTASKS_CONFIG.
+# rmtasks configuration for Railway (used by the Docker image via RMTASKS_CONFIG).
+# Everything that must survive a redeploy lives on the volume mounted at /data.
+# Secrets never live here: the API keys, the password and the rmapi token come
+# from Railway variables (see DEPLOY.md).
 # Relative paths resolve against this file's folder.
 # Detection thresholds are ratios of the median stroke height and are
 # starting points for tuning, not measured values.
 
 [paths]
-cache_dir   = "./cache"      # downloaded .rmdoc files and unpacked pages
-output_dir  = "./out"        # reports, one timestamped folder per run
-secrets_dir = "./.secrets"   # created with 0700 permissions
+cache_dir   = "/data/cache"      # downloaded .rmdoc files and unpacked pages
+output_dir  = "/data/out"        # reports, one timestamped folder per run
+secrets_dir = "/data/secrets"   # created with 0700 permissions
 
 [rmapi]
 binary     = "rmapi"                 # name on PATH, or an absolute path
-token_file = "./.secrets/rmapi.conf" # passed to rmapi as RMAPI_CONFIG
+token_file = "/data/secrets/rmapi.conf" # passed to rmapi as RMAPI_CONFIG
 timeout_s  = 120
 trace      = false                   # true sets RMAPI_TRACE=1
 
@@ -91,9 +93,9 @@ scale         = 1.0525  # tablet units per nominal unit (1 pt = 3); measured on 
 
 # The local web app: `rmtasks serve`. It binds to this machine only by default.
 [server]
-host = "127.0.0.1"
+host = "0.0.0.0"           # the container; login is enforced (RMTASKS_PASSWORD)
 port = 8765
-db   = "./data/rmtasks.db"   # SQLite task store (gitignored)
+db   = "/data/rmtasks.db"   # SQLite task store (gitignored)
 auto_push = true            # push to the tablet after every add, edit or tick (template notebooks only)
 auto_push_delay_s = 5       # wait this long after the last change, so quick edits go out as one push
 # Watched folders, the action threshold, the poll interval and the To-do document
