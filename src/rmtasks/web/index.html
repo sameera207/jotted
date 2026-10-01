@@ -94,11 +94,20 @@
   .field:first-child { border-top: 0; }
   .field > label, .field > .label { display: block; font-weight: 600; margin-bottom: 4px; }
   .field .help { color: var(--muted); font-size: 13px; margin-bottom: 8px; }
-  .folders { max-height: 320px; overflow: auto; border: 1px solid var(--line); border-radius: 8px; }
-  .folders label { display: flex; gap: 10px; align-items: center; padding: 6px 10px; border-top: 1px solid var(--line);
-                   font-weight: normal; }
-  .folders label:first-child { border-top: 0; }
-  .folders .count { margin-left: auto; color: var(--muted); font-size: 12px; }
+  .folders { max-height: 420px; overflow: auto; border: 1px solid var(--line); border-radius: 8px; }
+  .folders details { border-top: 1px solid var(--line); }
+  .folders > :first-child { border-top: 0; }
+  .folders summary { list-style: none; cursor: pointer; }
+  .folders summary::-webkit-details-marker { display: none; }
+  .folders .node { display: flex; gap: 10px; align-items: center; padding: 6px 10px; font-weight: normal; }
+  .folders .node .twist { width: 12px; color: var(--muted); font-size: 11px; flex: none; }
+  .folders details[open] > summary .twist { transform: rotate(90deg); }
+  .folders .doc { padding-left: 34px; }
+  .folders .node .name { overflow-wrap: anywhere; }
+  .folders .node.folder .name { font-weight: 600; }
+  .folders .count, .folders .note { margin-left: auto; color: var(--muted); font-size: 12px; white-space: nowrap; }
+  .folders input:disabled + .name { color: var(--muted); }
+  .picked { color: var(--muted); font-size: 13px; margin-top: 8px; }
   .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
   input[type=range] { width: 220px; accent-color: var(--accent); }
   .log { margin-top: 22px; color: var(--muted); font-size: 12px; }
@@ -177,10 +186,13 @@
           Anthropic (as images) and TypeSafe (as text); nothing else leaves this machine.
           Your Tasks notebook and the To-do document are always handled separately.</div>
         <div class="row" style="margin-bottom:8px">
-          <button id="load-library">Load folders from the tablet</button>
+          <button id="load-library">Load folders and documents from the tablet</button>
+          <input type="text" id="library-filter" placeholder="Filter by name…" aria-label="Filter folders and documents"
+                 style="max-width:220px" hidden>
           <span class="sub" id="library-status"></span>
         </div>
-        <div class="folders" id="folders"><div class="empty">Load the folders to choose.</div></div>
+        <div class="folders" id="folders"><div class="empty">Load your library to choose.</div></div>
+        <div class="picked" id="picked"></div>
       </div>
       <div class="field">
         <label for="threshold">How sure Jev must be that a line is an action</label>
@@ -490,17 +502,79 @@ async function loadSettings() {
   renderFolders();
 }
 
+// Watch entries are paths: a folder (watched with everything under it) or a single document.
+function covers(entry, path) {
+  return path === entry || path.startsWith(entry.replace(/\/$/, "") + "/");
+}
+
+function pickedWatch() {
+  // Entries hidden by the name filter are kept as they were; visible ones follow their checkbox.
+  const inputs = [...$("folders").querySelectorAll("input[type=checkbox][data-path]")];
+  const visible = new Set(inputs.map((x) => x.dataset.path));
+  const hidden = (settings.watch || []).filter((w) => !visible.has(w));
+  const shown = inputs.filter((x) => x.checked && !x.disabled).map((x) => x.dataset.path);
+  return [...new Set([...hidden, ...shown])].sort();
+}
+
+function renderPicked(watch) {
+  $("picked").textContent = watch.length ? "Watching: " + watch.join(", ") : "Nothing watched.";
+}
+
 function renderFolders() {
   const box = $("folders");
-  const watch = new Set(settings.watch || []);
+  const watch = settings.watch || [];
+  renderPicked(watch);
   if (!library) {
-    box.replaceChildren(...(watch.size ? [...watch].map((w) => el("label", {},
-      el("input", { type: "checkbox", checked: true, "data-path": w }), w)) : [el("div", { class: "empty" }, "Load the folders to choose.")]));
+    box.replaceChildren(...(watch.length ? watch.map((w) => el("label", { class: "node" },
+      el("input", { type: "checkbox", checked: true, "data-path": w }), el("span", { class: "name" }, w)))
+      : [el("div", { class: "empty" }, "Load your library to choose.")]));
     return;
   }
-  box.replaceChildren(...library.folders.map((f) => el("label", {},
-    el("input", { type: "checkbox", checked: watch.has(f.path), "data-path": f.path }), f.path,
-    el("span", { class: "count" }, `${f.documents} document(s)`))));
+  const filter = $("library-filter").value.trim().toLowerCase();
+  const docsIn = {};
+  for (const d of library.documents) (docsIn[d.folder] = docsIn[d.folder] || []).push(d);
+  const known = new Set([...library.folders.map((f) => f.path), ...library.documents.map((d) => d.path)]);
+  const coveredBy = (path) => watch.find((w) => w !== path && covers(w, path));
+
+  const docRow = (d) => {
+    const parent = coveredBy(d.path);
+    const input = el("input", { type: "checkbox", "data-path": d.path, checked: !!parent || watch.includes(d.path),
+                                disabled: d.own || !!parent });
+    return el("label", { class: "node doc" }, input, el("span", { class: "name" }, d.path.split("/").pop()),
+      d.own ? el("span", { class: "note" }, "handled separately") : parent ? el("span", { class: "note" }, `in ${parent}`) : null);
+  };
+  const matches = (path) => !filter || path.toLowerCase().includes(filter);
+
+  const nodes = [];
+  const top = (docsIn["/"] || []).filter((d) => matches(d.path));
+  if (top.length) {
+    nodes.push(el("details", { open: !!filter },
+      el("summary", {}, el("div", { class: "node folder" }, el("span", { class: "twist" }, "▶"),
+        el("span", { class: "name" }, "Top level"), el("span", { class: "count" }, `${(docsIn["/"] || []).length} document(s)`))),
+      ...top.map(docRow)));
+  }
+  for (const f of library.folders) {
+    const docs = (docsIn[f.path] || []).filter((d) => matches(d.path));
+    if (filter && !matches(f.path) && !docs.length) continue;
+    const parent = coveredBy(f.path);
+    const depth = f.path.split("/").length - 2;
+    const input = el("input", { type: "checkbox", "data-path": f.path, checked: !!parent || watch.includes(f.path),
+                                disabled: !!parent, onclick: (e) => e.stopPropagation() });
+    input.addEventListener("change", () => { settings = { ...settings, watch: pickedWatch() }; renderFolders(); });
+    nodes.push(el("details", { open: !!filter && docs.length > 0 },
+      el("summary", {}, el("div", { class: "node folder", style: `padding-left:${10 + depth * 18}px` },
+        el("span", { class: "twist" }, (docsIn[f.path] || []).length ? "▶" : ""), input,
+        el("span", { class: "name" }, f.path.split("/").pop()),
+        el("span", { class: "count" }, parent ? `in ${parent}` : `${f.documents} document(s)`))),
+      ...docs.map(docRow)));
+  }
+  for (const w of watch.filter((w) => !known.has(w))) {  // watched but no longer in the library: keep visible
+    nodes.push(el("label", { class: "node" }, el("input", { type: "checkbox", checked: true, "data-path": w }),
+      el("span", { class: "name" }, w), el("span", { class: "note" }, "not found in the library")));
+  }
+  box.replaceChildren(...(nodes.length ? nodes : [el("div", { class: "empty" }, "Nothing matches.")]));
+  box.querySelectorAll(".doc input").forEach((x) => x.addEventListener("change", () => renderPicked(pickedWatch())));
+
   const sel = $("todo-folder");
   sel.replaceChildren(el("option", { value: "/" }, "/ (top level)"), ...library.folders.map((f) => el("option", { value: f.path }, f.path)));
   sel.value = settings.todo_folder || "/";
@@ -510,11 +584,13 @@ $("load-library").addEventListener("click", () => act(async () => {
   $("library-status").textContent = "Listing your library…";
   library = await api("GET", "/api/library");
   $("library-status").textContent = `${library.folders.length} folder(s), ${library.documents.length} document(s)`;
+  $("library-filter").hidden = false;
   renderFolders();
 }));
+$("library-filter").addEventListener("input", () => { settings = { ...settings, watch: pickedWatch() }; renderFolders(); });
 $("threshold").addEventListener("input", () => { $("threshold-v").textContent = Math.round($("threshold").value * 100) + "%"; });
 $("save-settings").addEventListener("click", () => act(async () => {
-  const watch = [...$("folders").querySelectorAll("input[type=checkbox]")].filter((x) => x.checked).map((x) => x.dataset.path);
+  const watch = pickedWatch();
   settings = await api("PUT", "/api/settings", {
     watch, action_threshold: Number($("threshold").value), poll_interval_s: Number($("poll-interval").value),
     todo_enabled: $("todo-enabled").checked, tablet_include_others: $("todo-others").checked,
