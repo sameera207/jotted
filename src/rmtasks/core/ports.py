@@ -24,6 +24,9 @@ class DocumentSource(Protocol):
     def read_page(self, doc: DocInfo, page: PageInfo) -> list[SourceLine]:
         """The page as lines. May call recognition; unchanged lines should come from a cache."""
 
+    def stroke_ids(self, doc: DocInfo, page: PageInfo) -> set[str]:
+        """IDs of every mark on the page. Cheap: no recognition."""
+
 
 class ActionJudge(Protocol):
     def judge(self, doc: DocInfo, page: PageInfo, lines: list[SourceLine],
@@ -41,6 +44,18 @@ class Repository(Protocol):
     def save_doc(self, doc: DocInfo, page_count: int) -> None: ...
 
     def page_hash(self, doc_id: str, page_id: str) -> str | None: ...
+
+    def save_baseline(self, doc: DocInfo, page: PageInfo, strokes: set[str]) -> None:
+        """Record a page's existing marks without reading it; they are never judged."""
+
+    def baseline_strokes(self, doc_id: str, page_id: str) -> set[str] | None:
+        """The marks recorded as the page's baseline; None if it has none."""
+
+    def baselined_docs(self) -> set[str]:
+        """Documents with at least one baseline page."""
+
+    def clear_baseline(self, doc_id: str) -> None:
+        """Forget a document's baseline so its earlier writing is read on the next collect."""
 
     def line_keys(self, doc_id: str, page_id: str) -> dict[str, str]:
         """anchor -> key of every line stored for the page."""

@@ -82,6 +82,11 @@ class RemarkableLibrary:
             with z.open(member) as f:
                 return strokes.load_strokes_from(f, member, self.cfg.strokes)
 
+    def stroke_ids(self, doc: DocInfo, page: PageInfo) -> set[str]:
+        if page.content_hash == EMPTY:
+            return set()
+        return {s.id for s in self.page_strokes(doc.id, page.id)}
+
     def read_page(self, doc: DocInfo, page: PageInfo) -> list[SourceLine]:
         if page.content_hash == EMPTY:
             return []
@@ -107,5 +112,6 @@ class RemarkableLibrary:
                 rows=list(ln.row_boxes),
                 drawing=bool(t and t.drawing),
                 checkbox=t.checkbox if t else "none",
+                strokes=tuple(ids),
             ))
         return out

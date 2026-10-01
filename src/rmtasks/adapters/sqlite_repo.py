@@ -38,6 +38,12 @@ CREATE TABLE IF NOT EXISTS source_pages (
     hash    TEXT NOT NULL,
     PRIMARY KEY (doc_id, page_id)
 );
+CREATE TABLE IF NOT EXISTS source_baseline (
+    doc_id  TEXT NOT NULL,
+    page_id TEXT NOT NULL,
+    strokes TEXT NOT NULL,  -- JSON list of the mark IDs on the page when it was recorded
+    PRIMARY KEY (doc_id, page_id)
+);
 CREATE TABLE IF NOT EXISTS source_lines (
     doc_id   TEXT NOT NULL,
     page_id  TEXT NOT NULL,
@@ -152,6 +158,44 @@ class SqliteRepository:
             row = db.execute("SELECT hash FROM source_pages WHERE doc_id = ? AND page_id = ?",
                              (doc_id, page_id)).fetchone()
         return row["hash"] if row else None
+
+    def save_baseline(self, doc: DocInfo, page: PageInfo, strokes: set[str]) -> None:
+        with self.db() as db:
+            db.execute(
+                """INSERT INTO source_pages (doc_id, page_id, idx, hash) VALUES (?, ?, ?, ?)
+                   ON CONFLICT (doc_id, page_id) DO UPDATE SET idx = excluded.idx, hash = excluded.hash""",
+                (doc.id, page.id, page.index, page.content_hash),
+            )
+            db.execute("INSERT OR REPLACE INTO source_baseline (doc_id, page_id, strokes) VALUES (?, ?, ?)",
+                       (doc.id, page.id, json.dumps(sorted(strokes))))
+
+    def baseline_strokes(self, doc_id: str, page_id: str) -> set[str] | None:
+        with self.db() as db:
+            row = db.execute("SELECT strokes FROM source_baseline WHERE doc_id = ? AND page_id = ?",
+                             (doc_id, page_id)).fetchone()
+        return set(json.loads(row["strokes"])) if row else None
+
+    def baselined_docs(self) -> set[str]:
+        with self.db() as db:
+            return {r["doc_id"] for r in db.execute("SELECT DISTINCT doc_id FROM source_baseline")}
+
+    def baseline_pages(self) -> dict[str, int]:
+        """doc id -> how many of its pages were recorded as a baseline."""
+        with self.db() as db:
+            return {r["doc_id"]: r["n"] for r in db.execute(
+                "SELECT doc_id, COUNT(*) AS n FROM source_baseline GROUP BY doc_id")}
+
+    def clear_baseline(self, doc_id: str) -> None:
+        """Baseline pages are read again in full; lines already judged on them keep their judgments."""
+        with self.db() as db:
+            pages = [r["page_id"] for r in db.execute("SELECT page_id FROM source_baseline WHERE doc_id = ?",
+                                                      (doc_id,))]
+            for pid in pages:
+                db.execute("DELETE FROM source_pages WHERE doc_id = ? AND page_id = ?", (doc_id, pid))
+                db.execute("DELETE FROM source_lines WHERE doc_id = ? AND page_id = ? AND p_action IS NULL",
+                           (doc_id, pid))
+            db.execute("DELETE FROM source_baseline WHERE doc_id = ?", (doc_id,))
+            db.execute("UPDATE source_docs SET marker = NULL WHERE id = ?", (doc_id,))
 
     def line_keys(self, doc_id: str, page_id: str) -> dict[str, str]:
         with self.db() as db:

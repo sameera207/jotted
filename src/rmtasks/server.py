@@ -210,6 +210,9 @@ def create_app(cfg: Config, store: Store | None = None, background: bool = True,
             if s.poll_interval_s < 15:
                 raise ValueError("poll_interval_s must be at least 15 seconds")
             s.watch = sorted({"/" + w.strip("/") if w.strip("/") else "/" for w in s.watch})
+            if not isinstance(s.from_now, list) or not all(isinstance(d, str) for d in s.from_now):
+                raise ValueError("from_now must be a list of document IDs")
+            s.from_now = sorted(set(s.from_now))
             if not s.todo_name.strip():
                 raise ValueError("todo_name is empty")
         except (TypeError, ValueError) as e:
@@ -232,9 +235,12 @@ def create_app(cfg: Config, store: Store | None = None, background: bool = True,
             sync.LOCK.release()
         own = core.own_doc_ids()
         counts = {f: sum(1 for d in docs if (d.folder + "/").startswith(f.rstrip("/") + "/")) for f in folders}
+        read = {d["id"] for d in core.repo.source_docs() if d["marker"]}  # fully collected at least once
+        baseline = core.repo.baseline_pages()
         return jsonify(
             folders=[{"path": f, "documents": counts[f]} for f in folders],
-            documents=[{"path": d.path, "folder": d.folder, "id": d.id, "own": d.id in own} for d in docs],
+            documents=[{"path": d.path, "folder": d.folder, "id": d.id, "own": d.id in own,
+                        "read": d.id in read, "baseline_pages": baseline.get(d.id, 0)} for d in docs],
         )
 
     @flask.get("/api/library/pending")

@@ -4,6 +4,12 @@ Reading is incremental at three levels:
 1. documents whose change marker is unchanged are skipped (no download);
 2. pages whose content hash is unchanged are skipped (no parsing);
 3. on a changed page, only lines whose key changed are judged.
+
+A document marked "from now" (`Settings.from_now`) starts with a baseline instead: until it is
+first fully collected, every page not yet read has its marks recorded without being read.
+Afterwards it is collected like any other document, except that a line made only of baseline
+marks is never judged. So pages added later are read in full, and on an old page only lines
+with new ink are judged (the old lines are still sent along as context).
 """
 
 from __future__ import annotations
@@ -30,13 +36,18 @@ def collect(source: DocumentSource, judge: ActionJudge, repo: Repository,
         return summary
     docs = [d for d in source.list_documents() if settings.watches(d) and d.id not in exclude]
     summary.docs_seen = len(docs)
+    baselined = repo.baselined_docs()
     for doc in docs:
-        if repo.doc_marker(source.name, doc.id) == doc.modified:
+        if doc.id in baselined and doc.id not in settings.from_now:
+            repo.clear_baseline(doc.id)  # "from now" was turned off: read the earlier writing too
+        marker = repo.doc_marker(source.name, doc.id)
+        if marker == doc.modified:
             continue
         summary.docs_changed += 1
         progress(f"Reading {doc.path}")
         try:
-            _collect_doc(source, judge, repo, doc, settings.action_threshold, summary)
+            _collect_doc(source, judge, repo, doc, settings.action_threshold, summary, progress,
+                         first=marker is None)
         except Exception as e:  # one bad document must not stop the rest
             log.exception("collecting %s failed", doc.path)
             summary.errors.append(f"{doc.path}: {e}")
@@ -44,15 +55,28 @@ def collect(source: DocumentSource, judge: ActionJudge, repo: Repository,
 
 
 def _collect_doc(source: DocumentSource, judge: ActionJudge, repo: Repository, doc: DocInfo,
-                 threshold: float, summary: CollectSummary) -> None:
+                 threshold: float, summary: CollectSummary, progress: Progress = _quiet,
+                 first: bool = False) -> None:
+    """first: the document has never been fully collected. If it is marked "from now", pages
+    not read yet become baseline pages instead of being read. Settings are checked per page,
+    so marking a large document while it is being read takes effect at its next page."""
     pages = source.pages(doc)
     for page in pages:
-        if repo.page_hash(doc.id, page.id) == page.content_hash:
+        stored = repo.page_hash(doc.id, page.id)
+        if stored == page.content_hash:
             summary.pages_skipped += 1
             continue
+        if first and stored is None and doc.id in repo.settings().from_now:
+            progress(f"Recording existing writing in {doc.path} (page {page.index} of {len(pages)})")
+            repo.save_baseline(doc, page, source.stroke_ids(doc, page))
+            summary.pages_baselined += 1
+            continue
+        progress(f"Reading {doc.path} (page {page.index} of {len(pages)})")
         lines = source.read_page(doc, page)
         known = repo.line_keys(doc.id, page.id)
-        new = [ln for ln in lines if known.get(ln.anchor) != ln.key and ln.text and not ln.drawing]
+        baseline = repo.baseline_strokes(doc.id, page.id)
+        new = [ln for ln in lines if known.get(ln.anchor) != ln.key and ln.text and not ln.drawing
+               and (baseline is None or not set(ln.strokes) <= baseline)]
         judgments = judge.judge(doc, page, lines, new) if new else {}
         added, updated, missing = repo.save_page(doc, page, lines, judgments, threshold)
         summary.pages_read += 1
@@ -102,8 +126,11 @@ def pending(source: DocumentSource, repo: Repository, exclude: set[str] | None =
     exclude = exclude or set()
     out = []
     for doc in source.list_documents():
-        if not settings.watches(doc) or doc.id in exclude or repo.doc_marker(source.name, doc.id) == doc.modified:
+        marker = repo.doc_marker(source.name, doc.id)
+        if not settings.watches(doc) or doc.id in exclude or marker == doc.modified:
             continue
-        pages = [p for p in source.pages(doc) if repo.page_hash(doc.id, p.id) != p.content_hash] if fetch else []
+        baseline_only = marker is None and doc.id in settings.from_now  # unread pages are only recorded
+        pages = [p for p in source.pages(doc) if (h := repo.page_hash(doc.id, p.id)) != p.content_hash
+                 and not (baseline_only and h is None)] if fetch else []
         out.append((doc, pages))
     return out

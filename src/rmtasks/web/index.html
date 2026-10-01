@@ -110,6 +110,11 @@
   .twist[aria-expanded="true"] { transform: rotate(90deg); }
   .twist:disabled { visibility: hidden; }
   .count, .note { color: var(--muted); font-size: 12px; white-space: nowrap; }
+  .fromnow { display: inline-flex; gap: 6px; align-items: center; flex: none; color: var(--muted); font-size: 12px;
+             white-space: nowrap; cursor: pointer; }
+  .fromnow input[type=checkbox] { width: 14px; height: 14px; }
+  .fromnow.on { color: var(--accent); }
+  .fromnow:has(input:disabled) { cursor: default; opacity: .6; }
   .badge { font-size: 11px; padding: 1px 8px; border-radius: 99px; white-space: nowrap; }
   .badge.on { background: var(--accent); color: var(--accent-ink); }
   .badge.in { background: var(--chip); color: var(--accent); }
@@ -198,7 +203,9 @@
         <div class="label">Watched folders</div>
         <div class="help">Handwriting in these folders is read for action items. New lines are sent to
           Anthropic (as images) and TypeSafe (as text); nothing else leaves this machine.
-          Your Tasks notebook and the To-do document are always handled separately.</div>
+          Your Tasks notebook and the To-do document are always handled separately.
+          For a long document, tick <em>New writing only</em> (before or after you watch it): what is
+          already in it is skipped, and only pages and lines you add afterwards are read.</div>
         <div class="watching" id="watching" aria-live="polite"></div>
         <div class="row" style="margin-bottom:8px">
           <input type="text" id="library-filter" placeholder="Filter by name…" aria-label="Filter folders and documents"
@@ -534,7 +541,7 @@ function saveSoon(delay = 0) {
   $("settings-status").textContent = "Saving…";
   saveTimer = setTimeout(() => act(async () => {
     settings = await api("PUT", "/api/settings", {
-      watch: settings.watch || [], action_threshold: Number($("threshold").value),
+      watch: settings.watch || [], from_now: settings.from_now || [], action_threshold: Number($("threshold").value),
       poll_interval_s: Number($("poll-interval").value), todo_enabled: $("todo-enabled").checked,
       tablet_include_others: $("todo-others").checked, todo_name: $("todo-name").value.trim() || "To-do",
       todo_folder: $("todo-folder").value || settings.todo_folder || "/",
@@ -550,6 +557,34 @@ function setWatched(path, on) {
   settings = { ...settings, watch: watch.sort() };
   renderFolders();
   saveSoon();
+}
+
+function setFromNow(doc, on) {
+  if (!on && doc.baseline_pages &&
+      !confirm(`Read the writing that was skipped in ${doc.path.split("/").pop()} (${doc.baseline_pages} page(s))? ` +
+               "Every line on those pages is sent for reading, which can take a while for a long document.")) {
+    renderFolders();
+    return;
+  }
+  const ids = new Set(settings.from_now || []);
+  on ? ids.add(doc.id) : ids.delete(doc.id);
+  settings = { ...settings, from_now: [...ids].sort() };
+  renderFolders();
+  saveSoon();
+}
+
+// "New writing only": decided before a document is first read in full; afterwards it can only be turned off.
+function fromNowToggle(doc) {
+  const on = (settings.from_now || []).includes(doc.id);
+  const locked = !on && doc.read;
+  const title = locked ? "Already read in full, so there is nothing to skip"
+    : on && doc.baseline_pages ? `${doc.baseline_pages} page(s) of earlier writing skipped. Untick to read them too`
+    : on ? "Writing already in this document will be skipped when it is first checked"
+    : "Skip what is already written; read only pages and lines added from now on";
+  return el("label", { class: "fromnow" + (on ? " on" : ""), title },
+    el("input", { type: "checkbox", checked: on, disabled: locked, "aria-label": `New writing only in ${doc.path}`,
+                  onchange: (e) => setFromNow(doc, e.target.checked) }),
+    on && doc.baseline_pages ? `New writing only · ${doc.baseline_pages} p skipped` : "New writing only");
 }
 
 function libraryInfo(path) {
@@ -580,7 +615,7 @@ function renderFolders() {
   const coveredBy = (path) => watch.find((w) => w !== path && covers(w, path));
   const matches = (path) => !filter || path.toLowerCase().includes(filter);
 
-  const row = ({ path, name, folder, depth, own, count, docs }) => {
+  const row = ({ path, name, folder, depth, own, count, docs, doc }) => {
     const parent = coveredBy(path), on = watch.includes(path);
     const box = el("input", { type: "checkbox", checked: on || !!parent, disabled: own || !!parent,
       onchange: (e) => setWatched(path, e.target.checked) });
@@ -595,11 +630,11 @@ function renderFolders() {
                              style: `padding-left:${10 + depth * 18}px` },
       folder ? twist : el("span", { style: "width:22px;flex:none" }),
       el("label", {}, box, el("span", { class: "name" }, name)),
-      badge, count ? el("span", { class: "count" }, count) : null);
+      badge, doc && !own ? fromNowToggle(doc) : null, count ? el("span", { class: "count" }, count) : null);
     if (!folder) return node;
     const group = el("div", { class: "group" }, node);
     if (open) for (const d of docs) group.append(row({ path: d.path, name: d.path.split("/").pop(), folder: false,
-                                                        depth: depth + 1, own: d.own }));
+                                                        depth: depth + 1, own: d.own, doc: d }));
     return group;
   };
 
@@ -612,7 +647,7 @@ function renderFolders() {
     const group = el("div", { class: "group" }, el("div", { class: "node folder" }, twist,
       el("span", { class: "name", style: "flex:1" }, "Top level (documents not in a folder)"),
       el("span", { class: "count" }, `${(docsIn["/"] || []).length} document(s)`)));
-    if (open) for (const d of top) group.append(row({ path: d.path, name: d.path.split("/").pop(), folder: false, depth: 1, own: d.own }));
+    if (open) for (const d of top) group.append(row({ path: d.path, name: d.path.split("/").pop(), folder: false, depth: 1, own: d.own, doc: d }));
     nodes.push(group);
   }
   for (const f of library.folders) {

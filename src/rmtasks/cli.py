@@ -258,6 +258,25 @@ def cmd_watch(cfg: Config, args: argparse.Namespace) -> int:
         s.watch = sorted(set(s.watch) | {"/" + args.path.strip("/")})
     elif args.action == "remove":
         s.watch = [w for w in s.watch if w.strip("/") != args.path.strip("/")]
+    else:  # from-now / read-all: the document at PATH, or every document in that folder now
+        target = "/" + args.path.strip("/") if args.path.strip("/") else "/"
+        with console.status("Listing the library…"):
+            docs = [d for d in app.source.list_documents()
+                    if target == "/" or d.path == target or d.path.startswith(target + "/")]
+        if not docs:
+            console.print(f"No documents at {target}")
+            return 1
+        ids = {d.id for d in docs}
+        read = {d["id"] for d in app.repo.source_docs() if d["marker"]}
+        if args.action == "from-now":
+            late = [d.path for d in docs if d.id in read and d.id not in app.repo.baselined_docs()]
+            s.from_now = sorted(set(s.from_now) | ids)
+            if late:
+                console.print(f"[dim]Already read in full, so nothing is skipped: {', '.join(late)}[/dim]")
+        else:
+            s.from_now = sorted(set(s.from_now) - ids)
+        console.print(f"{'New writing only' if args.action == 'from-now' else 'Everything is read'} in "
+                      f"{len(docs)} document(s) at {target}")
     app.repo.save_settings(s)
     console.print("Watching: " + (", ".join(s.watch) or "[dim]nothing[/dim]"))
     return 0
@@ -362,8 +381,10 @@ def build_parser() -> argparse.ArgumentParser:
     pu.add_argument("--dry-run", action="store_true", help="build the PDF locally; do not upload")
     pu.set_defaults(func=cmd_push)
     sub.add_parser("library", help="list the library's folders and which are watched").set_defaults(func=cmd_library)
-    wa = sub.add_parser("watch", help="watch or stop watching a folder (also in the web app)")
-    wa.add_argument("action", choices=["add", "remove"])
+    wa = sub.add_parser("watch", help="watch or stop watching a folder (also in the web app)",
+                        description="from-now: skip what is already written in the documents at PATH (a "
+                                    "folder means the documents in it now); read-all undoes it.")
+    wa.add_argument("action", choices=["add", "remove", "from-now", "read-all"])
     wa.add_argument("path", help="folder or document path, e.g. '/Meeting notes'")
     wa.set_defaults(func=cmd_watch)
     co = sub.add_parser("collect", help="read what changed in watched folders and update the to-do list")

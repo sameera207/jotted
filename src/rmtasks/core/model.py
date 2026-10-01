@@ -42,6 +42,7 @@ class SourceLine:
     rows: list[BBox] = field(default_factory=list)
     drawing: bool = False
     checkbox: str = "none"
+    strokes: tuple[str, ...] = ()  # IDs of the marks the line is made of
 
 
 @dataclass
@@ -61,6 +62,9 @@ class Settings:
     todo_enabled: bool = False  # create and keep the To-do document on the tablet
     todo_name: str = "To-do"
     todo_folder: str = "/"
+    # Document IDs where only writing added from now on is read: what is already on their
+    # pages when they are first collected is recorded as a baseline and never judged.
+    from_now: list[str] = field(default_factory=list)
 
     def watches(self, doc: DocInfo) -> bool:
         for w in self.watch:
@@ -76,6 +80,7 @@ class CollectSummary:
     docs_changed: int = 0
     pages_read: int = 0
     pages_skipped: int = 0
+    pages_baselined: int = 0
     lines_judged: int = 0
     actions_new: int = 0
     actions_updated: int = 0

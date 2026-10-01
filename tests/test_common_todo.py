@@ -36,14 +36,14 @@ class FakeSource:
         self.reads: list[tuple[str, str]] = []
 
     def add(self, doc_id, name, folder, modified, pages):
-        """pages: {page_id: [(anchor, key, text), ...]}"""
+        """pages: {page_id: [(anchor, key, text), ...]}; a key "k1+k2" is a line of strokes k1 and k2."""
         self.docs[doc_id] = DocInfo("fake", doc_id, name, folder, modified)
         self.pages_[doc_id] = []
         for i, (pid, lines) in enumerate(pages.items(), start=1):
             digest = str(hash(tuple(lines)))
             self.pages_[doc_id].append(PageInfo(doc_id, pid, i, digest))
             self.lines_[(doc_id, pid)] = [
-                SourceLine(anchor=a, key=k, text=t, bbox=(0, 100 * n, 500, 100 * n + 40))
+                SourceLine(anchor=a, key=k, text=t, bbox=(0, 100 * n, 500, 100 * n + 40), strokes=tuple(k.split("+")))
                 for n, (a, k, t) in enumerate(lines)
             ]
 
@@ -59,6 +59,9 @@ class FakeSource:
     def read_page(self, doc, page):
         self.reads.append((doc.id, page.id))
         return self.lines_[(doc.id, page.id)]
+
+    def stroke_ids(self, doc, page):
+        return {s for ln in self.lines_[(doc.id, page.id)] for s in ln.strokes}
 
 
 class FakeJudge:
@@ -184,6 +187,120 @@ def test_failed_document_is_retried_next_run(repo):
     summary = service.collect(source, judge, repo)
     assert summary.errors and repo.doc_marker("fake", "doc-a") is None  # not marked as collected
 
+
+
+# ---------------------------------------------------------------- core: "new writing only"
+
+
+def from_now(repo, *doc_ids):
+    s = repo.settings()
+    s.from_now = sorted(set(s.from_now) | set(doc_ids))
+    repo.save_settings(s)
+
+
+def open_actions(repo):
+    return sorted(i["text"] for i in repo.items() if i["kind"] == "action")
+
+
+def test_from_now_records_existing_writing_without_reading_it(repo):
+    source, judge = FakeSource(), FakeJudge()
+    notes(source)
+    from_now(repo, "doc-a")
+    summary = service.collect(source, judge, repo)
+    assert summary.pages_baselined == 2 and summary.pages_read == 0
+    assert source.reads == [] and judge.judged == [] and open_actions(repo) == []
+    assert repo.doc_marker("fake", "doc-a") == "2026-10-01T10:00:00Z"  # done: next run skips it
+    assert service.collect(source, judge, repo).docs_changed == 0
+
+
+def test_from_now_reads_appended_pages_in_full(repo):
+    source, judge = FakeSource(), FakeJudge()
+    notes(source)
+    from_now(repo, "doc-a")
+    service.collect(source, judge, repo)
+    page1 = [("1:10", "k10", "Agenda for the weekly"), ("1:20", "k20", "TODO book the retro room"),
+             ("1:30", "k30", "@Simon TODO send the deck")]
+    source.add("doc-a", "Weekly sync", "/Meetings", "2026-10-02T10:00:00Z",
+               {"p1": page1, "p2": [("1:40", "k40", "Notes only")],
+                "p3": [("1:60", "k60", "Decided on Friday"), ("1:70", "k70", "TODO email the agenda")]})
+    summary = service.collect(source, judge, repo)
+    assert source.reads == [("doc-a", "p3")] and summary.pages_baselined == 0
+    assert judge.judged == ["Decided on Friday", "TODO email the agenda"]
+    assert open_actions(repo) == ["TODO email the agenda"]
+
+
+def test_from_now_judges_only_new_ink_on_an_old_page(repo):
+    source, judge = FakeSource(), FakeJudge()
+    notes(source)
+    from_now(repo, "doc-a")
+    service.collect(source, judge, repo)
+    # A new line under the old ones, and a tick added to an old line (its strokes grow).
+    notes(source, modified="2026-10-02T10:00:00Z", extra=[("1:35", "k35", "TODO order the cake")])
+    service.collect(source, judge, repo)
+    assert source.reads == [("doc-a", "p1")]
+    assert judge.judged == ["TODO order the cake"]  # the old lines go along as context only
+    assert open_actions(repo) == ["TODO order the cake"]
+
+    page1 = [("1:10", "k10", "Agenda for the weekly"), ("1:20", "k20+k21", "TODO book the retro room ✓"),
+             ("1:30", "k30", "@Simon TODO send the deck"), ("1:35", "k35", "TODO order the cake")]
+    source.add("doc-a", "Weekly sync", "/Meetings", "2026-10-03T10:00:00Z",
+               {"p1": page1, "p2": [("1:40", "k40", "Notes only")]})
+    service.collect(source, judge, repo)
+    assert judge.judged[-1] == "TODO book the retro room ✓"  # an old line with new ink is new writing
+
+
+def test_from_now_on_a_document_already_read_changes_nothing(repo):
+    source, judge = FakeSource(), FakeJudge()
+    notes(source)
+    service.collect(source, judge, repo)
+    from_now(repo, "doc-a")
+    source.add("doc-a", "Weekly sync", "/Meetings", "2026-10-02T10:00:00Z",
+               {"p1": [("1:20", "k20", "TODO book the retro room")], "p2": [("1:40", "k40", "Notes only")],
+                "p3": [("1:70", "k70", "TODO email the agenda")]})
+    summary = service.collect(source, judge, repo)
+    assert summary.pages_baselined == 0 and ("doc-a", "p3") in source.reads
+    assert "TODO email the agenda" in open_actions(repo)
+
+
+def test_from_now_chosen_mid_read_skips_the_remaining_pages(repo):
+    source = FakeSource()
+    notes(source)
+
+    class MarkingJudge(FakeJudge):
+        def judge(self, doc, page, lines, new):  # the user ticks "new writing only" while page 1 is read
+            from_now(repo, "doc-a")
+            return super().judge(doc, page, lines, new)
+
+    summary = service.collect(source, MarkingJudge(), repo)
+    assert summary.pages_read == 1 and summary.pages_baselined == 1
+    assert source.reads == [("doc-a", "p1")]
+    assert open_actions(repo) == ["@Simon TODO send the deck", "TODO book the retro room"]
+
+
+def test_turning_from_now_off_reads_the_skipped_writing(repo):
+    source, judge = FakeSource(), FakeJudge()
+    notes(source)
+    from_now(repo, "doc-a")
+    service.collect(source, judge, repo)
+    notes(source, modified="2026-10-02T10:00:00Z", extra=[("1:35", "k35", "TODO order the cake")])
+    service.collect(source, judge, repo)
+    judge.judged.clear()
+
+    s = repo.settings()
+    s.from_now = []
+    repo.save_settings(s)
+    summary = service.collect(source, judge, repo)
+    assert summary.pages_read == 2 and repo.baselined_docs() == set()
+    assert sorted(judge.judged) == ["@Simon TODO send the deck", "Agenda for the weekly", "Notes only",
+                                    "TODO book the retro room"]  # the cake was judged already
+    assert open_actions(repo) == ["@Simon TODO send the deck", "TODO book the retro room", "TODO order the cake"]
+
+
+def test_pending_leaves_out_pages_that_will_only_be_recorded(repo):
+    source = FakeSource()
+    notes(source)
+    from_now(repo, "doc-a")
+    assert [(d.id, pages) for d, pages in service.pending(source, repo, fetch=True)] == [("doc-a", [])]
 
 def test_web_edits_win_over_older_paper_changes(repo):
     source, judge = FakeSource(), FakeJudge()
@@ -349,6 +466,9 @@ def test_todo_endpoints(tmp_path, monkeypatch):
     assert client.put("/api/settings", json={"bogus": 1}).status_code == 400
     s = client.put("/api/settings", json={"watch": ["Meetings/", "/Work"], "todo_enabled": True}).get_json()
     assert s["watch"] == ["/Meetings", "/Work"] and s["todo_enabled"]
+    assert client.put("/api/settings", json={"from_now": "doc-a"}).status_code == 400
+    assert client.put("/api/settings", json={"from_now": ["doc-b", "doc-a", "doc-a"]}).get_json()["from_now"] == \
+        ["doc-a", "doc-b"]
 
 
 # ---------------------------------------------------------------- writing on the To-do document
