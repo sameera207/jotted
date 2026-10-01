@@ -52,6 +52,7 @@ def test_example_config_loads_and_resolves_paths(cfg, tmp_path):
         ("[checkbox]\nbox_aspect = [2, 1]\n", "greater than max"),
         ('[checkbox]\nstyles = ["circle"]\n', "unknown style"),
         ('[recognition]\nprovider = "nope"\n', "recognition.provider"),
+        ('[classification]\nprovider = "nope"\n', "classification.provider"),
     ],
 )
 def test_config_rejects_bad_values(tmp_path, extra, message):
@@ -337,6 +338,77 @@ def test_providers_are_registered_and_checked(cfg, monkeypatch):
         recognise.reader_for(dataclasses.replace(cfg.recognition, provider="nope"))
 
 
+class _FakeJudge:
+    """Any provider: every line is a todo, every pair continues (P 0.9), every line is my action."""
+    model = "fake-judge"
+
+    def __init__(self):
+        self.calls: list[tuple] = []
+
+    def kinds(self, lines, targets, context):
+        self.calls.append(("kinds", [lines[i].n for i in targets], context))
+        return {i: classify_mod.KindAnswer("todo", {"todo": 0.9, "note": 0.05, "heading": 0.05}, 0.9) for i in targets}
+
+    def continues(self, lines, pairs):
+        self.calls.append(("continues", [(lines[q.above].n, lines[q.below].n) for q in pairs]))
+        return {(q.above, q.below): 0.9 for q in pairs}
+
+    def actions(self, document, lines, targets, context):
+        from rmtasks.core.model import Judgment as ActionJudgment
+        self.calls.append(("actions", document, [lines[i].text for i in targets]))
+        return {i: ActionJudgment(p_action=0.95, owner="me") for i in targets}
+
+
+def test_any_judge_plugs_in_for_line_kinds_and_is_cached(tmp_path, cfg):
+    ts = {1: Transcript(1, "empty", "call Bob"), 2: Transcript(2, "none", ""), 3: Transcript(3, "none", "notes")}
+    judge, cache = _FakeJudge(), AICache(tmp_path / "ai")
+    got = classify_mod.classify(ts, cfg.classification, cache, judge=judge)
+    assert judge.calls == [("kinds", [1, 3], cfg.classification.context_lines)]  # empty lines are not judged
+    assert got[1].p_todo == 0.9 and not got[1].cached
+    assert classify_mod.classify(ts, cfg.classification, cache, judge=judge)[3].cached and len(judge.calls) == 1
+
+
+def test_any_judge_plugs_in_for_continuations(tmp_path, cfg):
+    page = [(0, "+ email the landlord about"), (40, "the broken heater"), (140, "buy milk")]
+    lines_ = [Line(to_strokes([[(20, y), (300, y + 20)]]), n=i + 1) for i, (y, _) in enumerate(page)]
+    ts = {i + 1: Transcript(i + 1, "none", text) for i, (_, text) in enumerate(page)}
+    judge, cache = _FakeJudge(), AICache(tmp_path / "ai")
+    assert classify_mod.continuations(lines_, ts, cfg.classification, cache, judge=judge) == [(1, 2)]
+    assert judge.calls == [("continues", [(1, 2)])]
+    assert classify_mod.continuations(lines_, ts, cfg.classification, cache, judge=judge) == [(1, 2)]
+    assert len(judge.calls) == 1  # cached
+
+
+def test_action_judge_asks_the_provider_once_per_line(tmp_path, cfg):
+    from rmtasks.adapters.action_judge import ModelActionJudge
+    from rmtasks.core.model import DocInfo, PageInfo, SourceLine
+
+    doc, page = DocInfo("remarkable", "d", "Weekly", "/Meetings", "m"), PageInfo("d", "p", 3, "h")
+    lines_ = [SourceLine(anchor=f"1:{i}", key=f"k{i}", text=t, bbox=(0, 0, 1, 1))
+              for i, t in enumerate(["Agenda", "book the room", ""])]
+    fake = _FakeJudge()
+    judge = ModelActionJudge(cfg.classification, AICache(tmp_path / "ai"), judge=fake)
+    got = judge.judge(doc, page, lines_, [lines_[1], lines_[2]])
+    assert set(got) == {"1:1"} and got["1:1"].p_action == 0.95  # the empty line is not judged
+    assert fake.calls == [("actions", classify_mod.Document("Weekly", "/Meetings", 3), ["book the room"])]
+    assert judge.judge(doc, page, lines_, [lines_[1]])["1:1"].owner == "me" and len(fake.calls) == 1
+
+
+def test_judge_providers_are_registered_and_checked(cfg, monkeypatch):
+    import dataclasses
+
+    from rmtasks.adapters.typesafe_judge import TypeSafeJudge
+
+    assert set(classify_mod.PROVIDERS) == config.CLASSIFICATION_PROVIDERS
+    monkeypatch.setenv(cfg.classification.api_key_env, "test-key")
+    assert isinstance(classify_mod.judge_for(cfg.classification), TypeSafeJudge)
+    monkeypatch.delenv(cfg.classification.api_key_env)
+    with pytest.raises(classify_mod.ClassificationError, match="is not set"):
+        classify_mod.judge_for(cfg.classification)
+    with pytest.raises(classify_mod.ClassificationError, match="unknown classification provider"):
+        classify_mod.judge_for(dataclasses.replace(cfg.classification, provider="nope"))
+
+
 def test_classify_builds_one_question_per_line_and_caches(tmp_path, cfg, monkeypatch):
     seen = {}
 
@@ -357,7 +429,9 @@ def test_classify_builds_one_question_per_line_and_caches(tmp_path, cfg, monkeyp
                        for q in questions}
             return NS(choices=choices, model="jev-test", request_id="req_test")
 
-    monkeypatch.setattr(classify_mod, "TypeSafeClient", FakeClient)
+    from rmtasks.adapters import typesafe_judge
+
+    monkeypatch.setattr(typesafe_judge, "TypeSafeClient", FakeClient)
     monkeypatch.setenv(cfg.classification.api_key_env, "test-key")
     ts = {1: Transcript(1, "empty", "call Bob"), 2: Transcript(2, "empty", ""), 3: Transcript(3, "none", "notes")}
     cache = AICache(tmp_path / "ai")

@@ -130,7 +130,7 @@ Every task that existed in the first run should keep identical checkbox IDs.
 
 From the command line: `rmtasks library`, `rmtasks watch add "/Meeting Notes"`, `rmtasks collect --dry-run` (what changed, nothing read), `rmtasks collect`, `rmtasks todo`.
 
-Code layout: `rmtasks/core` holds the model, ports and services and imports no adapter. `rmtasks/adapters` holds the reMarkable library, Jev, SQLite and To-do document implementations, and the handwriting readers (Anthropic today; `recognition.provider` picks one, and `rmtasks/recognise.py` explains how to add another). `rmtasks/app.py` wires them together and runs the background scheduler. See `specs/Common-todo-spec.md`.
+Code layout: `rmtasks/core` holds the model, ports and services and imports no adapter. `rmtasks/adapters` holds the reMarkable library, SQLite and To-do document implementations, and the AI providers behind two ports: handwriting readers (`recognition.provider`, Anthropic today) and line judges (`classification.provider`, TypeSafe's Jev today). `rmtasks/recognise.py` and `rmtasks/classify.py` explain how to add a provider. `rmtasks/app.py` wires them together and runs the background scheduler. See `specs/Common-todo-spec.md`.
 
 ## Troubleshooting
 

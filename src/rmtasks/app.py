@@ -12,7 +12,7 @@ import time
 from dataclasses import dataclass, field
 
 from . import cloud, sync
-from .adapters.jev_judge import JevActionJudge
+from .adapters.action_judge import ModelActionJudge
 from .adapters.remarkable_library import RemarkableLibrary
 from .adapters.sqlite_repo import SqliteRepository
 from .adapters.todo_document import TodoDocument
@@ -35,14 +35,14 @@ class App:
     store: Store  # the Tasks notebook
     repo: SqliteRepository  # collected actions, settings, the To-do document
     source: RemarkableLibrary
-    judge: JevActionJudge
+    judge: ModelActionJudge
 
     @classmethod
     def build(cls, cfg: Config, store: Store | None = None) -> "App":
         cache = AICache(cfg.paths.cache_dir / "ai")
         store = store or Store(cfg.server.db)
         return cls(cfg=cfg, store=store, repo=SqliteRepository(cfg.server.db),
-                   source=RemarkableLibrary(cfg, cache), judge=JevActionJudge(cfg.classification, cache))
+                   source=RemarkableLibrary(cfg, cache), judge=ModelActionJudge(cfg.classification, cache))
 
     def todo_document(self) -> TodoDocument:
         s = self.repo.settings()

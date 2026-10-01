@@ -89,6 +89,7 @@ class RecognitionConfig:
 @dataclass(frozen=True)
 class ClassificationConfig:
     enabled: bool = True
+    provider: str = "typesafe"  # which LineJudge adapter judges the lines
     model: str = "jev-latest"
     api_key_env: str = "TYPESAFE_API_KEY"
     todo_threshold: float = 0.6
@@ -179,6 +180,7 @@ SECTIONS: dict[str, type] = {
 KNOWN_STYLES = {"bracket_pair", "single_box"}
 KNOWN_FORMATS = {"table", "json", "svg"}
 RECOGNITION_PROVIDERS = {"anthropic"}  # kept in step with recognise.PROVIDERS
+CLASSIFICATION_PROVIDERS = {"typesafe"}  # kept in step with classify.PROVIDERS
 KNOWN_CHECKS = {
     "bracket_aspect", "height_ratio", "overlap", "gap", "clear_between",  # bracket_pair
     "box_aspect", "closure", "path_ratio", "clear_inside",  # single_box
@@ -284,6 +286,9 @@ def _validate(cfg: Config) -> None:
                           f"known: {sorted(RECOGNITION_PROVIDERS)}")
     if cfg.recognition.provider == "anthropic" and cfg.recognition.effort not in ("low", "medium", "high", "xhigh", "max"):
         raise ConfigError("recognition.effort must be low, medium, high, xhigh or max")
+    if cfg.classification.provider not in CLASSIFICATION_PROVIDERS:
+        raise ConfigError(f"classification.provider: unknown {cfg.classification.provider!r}; "
+                          f"known: {sorted(CLASSIFICATION_PROVIDERS)}")
     if not 0 <= cfg.classification.todo_threshold <= 1:
         raise ConfigError("classification.todo_threshold must be between 0 and 1")
     if not 0 <= cfg.classification.continuation_threshold <= 1:
@@ -291,7 +296,7 @@ def _validate(cfg: Config) -> None:
     if cfg.classification.context_lines < 0:
         raise ConfigError("classification.context_lines must be 0 or more")
     if cfg.classification.enabled and not cfg.recognition.enabled:
-        raise ConfigError("classification needs recognition: Jev judges the transcribed text")
+        raise ConfigError("classification needs recognition: the judge reads the transcribed text")
     t = cfg.template
     if t.pages < 1:
         raise ConfigError("template.pages must be at least 1")

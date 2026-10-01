@@ -68,9 +68,11 @@ api_key_env = "ANTHROPIC_API_KEY"   # name of the variable holding the key, neve
 effort      = "low"                 # anthropic only
 timeout_s   = 120
 
-# Line to todo / note / heading: one Jev (TypeSafe) request per page, cached.
+# Judging lines (todo / note / heading, wrapped lines, actions and owners): one request
+# per page to the provider below, cached. Transcribed text is sent to that provider.
 [classification]
 enabled          = true
+provider         = "typesafe"     # the judge: Jev, from TypeSafe
 model            = "jev-latest"
 api_key_env      = "TYPESAFE_API_KEY"
 todo_threshold   = 0.6    # P(todo) at or above this makes the line a task

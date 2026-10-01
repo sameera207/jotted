@@ -1,33 +1,32 @@
-"""Decide whether each transcribed line is a to-do, with Jev (TypeSafe System One).
+"""Judging lines: what kind each one is, whether it continues the line above, and
+whether it is an action (and whose).
 
-One request per page. The state holds the page's lines; each uncached line gets
-its own Choice question over that shared state. Policy (thresholds, what a
-checkbox means) stays in code; Jev only supplies the judgment.
+The model is behind a port, `LineJudge`, with an adapter per provider
+(`adapters/typesafe_judge.py` for Jev). Policy stays here and is shared: which lines
+are judged and with what context, the criteria, thresholds, geometry, and a cache per
+question. To add a provider: write an adapter with `kinds()`, `continues()` and
+`actions()`, then register it in `PROVIDERS` and `config.CLASSIFICATION_PROVIDERS`.
 """
 
 from __future__ import annotations
 
+import importlib
 import logging
-import os
 import statistics
 from dataclasses import dataclass
-
-from typesafe_sdk import (
-    Choice,
-    Noul,
-    TypeSafeAuthenticationError,
-    TypeSafeClient,
-    TypeSafeError,
-)
+from typing import Protocol
 
 from .aicache import AICache
 from .config import ClassificationConfig
+from .core.model import Judgment as ActionJudgment
 from .lines import Line
 from .recognise import Transcript
 
 log = logging.getLogger(__name__)
 
-PROMPT_VERSION = 3
+# Part of the cache keys: bump when the questions change, in any adapter.
+PROMPT_VERSION = 3  # line kinds and continuations
+ACTION_PROMPT_VERSION = 1  # actions and owners
 
 NOTEBOOK = (
     "A handwritten reMarkable notebook the writer uses as a to-do list. It holds tasks, "
@@ -42,6 +41,22 @@ CRITERIA = {
     "note": "Information rather than an action: a fact, an observation, a thought, a quote, "
             "or a record of what already happened.",
     "heading": "A date, a day name, a title or a section label that organises the lines below it.",
+}
+
+ACTION = {
+    "true": "Something someone should do, follow up, decide or deliver: a task, a request, a commitment, "
+            "a next step, or a reminder. Short notes count when they clearly name something to get done "
+            "(\"book flights\", \"Simon → send the deck\").",
+    "false": "Information rather than an action: a fact, a discussion point, an observation, a decision "
+             "already made, a heading, a date, or a question with nothing to do.",
+}
+
+OWNER = {
+    "me": "The writer of the notes is to do it, or no one else is named (\"I'll…\", \"check the bill\", "
+          "\"book the room\").",
+    "someone_else": "A named person, team or group is to do it (\"Simon to send the deck\", \"@Jo: review\", "
+                    "\"infra team will…\").",
+    "unclear": "It is an action but who should do it cannot be told from the notes.",
 }
 
 
@@ -62,10 +77,69 @@ class Judgment:
         return self.probabilities.get("todo", 0.0)
 
 
+# ---------------------------------------------------------------- the port
+
+
+@dataclass(frozen=True)
+class KindAnswer:
+    choice: str  # a key of CRITERIA
+    probabilities: dict[str, float]
+    confidence: float
+
+
+@dataclass(frozen=True)
+class Continuation:
+    """Does lines[below] continue lines[above]? Positions are in the judged lines."""
+    above: int
+    below: int
+    spacing: float  # their distance as a share of the page's usual line spacing
+    indented: bool  # below is indented under the text of a bulleted or boxed line
+
+
+@dataclass(frozen=True)
+class Document:
+    name: str
+    folder: str
+    page: int
+
+
+class LineJudge(Protocol):
+    """A model that judges transcribed lines. Every method gets the page's written lines in
+    order and the positions to judge; the others are context. Raises ClassificationError.
+    Answers it cannot give are simply absent."""
+
+    model: str
+
+    def kinds(self, lines: list[Transcript], targets: list[int], context: int) -> dict[int, KindAnswer]:
+        """Per target: todo, note or heading (CRITERIA). `context` neighbours each side matter."""
+
+    def continues(self, lines: list[Transcript], pairs: list[Continuation]) -> dict[tuple[int, int], float]:
+        """Per (above, below): the probability that below continues above."""
+
+    def actions(self, document: Document, lines: list[Transcript], targets: list[int],
+                context: int) -> dict[int, ActionJudgment]:
+        """Per target: the probability it is an action (ACTION) and who owns it (OWNER)."""
+
+
+# provider name -> "module:class", imported only when used.
+PROVIDERS = {"typesafe": "rmtasks.adapters.typesafe_judge:TypeSafeJudge"}
+
+
+def judge_for(cfg: ClassificationConfig) -> LineJudge:
+    target = PROVIDERS.get(cfg.provider)
+    if target is None:
+        raise ClassificationError(f"unknown classification provider {cfg.provider!r}; known: {sorted(PROVIDERS)}")
+    module, cls = target.split(":")
+    return getattr(importlib.import_module(module), cls)(cfg)
+
+
+# ---------------------------------------------------------------- shared policy
+
 BULLETS = ("-", "–", "—", "•", "*", "·", ">")
 
 
-def _state_line(t: Transcript) -> dict:
+def state_line(t: Transcript) -> dict:
+    """A line as the judge sees it (also part of the cache keys)."""
     line = {"n": t.n, "checkbox": t.checkbox, "text": t.text}
     if t.drawing:
         line["drawing"] = True
@@ -73,29 +147,10 @@ def _state_line(t: Transcript) -> dict:
 
 
 def _judgeable(transcripts: dict[int, Transcript]) -> list[Transcript]:
-    """Lines Jev sees: written text only. Drawings and empty lines are left out of the
-    state; with them in, Jev read them as odd blank lines and neighbouring judgments
+    """Lines the judge sees: written text only. Drawings and empty lines are left out;
+    with them in, Jev read them as odd blank lines and neighbouring judgments
     dropped (P(todo) 0.92 -> 0.45 for the same line)."""
     return [transcripts[n] for n in sorted(transcripts) if transcripts[n].text and not transcripts[n].drawing]
-
-
-def _page_state(ordered: list[Transcript]) -> dict:
-    return {"notebook": NOTEBOOK, "lines": [_state_line(t) for t in ordered]}
-
-
-def ask(questions: dict, state: dict, cfg: ClassificationConfig):
-    api_key = os.environ.get(cfg.api_key_env)
-    if not api_key:
-        raise ClassificationError(f"{cfg.api_key_env} is not set; export it or set classification.enabled = false")
-    try:
-        with TypeSafeClient(api_key=api_key, model=cfg.model, timeout=float(cfg.timeout_s)) as client:
-            resp = client.system_one(state=state, questions=questions)
-    except TypeSafeAuthenticationError as e:
-        raise ClassificationError(f"TypeSafe rejected the key in {cfg.api_key_env}") from e
-    except TypeSafeError as e:
-        raise ClassificationError(f"TypeSafe request failed: {e}") from e
-    log.debug("asked %d question(s) of %s (request %s)", len(questions), resp.model, resp.request_id)
-    return resp
 
 
 def _centre(line: Line) -> float:
@@ -162,94 +217,63 @@ def adjacent_drawings(lines: list[Line], transcripts: dict[int, Transcript],
 
 
 def continuations(lines: list[Line], transcripts: dict[int, Transcript], cfg: ClassificationConfig,
-                  cache: AICache) -> list[tuple[int, int]]:
-    """Candidate pairs Jev does not reject: `below` continues `above`.
+                  cache: AICache, judge: LineJudge | None = None) -> list[tuple[int, int]]:
+    """Candidate pairs the judge does not reject: `below` continues `above`.
 
-    Geometry is the main evidence here and Jev acts as a veto: on real pages Jev put a
-    genuine wrap at ~0.33 and separate neighbouring items at 0.08-0.17, so the default
+    Geometry is the main evidence here and the judge acts as a veto: on real pages Jev put
+    a genuine wrap at ~0.33 and separate neighbouring items at 0.08-0.17, so the default
     threshold is low. Tune `continuation_threshold` on your own pages."""
     pairs = continuation_candidates(lines, transcripts, cfg)
     if not pairs:
         return []
     ordered = _judgeable(transcripts)
     index = {t.n: i for i, t in enumerate(ordered)}
-    confirmed, questions, keys = [], {}, {}
+    confirmed: list[tuple[int, int]] = []
+    ask: dict[tuple[int, int], tuple[int, int, str]] = {}  # (i, j) -> (above n, below n, cache key)
+    questions = []
     for above, below, spacing, indented in pairs:
         key = AICache.key("continuation", PROMPT_VERSION, cfg.model, round(spacing, 2), indented,
-                          _state_line(transcripts[above]), _state_line(transcripts[below]))
+                          state_line(transcripts[above]), state_line(transcripts[below]))
         hit = cache.get("continuations", key)
         if hit is not None:
             if hit["p"] >= cfg.continuation_threshold:
                 confirmed.append((above, below))
             continue
-        qid = f"cont_{above}_{below}"
-        keys[qid] = (above, below, key)
-        i, j = index[above], index[below]
-        questions[qid] = Noul(
-            instructions={
-                "layout": f"`lines[{j}]` is written directly under `lines[{i}]`, with no bullet or checkbox of its "
-                          f"own"
-                          + (", indented under the text of the list item above it" if indented else "")
-                          + f". The spacing between them is {spacing:.0%} of the usual spacing between lines "
-                          f"on this page.",
-                "question": f"Does `lines[{j}]` continue `lines[{i}]`, the same item wrapped onto a second line, "
-                            f"so they should be read as one item?",
-            },
-            criteria={
-                "true": f"Read together, `lines[{i}]` and `lines[{j}]` form one item, like \"email the landlord "
-                        f"about\" followed by \"the broken heater\".",
-                "false": f"`lines[{j}]` makes sense as its own separate item, note or heading, like \"buy milk\" "
-                         f"followed by \"call mum\".",
-            },
-        )
+        q = Continuation(index[above], index[below], spacing, indented)
+        ask[(q.above, q.below)] = (above, below, key)
+        questions.append(q)
     if questions:
-        resp = ask(questions, _page_state(ordered), cfg)
-        for qid, (above, below, key) in keys.items():
-            ans = resp.nouls.get(qid)
-            if ans is None:
+        answers = (judge or judge_for(cfg)).continues(ordered, questions)
+        for pos, (above, below, key) in ask.items():
+            p = answers.get(pos)
+            if p is None:
                 continue
-            cache.put("continuations", key, {"p": ans.noul})
-            if ans.noul >= cfg.continuation_threshold:
+            cache.put("continuations", key, {"p": p})
+            if p >= cfg.continuation_threshold:
                 confirmed.append((above, below))
     return sorted(confirmed)
 
 
-def classify(transcripts: dict[int, Transcript], cfg: ClassificationConfig, cache: AICache) -> dict[int, Judgment]:
+def classify(transcripts: dict[int, Transcript], cfg: ClassificationConfig, cache: AICache,
+             judge: LineJudge | None = None) -> dict[int, Judgment]:
     ordered = _judgeable(transcripts)
-    state = _page_state(ordered)
-
     out: dict[int, Judgment] = {}
-    questions: dict[str, Choice] = {}
-    keys: dict[str, tuple[int, str]] = {}
+    keys: dict[int, str] = {}  # position -> cache key, for lines to ask about
     for i, t in enumerate(ordered):
         lo, hi = max(0, i - cfg.context_lines), min(len(ordered) - 1, i + cfg.context_lines)
-        context = [_state_line(x) for x in ordered[lo : hi + 1]]
-        key = AICache.key("judgment", PROMPT_VERSION, cfg.model, cfg.context_lines, _state_line(t), context)
+        context = [state_line(x) for x in ordered[lo : hi + 1]]
+        key = AICache.key("judgment", PROMPT_VERSION, cfg.model, cfg.context_lines, state_line(t), context)
         hit = cache.get("judgments", key)
         if hit is not None:
             out[t.n] = Judgment(n=t.n, cached=True, **hit)
-            continue
-        qid = f"line_{t.n}"
-        keys[qid] = (t.n, key)
-        neighbours = (
-            f" Lines `lines[{lo}]` to `lines[{hi}]` are its neighbours; use them only as context."
-            if cfg.context_lines and hi > lo else ""
-        )
-        questions[qid] = Choice(
-            instructions={
-                "line": f"`lines[{i}]`",
-                "question": f"On this to-do notebook page, what kind of line is `lines[{i}]`? "
-                            f"Judge its `text`; `checkbox` says whether it was written with a checkbox."
-                            + neighbours,
-            },
-            criteria=CRITERIA,
-        )
-    if not questions:
+        else:
+            keys[i] = key
+    if not keys:
         return out
 
-    resp = ask(questions, state, cfg)
-    for qid, (n, key) in keys.items():
-        ans = resp.choices.get(qid)
+    answers = (judge or judge_for(cfg)).kinds(ordered, list(keys), cfg.context_lines)
+    for i, key in keys.items():
+        n, ans = ordered[i].n, answers.get(i)
         if ans is None:
             log.warning("no judgment returned for line %d", n)
             continue
