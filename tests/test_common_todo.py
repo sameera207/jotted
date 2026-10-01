@@ -87,6 +87,9 @@ class FakePublisher:
         self.ticks: tuple[set[int], str] | None = None
         self.written: list[WrittenItem] = []
         self.occupied_seen: set[int] | None = None
+        self.ink: set[int] = set()  # rows with other ink (old ticks, scribbles)
+        self.pages_capacity: int | None = None  # what the tablet laid out; None = not opened yet
+        self.deleted = 0
 
     def capacity(self):
         return self.cap
@@ -94,13 +97,19 @@ class FakePublisher:
     def publish(self, entries):
         self.published.append([dataclasses.replace(e) for e in entries])
 
+    def delete(self):
+        self.deleted += 1
+        self.ticks, self.written, self.ink, self.pages_capacity = None, [], set(), None
+
     def read_paper(self, occupied):
         self.occupied_seen = set(occupied)
         if self.ticks is None:
             return None
         slots, marker = self.ticks
         return PaperRead(doc_id="todo-doc", marker=marker, ticks=set(slots),
-                         written=[w for w in self.written if w.slot not in occupied])
+                         written=[w for w in self.written if w.slot not in occupied],
+                         inked=set(slots) | {w.slot for w in self.written} | self.ink,
+                         capacity=self.pages_capacity)
 
 
 @pytest.fixture
@@ -551,9 +560,9 @@ def test_a_deleted_todo_document_starts_again_from_the_top(repo):
     pub.written = [written(5, "Call the bank")]
     notes(source)
     service.collect(source, judge, repo)
-    service.sync_todo(repo, pub)  # written item in row 5; collected ones after it
-    assert [e.slot for e in pub.published[-1]] == [5, 6, 7]
-    assert pub.published[-1][0].handwritten
+    service.sync_todo(repo, pub)  # written item in row 5; collected ones in the first free rows
+    assert [e.slot for e in pub.published[-1]] == [0, 1, 5]
+    assert pub.published[-1][-1].handwritten
 
     # Deleted on the tablet: the next document is printed from row 0, handwriting as text.
     pub.ticks, pub.written = None, []
@@ -577,3 +586,64 @@ def test_a_replaced_todo_document_is_not_read_with_the_old_layout(repo):
     pub.ticks = ({3}, "m2")
     r = service.sync_todo(repo, pub)
     assert r["ticked"] == 0 and r["published"] and pub.published[-1][0].slot == 0
+
+
+def test_new_items_take_the_first_rows_without_ink(repo):
+    source, judge, pub = FakeSource(), FakeJudge(), FakePublisher()
+    pub.ticks, pub.ink = (set(), "m1"), {0, 2}  # an old scribble in rows 0 and 2
+    notes(source)
+    service.collect(source, judge, repo)
+    service.sync_todo(repo, pub)
+    assert [e.slot for e in pub.published[-1]] == [1, 3]
+
+
+def test_done_items_on_clean_rows_make_room_for_new_ones(repo):
+    source, judge, pub = FakeSource(), FakeJudge(), FakePublisher(capacity=3)
+    pub.ticks = (set(), "m1")
+    notes(source)
+    service.collect(source, judge, repo)
+    service.sync_todo(repo, pub)  # rows 0 and 1
+    first = next(i for i in repo.items() if i["source"].get("anchor") == "1:20")
+    repo.edit_action(first["id"], status="done")  # done on the web: its row has no ink
+
+    # One new item: row 2 is still free, so the done item stays, struck through.
+    notes(source, modified="2026-10-01T11:00:00Z", extra=[("1:60", "k60", "TODO renew the licence")])
+    service.collect(source, judge, repo)
+    service.sync_todo(repo, pub)
+    assert [(e.slot, e.done) for e in pub.published[-1]] == [(0, True), (1, False), (2, False)]
+
+    # Another: the rows are full, so the done item leaves and its row is reused.
+    notes(source, modified="2026-10-01T12:00:00Z",
+          extra=[("1:60", "k60", "TODO renew the licence"), ("1:70", "k70", "TODO pay the invoice")])
+    service.collect(source, judge, repo)
+    r = service.sync_todo(repo, pub)
+    assert not r["rebuilt"] and pub.deleted == 0
+    assert [(e.slot, e.text) for e in pub.published[-1]][0] == (0, "TODO pay the invoice")
+
+
+def test_full_document_is_rebuilt_with_the_open_items(repo):
+    source, judge, pub = FakeSource(), FakeJudge(), FakePublisher(capacity=2)
+    pub.ticks = (set(), "m1")
+    notes(source)
+    service.collect(source, judge, repo)
+    service.sync_todo(repo, pub)  # rows 0 and 1
+    pub.ticks = ({0}, "m2")  # ticked on paper: done, and the row has ink
+    service.sync_todo(repo, pub)
+
+    notes(source, modified="2026-10-01T11:00:00Z", extra=[("1:60", "k60", "TODO renew the licence")])
+    service.collect(source, judge, repo)
+    r = service.sync_todo(repo, pub)
+    assert r["rebuilt"] and r["published"] and pub.deleted == 1
+    assert [(e.slot, e.done) for e in pub.published[-1]] == [(0, False), (1, False)]
+    assert "TODO renew the licence" in {e.text for e in pub.published[-1]}
+
+
+def test_a_document_with_another_page_count_is_rebuilt(repo):
+    source, judge, pub = FakeSource(), FakeJudge(), FakePublisher(capacity=10)
+    pub.ticks, pub.pages_capacity = (set(), "m1"), 400  # an old 20-page To-do
+    notes(source)
+    service.collect(source, judge, repo)
+    r = service.sync_todo(repo, pub)
+    assert r["rebuilt"] and pub.deleted == 1 and [e.slot for e in pub.published[-1]] == [0, 1]
+    pub.ticks = (set(), "m2")  # the new one, not yet opened on the tablet
+    assert not service.sync_todo(repo, pub)["rebuilt"]

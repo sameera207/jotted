@@ -402,15 +402,24 @@ class SqliteRepository:
                                      edited=bool(i.get("edited"))))
         return entries
 
-    def assign_slots(self, entries: list[TodoEntry]) -> list[TodoEntry]:
+    def assign_slots(self, entries: list[TodoEntry], capacity: int, inked: set[int]) -> tuple[list[TodoEntry], int]:
+        waiting = [e for e in entries if e.slot is None and not e.done]  # a done item never joins the document
+        placed = [e for e in entries if e.slot is not None]
+        taken = {e.slot for e in placed} | self.occupied_slots()
+        free = [s for s in range(capacity) if s not in taken and s not in inked]
+        # Short of rows: done items on rows without ink leave, and their rows are reused.
+        releasable = [e for e in placed if e.done and e.slot not in inked]
+        released = releasable[:max(0, len(waiting) - len(free))]
         with self.db() as db:
-            nxt = (db.execute("SELECT MAX(slot) AS m FROM todo_slots").fetchone()["m"] or -1) + 1
-            for e in entries:
-                if e.slot is None:
-                    db.execute("INSERT INTO todo_slots (slot, kind, item_id) VALUES (?, ?, ?)", (nxt, e.kind, e.item_id))
-                    e.slot = nxt
-                    nxt += 1
-        return sorted(entries, key=lambda e: e.slot)
+            for e in released:
+                db.execute("DELETE FROM todo_slots WHERE slot = ?", (e.slot,))
+                free.append(e.slot)
+                e.slot = None
+            free.sort()
+            for e, slot in zip(waiting, free):
+                db.execute("INSERT INTO todo_slots (slot, kind, item_id) VALUES (?, ?, ?)", (slot, e.kind, e.item_id))
+                e.slot = slot
+        return sorted((e for e in entries if e.slot is not None), key=lambda e: e.slot), max(0, len(waiting) - len(free))
 
     def occupied_slots(self) -> set[int]:
         with self.db() as db:

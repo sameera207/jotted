@@ -94,10 +94,12 @@ def sync_todo(repo: Repository, publisher: TodoPublisher, force: bool = False) -
     Paper is read before publishing, so nothing done on paper is lost to a republish:
     1. new items written by hand in empty rows are added, in the rows they were written in;
     2. ticks mark items done;
-    3. remaining items get the next free slots (permanent), and the list is printed.
+    3. open items without a row get the first free rows with no ink (permanent), and the list is printed.
 
-    A document that was deleted, or replaced by another one, takes its rows, ticks and
-    handwriting with it: the list starts again from the top of a fresh document.
+    Ink on the tablet is never erased, so a row with ink is never reused. When the rows run out,
+    or the document has a different number of pages, it is deleted and rebuilt: a fresh document
+    with the open items only. A document deleted on the tablet, or replaced by another one, is
+    started afresh the same way.
     """
     ticked = written = 0
     read = publisher.read_paper(repo.occupied_slots())
@@ -111,19 +113,27 @@ def sync_todo(repo: Repository, publisher: TodoPublisher, force: bool = False) -
         repo.set_todo_doc_id(read.doc_id)
         written = repo.add_written(read.doc_id, read.written)
         ticked = repo.apply_ticks(read.ticks, read.marker)
-    settings = repo.settings()
-    entries = repo.assign_slots(repo.todo_entries(settings.tablet_include_others))
-    overflow = [e for e in entries if e.slot is not None and e.slot >= publisher.capacity()]
-    if overflow:
-        log.warning("%d item(s) do not fit on the To-do document", len(overflow))
-    printable = [e for e in entries if e.slot is not None and e.slot < publisher.capacity()]
+    include_others = repo.settings().tablet_include_others
+    capacity = publisher.capacity()
+    rebuilt = read is not None and read.capacity is not None and read.capacity != capacity
+    if not rebuilt:
+        entries, unplaced = repo.assign_slots(repo.todo_entries(include_others), capacity,
+                                              read.inked if read else set())
+        rebuilt = unplaced > 0 and read is not None  # an empty document can't fit more than this
+    if rebuilt:
+        log.info("rebuilding the To-do document with the open items only")
+        publisher.delete()
+        repo.reset_todo()
+        entries, unplaced = repo.assign_slots(repo.todo_entries(include_others), capacity, set())
+    if unplaced:
+        log.warning("%d item(s) do not fit on the To-do document", unplaced)
     published = False
-    if force or read is None or repo.todo_needs_publish(printable):
-        publisher.publish(printable)
-        repo.mark_todo_published(printable)
+    if force or read is None or rebuilt or repo.todo_needs_publish(entries):
+        publisher.publish(entries)
+        repo.mark_todo_published(entries)
         published = True
-    return {"ticked": ticked, "written": written, "published": published, "items": len(printable),
-            "overflow": len(overflow)}
+    return {"ticked": ticked, "written": written, "published": published, "items": len(entries),
+            "overflow": unplaced, "rebuilt": rebuilt}
 
 
 def pending(source: DocumentSource, repo: Repository, exclude: set[str] | None = None,

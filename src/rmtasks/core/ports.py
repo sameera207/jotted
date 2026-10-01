@@ -77,8 +77,10 @@ class Repository(Protocol):
     def todo_entries(self, include_others: bool) -> list[TodoEntry]:
         """Everything that belongs on the To-do document, slot assigned or not."""
 
-    def assign_slots(self, entries: list[TodoEntry]) -> list[TodoEntry]:
-        """Give unslotted entries the next free slots, permanently."""
+    def assign_slots(self, entries: list[TodoEntry], capacity: int, inked: set[int]) -> tuple[list[TodoEntry], int]:
+        """Give open unslotted entries the first free slots without ink, permanently. When they run
+        out, done entries on clean rows give theirs up and leave the document. Returns the slotted
+        entries and how many open ones found no slot."""
 
     def occupied_slots(self) -> set[int]:
         """Slots already holding an item."""
@@ -101,6 +103,9 @@ class TodoPublisher(Protocol):
     def capacity(self) -> int: ...
 
     def publish(self, entries: list[TodoEntry]) -> None: ...
+
+    def delete(self) -> None:
+        """Remove the document, ink and all, so the next publish creates a fresh one."""
 
     def read_paper(self, occupied: set[int]) -> PaperRead | None:
         """Ticks in checkboxes, and new items written in rows outside `occupied`. None if the

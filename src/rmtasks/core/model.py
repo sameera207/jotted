@@ -125,3 +125,5 @@ class PaperRead:
     marker: str
     ticks: set[int] = field(default_factory=set)
     written: list[WrittenItem] = field(default_factory=list)
+    inked: set[int] = field(default_factory=set)  # slots with any ink: never given to a new item
+    capacity: int | None = None  # slots the document has; None until the tablet has laid out its pages

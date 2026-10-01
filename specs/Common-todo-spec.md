@@ -89,11 +89,11 @@ Items that disappear from their source are flagged, not deleted.
 
 A generated PDF, `To-do`, in a folder you choose:
 
-- **Pre-allocated pages:** 20 pages of 25 slots. The page count can't change after creation without losing ticks (`--content-only` keeps the page list).
-- **Fixed slots.** An item keeps its slot (page, row) from the first time it's printed. A new item takes the next free slot, so your ticks never drift onto another item.
+- **Pre-allocated pages:** 2 pages of 20 slots. The page count can't change after creation without losing ticks (`--content-only` keeps the page list).
+- **Fixed slots.** An item keeps its slot (page, row) from the first time it's printed, so your ticks never drift onto another item. A new open item takes the first free slot with no ink on it: ink is never erased, so a row with a tick or writing is never reused.
 - **Each slot shows** a checkbox, the text, and a small source line ("Meeting notes › Weekly sync · p3"). Done items are struck through.
 - **Ticks.** A hand-drawn tick or cross inside a slot's checkbox marks the item done on the next pull. It is read with the same calibrated mapping as the Tasks template (`template.scale`). As in the current store, a paper tick only counts when the ink changed, so re-opening an item on the web isn't undone by the old tick.
-- **When the slots run out:** create `To-do (2)` and carry over the open items. A later step; 500 slots is months of use.
+- **When the slots run out:** done items on rows without ink leave the document first, and their rows are reused. If that isn't enough, the document is deleted and created again with the open items only, from the top. Ticks are read before that, so none are lost; items written by hand on the old document are printed as text. A document with another page count (an older version's) is rebuilt the same way, and so is one deleted on the tablet.
 
 ## Scheduling
 

@@ -185,6 +185,11 @@ def download(cfg: Config, doc: DocRef) -> Path:
     return dest
 
 
+def delete(cfg: Config, name: str, folder: str = "/") -> None:
+    """Delete the document called `name` in `folder`."""
+    _run(cfg, ["-ni", "rm", folder.rstrip("/") + "/" + name])
+
+
 def upload_pdf(cfg: Config, pdf: Path, *, content_only: bool, folder: str | None = None) -> None:
     """Upload a PDF into `folder` (default `notebook.folder`); the document is named after the file.
 

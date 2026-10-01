@@ -2,7 +2,8 @@
 
 Items sit in fixed slots (page, row) so a tick drawn on paper never drifts onto
 another item when the list changes. The page count never changes after creation:
-`put --content-only` keeps the page list, and the ink with it.
+`put --content-only` keeps the page list, and the ink with it. So the document is
+small, and rebuilt (deleted, then created again) when its rows run out.
 
 Ticks are read with the same calibrated mapping as the Tasks template
 (`template.scale`): a stroke whose centre falls on a slot's checkbox area ticks it.
@@ -30,7 +31,7 @@ from ..notebook import page_order
 
 log = logging.getLogger("rmtasks.todo")
 
-PAGES = 20
+PAGES = 2
 SLOTS_PER_PAGE = 20
 TOP = 70.0  # pt from the top of the page to the first row
 ROW = 26.0  # pt per row
@@ -116,7 +117,7 @@ def build_pdf(path: Path, entries: list[TodoEntry], pages: int = PAGES, scale: f
             c.drawString(TEXT_X, base - 10, _fit(c, e.source_label, "Helvetica", 7.5, w - TEXT_X - 24))
         c.setFillColor(MUTED)
         c.setFont("Helvetica", 7.5)
-        c.drawString(BOX_X, 18, "Tick a box to mark it done. Items keep their place; new ones are added at the end.")
+        c.drawString(BOX_X, 18, "Tick a box to mark it done, or write a new item in an empty row. When the rows run out, a fresh list replaces this one.")
         c.showPage()
     c.save()
     return path
@@ -175,6 +176,10 @@ class TodoDocument:
             cloud.upload_pdf(self.cfg, pdf, content_only=existing is not None, folder=self.folder)
         log.info("published %d item(s) to %s", len(entries), self.name)
 
+    def delete(self) -> None:
+        cloud.delete(self.cfg, self.name, self.folder)
+        log.info("deleted %s to rebuild it", self.name)
+
     def read_paper(self, occupied: set[int]) -> PaperRead | None:
         doc = self._find()
         if doc is None:
@@ -189,6 +194,7 @@ class TodoDocument:
             names = z.namelist()
             content = next((n for n in names if n.endswith(".content")), None)
             order = page_order(json.loads(z.read(content))) if content else []
+            read.capacity = len(order) * SLOTS_PER_PAGE or None  # no page list until the tablet opens it
             for p, pid in enumerate(order):
                 member = next((n for n in names if n.endswith(f"{pid}.rm")), None)
                 if member is None:
@@ -197,7 +203,9 @@ class TodoDocument:
                     page_strokes = strokes.load_strokes_from(f, member, self.cfg.strokes)
                 ticks = ticked_rows(page_strokes, scale)
                 read.ticks |= {p * SLOTS_PER_PAGE + r for r in ticks}
-                for row, row_strokes in written_rows(page_strokes, scale, self.cfg.lines).items():
+                rows = written_rows(page_strokes, scale, self.cfg.lines)
+                read.inked |= {p * SLOTS_PER_PAGE + r for r in ticks | rows.keys()}
+                for row, row_strokes in rows.items():
                     slot = p * SLOTS_PER_PAGE + row
                     if slot in occupied:
                         continue  # writing next to an existing item: a note on it, not a new item
