@@ -13,7 +13,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parent))
 
-from rmtasks import cli, cloud, config, keys, onboarding, rmapi_install, selfupdate  # noqa: E402
+from jotted import cli, cloud, config, keys, onboarding, rmapi_install, selfupdate  # noqa: E402
 
 
 @pytest.fixture
@@ -40,7 +40,7 @@ def test_config_path_prefers_env_then_this_folder_then_the_app_home(home, tmp_pa
 
 def test_created_config_has_every_default_and_paths_beside_it(home):
     cfg = config.load(config.create(home / "config.toml"))
-    assert cfg.paths.cache_dir == (home / "cache").resolve() and cfg.server.db == (home / "data/rmtasks.db").resolve()
+    assert cfg.paths.cache_dir == (home / "cache").resolve() and cfg.server.db == (home / "data/jotted.db").resolve()
     assert cfg.rmapi.token_file == (home / ".secrets/rmapi.conf").resolve()
 
 
@@ -155,9 +155,9 @@ def world(home, monkeypatch, tmp_path):
                 raise error(f"{label} rejected this key")
         return verify
 
-    from rmtasks import classify, recognise
-    from rmtasks.adapters.anthropic_reader import AnthropicReader
-    from rmtasks.adapters.typesafe_judge import TypeSafeJudge
+    from jotted import classify, recognise
+    from jotted.adapters.anthropic_reader import AnthropicReader
+    from jotted.adapters.typesafe_judge import TypeSafeJudge
 
     monkeypatch.setattr(rmapi_install, "install", install)
     monkeypatch.setattr(onboarding.shutil, "which", lambda b: b if os.path.isabs(b) and os.path.exists(b) else None)
@@ -244,15 +244,15 @@ def test_start_opens_settings_first_and_reuses_a_running_app(world, home, monkey
 
 # ---------------------------------------------------------------- self-update
 
-GIT_INSTALL = json.dumps({"url": "https://github.com/someone/rmtasks",
+GIT_INSTALL = json.dumps({"url": "https://github.com/someone/jotted",
                           "vcs_info": {"vcs": "git", "commit_id": "a" * 40}})
 
 
 def test_only_an_unpinned_github_install_updates_itself():
-    assert selfupdate.installed(GIT_INSTALL) == selfupdate.Install(repo="someone/rmtasks", commit="a" * 40)
-    pinned = json.dumps({"url": "https://github.com/someone/rmtasks",
+    assert selfupdate.installed(GIT_INSTALL) == selfupdate.Install(repo="someone/jotted", commit="a" * 40)
+    pinned = json.dumps({"url": "https://github.com/someone/jotted",
                          "vcs_info": {"vcs": "git", "commit_id": "a" * 40, "requested_revision": "v1"}})
-    checkout = json.dumps({"url": "file:///src/rmtasks", "dir_info": {"editable": True}})
+    checkout = json.dumps({"url": "file:///src/jotted", "dir_info": {"editable": True}})
     assert selfupdate.installed(pinned) is None
     assert selfupdate.installed(checkout) is None
 
@@ -263,7 +263,7 @@ def update_world(monkeypatch):
     state = {"commit": "a" * 40, "head": "a" * 40, "upgrades": 0}
     monkeypatch.delenv(selfupdate.SKIP_VAR, raising=False)
     monkeypatch.delenv(selfupdate.DONE_VAR, raising=False)
-    monkeypatch.setattr(selfupdate, "installed", lambda: selfupdate.Install("someone/rmtasks", state["commit"]))
+    monkeypatch.setattr(selfupdate, "installed", lambda: selfupdate.Install("someone/jotted", state["commit"]))
     monkeypatch.setattr(selfupdate, "latest", lambda repo: state["head"])
 
     def upgrade():
@@ -295,7 +295,7 @@ def test_no_update_when_current_offline_skipped_or_already_rerun(update_world, m
     monkeypatch.setenv(selfupdate.SKIP_VAR, "1")
     assert selfupdate.check(console) is False
     assert update_world["upgrades"] == 0
-    assert selfupdate.check(console, force=True) is True  # `rmtasks update` ignores both
+    assert selfupdate.check(console, force=True) is True  # `jotted update` ignores both
     assert update_world["upgrades"] == 1
 
 
@@ -307,3 +307,15 @@ def test_a_failed_upgrade_carries_on(update_world, monkeypatch):
 
     monkeypatch.setattr(selfupdate, "upgrade", fail)
     assert selfupdate.check(cli.console) is False
+
+
+def test_a_folder_from_the_old_name_is_moved(tmp_path, monkeypatch):
+    monkeypatch.delenv(config.HOME_VAR, raising=False)
+    monkeypatch.setattr(config.sys, "platform", "linux")
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
+    (tmp_path / "rmtasks").mkdir()
+    (tmp_path / "rmtasks" / "config.toml").write_text("x")
+    assert config.app_home() == tmp_path / "jotted"
+    assert (tmp_path / "jotted" / "config.toml").read_text() == "x" and not (tmp_path / "rmtasks").exists()
+    (tmp_path / "rmtasks").mkdir()  # both exist: the new one wins, the old is left alone
+    assert config.app_home() == tmp_path / "jotted" and (tmp_path / "rmtasks").exists()

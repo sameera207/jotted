@@ -1,6 +1,6 @@
 """Guided setup: from a fresh install to the web app, one step at a time.
 
-`rmtasks start` runs it before serving; `rmtasks setup` runs it again on purpose (to
+`jotted start` runs it before serving; `jotted setup` runs it again on purpose (to
 change a key, say). Every step checks first and is skipped when already done, so a
 second start asks nothing. Input and output go through `UI`, so a Mac app can drive
 the same steps with its own windows.
@@ -71,7 +71,7 @@ def run(ui: UI, redo: bool = False) -> Config:
     about the reMarkable connection and the keys, keeping what's there by default."""
     path = config.resolve_path()
     if not path.is_file():
-        ui.step("Setting up rmtasks")
+        ui.step("Setting up Jotted")
         config.create(path)
         ui.done(f"Settings, data and keys will live in {path.parent}")
     cfg = config.load(path)
@@ -91,11 +91,11 @@ def _rmapi(ui: UI, cfg: Config) -> Config:
         ui.done(f"rmapi: {found}")
         return cfg
     ui.step("rmapi")
-    ui.info("rmtasks reaches your reMarkable cloud through rmapi, a free open-source tool "
+    ui.info("Jotted reaches your reMarkable cloud through rmapi, a free open-source tool "
             "(github.com/ddvk/rmapi). It isn't installed yet.")
     if not ui.confirm(f"Download rmapi {rmapi_install.VERSION} for this computer?"):
-        raise SetupError("rmtasks needs rmapi. Install it from https://github.com/ddvk/rmapi/releases, "
-                         "then run `rmtasks start` again")
+        raise SetupError("Jotted needs rmapi. Install it from https://github.com/ddvk/rmapi/releases, "
+                         "then run `jotted start` again")
     try:
         binary = rmapi_install.install(cfg.source.parent / "bin")
     except rmapi_install.InstallError as e:
@@ -142,7 +142,7 @@ def _connect(ui: UI, cfg: Config, redo: bool) -> None:
     if backup.exists():
         backup.replace(token)
         raise SetupError("Couldn't connect your reMarkable; the previous connection is kept")
-    raise SetupError(f"Couldn't connect your reMarkable. Get a new code at {CONNECT_URL} and run `rmtasks start` again")
+    raise SetupError(f"Couldn't connect your reMarkable. Get a new code at {CONNECT_URL} and run `jotted start` again")
 
 
 # ---------------------------------------------------------------- API keys
@@ -167,7 +167,7 @@ def _keys(ui: UI, cfg: Config, redo: bool) -> None:
             ui.done(f"{cls.LABEL} key")
             continue
         ui.step(f"{cls.LABEL} API key")
-        ui.info("rmtasks " + PURPOSE[kind].format(label=cls.LABEL) + ".")
+        ui.info("Jotted " + PURPOSE[kind].format(label=cls.LABEL) + ".")
         ui.info(f"Create a key at {cls.KEY_URL}")
         _ask_key(ui, cfg, section, cls, current)
 
@@ -200,8 +200,8 @@ def _ask_key(ui: UI, cfg: Config, section, cls: type, current: str | None) -> No
     if current:
         ui.warn(f"Keeping the current {cls.LABEL} key")
         return
-    raise SetupError(f"rmtasks needs a {cls.LABEL} key to read your notes. Create one at {cls.KEY_URL}, "
-                     "then run `rmtasks start` again")
+    raise SetupError(f"Jotted needs a {cls.LABEL} key to read your notes. Create one at {cls.KEY_URL}, "
+                     "then run `jotted start` again")
 
 
 def _restore(name: str, value: str | None) -> None:

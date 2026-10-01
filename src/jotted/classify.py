@@ -127,7 +127,7 @@ class LineJudge(Protocol):
 
 
 # provider name -> "module:class", imported only when used.
-PROVIDERS = {"typesafe": "rmtasks.adapters.typesafe_judge:TypeSafeJudge"}
+PROVIDERS = {"typesafe": "jotted.adapters.typesafe_judge:TypeSafeJudge"}
 
 
 def judge_class(cfg: ClassificationConfig) -> type:

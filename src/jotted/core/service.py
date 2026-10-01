@@ -19,7 +19,7 @@ import logging
 from .model import CollectSummary, DocInfo
 from .ports import ActionJudge, DocumentSource, Progress, Repository, TodoPublisher
 
-log = logging.getLogger("rmtasks.core")
+log = logging.getLogger("jotted.core")
 
 
 def _quiet(_: str) -> None:

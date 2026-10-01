@@ -1,5 +1,5 @@
-# rmtasks configuration: the single source of settings.
-# Copy to config.toml (gitignored). Override the path with RMTASKS_CONFIG.
+# jotted configuration: the single source of settings.
+# Copy to config.toml (gitignored). Override the path with JOTTED_CONFIG.
 # Relative paths resolve against this file's folder.
 # Detection thresholds are ratios of the median stroke height and are
 # starting points for tuning, not measured values.
@@ -83,7 +83,7 @@ context_lines    = 2      # neighbouring lines given to Jev on each side
 timeout_s        = 30
 
 # The PDF template (write path). A notebook made from it has three zones:
-# header (date), body (your tasks) and footer (web tasks, printed by rmtasks).
+# header (date), body (your tasks) and footer (web tasks, printed by jotted).
 [template]
 pages         = 20      # pages in a new template notebook
 header_height = 0.08    # top share of the page: date
@@ -92,11 +92,11 @@ line_spacing  = 0.045   # faint ruling in the body, as a share of page height; 0
 strike_width  = 1.2     # pt, the printed line through a task done on the web
 scale         = 1.0525  # tablet units per nominal unit (1 pt = 3); measured on an rM2 by tracing calibration marks
 
-# The local web app: `rmtasks serve`. It binds to this machine only by default.
+# The local web app: `jotted serve`. It binds to this machine only by default.
 [server]
 host = "127.0.0.1"
 port = 8765
-db   = "./data/rmtasks.db"   # SQLite task store (gitignored)
+db   = "./data/jotted.db"   # SQLite task store (gitignored)
 auto_push = true            # push to the tablet after every add, edit or tick (template notebooks only)
 auto_push_delay_s = 5       # wait this long after the last change, so quick edits go out as one push
 # Watched folders, the action threshold, the poll interval and the To-do document

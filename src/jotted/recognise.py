@@ -105,7 +105,7 @@ class HandwritingReader(Protocol):
 
 # provider name -> "module:class", imported only when used, so other providers'
 # SDKs need not be installed.
-PROVIDERS = {"anthropic": "rmtasks.adapters.anthropic_reader:AnthropicReader"}
+PROVIDERS = {"anthropic": "jotted.adapters.anthropic_reader:AnthropicReader"}
 
 
 def reader_class(cfg: RecognitionConfig) -> type:

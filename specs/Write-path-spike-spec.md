@@ -51,8 +51,8 @@ In scope:
 - `template.py`: build the PDF (zones, labels, printed strikes, footer tasks) with reportlab.
 - Coordinate mapping between reMarkable page units and PDF points, verified on the tablet.
 - Zones in the read path: header, body, footer by y coordinate.
-- `rmtasks template build`: write the PDF locally.
-- `rmtasks push`: rebuild the PDF from the latest scan plus a local `webstate.json` (standing in for the task database), then upload with `--content-only`. `--dry-run` only writes the PDF.
+- `jotted template build`: write the PDF locally.
+- `jotted push`: rebuild the PDF from the latest scan plus a local `webstate.json` (standing in for the task database), then upload with `--content-only`. `--dry-run` only writes the PDF.
 - A sandbox notebook, `Tasks-sandbox`, used for every test in this spike.
 
 Out of scope: the web UI, the task database, polling, and the deferred edge cases.
@@ -100,7 +100,7 @@ Every test uses `Tasks-sandbox`. `Tasks` isn't touched in this spike.
 
 | # | Test | How | Pass when |
 | --- | --- | --- | --- |
-| W1 | Template | `rmtasks template build`; upload as `Tasks-sandbox`; open on the tablet | Full-screen pages, zones visible, the pen writes normally |
+| W1 | Template | `jotted template build`; upload as `Tasks-sandbox`; open on the tablet | Full-screen pages, zones visible, the pen writes normally |
 | W2 | Alignment | Draw a short line along a printed calibration mark on the first page; scan | The ink maps onto the mark within 3 pt |
 | W3 | Keep ink | Write tasks on the sandbox; push an unchanged PDF with `--content-only`; sync; scan | Every stroke is present with identical points; nothing moved on the tablet |
 | W4 | Done | Mark one task done in `webstate.json`; push | The printed line crosses that line's handwriting on the tablet; the next scan reports it done |

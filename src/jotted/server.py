@@ -20,7 +20,7 @@ from .core import service
 from .core.model import Settings
 from .store import Store
 
-log = logging.getLogger("rmtasks")
+log = logging.getLogger("jotted")
 
 
 def create_app(cfg: Config, store: Store | None = None, background: bool = True, app_: App | None = None) -> Flask:
@@ -80,7 +80,7 @@ def create_app(cfg: Config, store: Store | None = None, background: bool = True,
 
     @flask.get("/")
     def index():
-        html = resources.files("rmtasks").joinpath("web/index.html").read_text()
+        html = resources.files("jotted").joinpath("web/index.html").read_text()
         return Response(html, mimetype="text/html")
 
     @flask.get("/api/state")

@@ -10,15 +10,15 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parent))
 import synth  # noqa: E402
 
-from rmtasks import config, template  # noqa: E402
-from rmtasks.adapters import todo_document  # noqa: E402
-from rmtasks.adapters.sqlite_repo import SqliteRepository  # noqa: E402
-from rmtasks.core import service  # noqa: E402
-from rmtasks.core.model import (  # noqa: E402
+from jotted import config, template  # noqa: E402
+from jotted.adapters import todo_document  # noqa: E402
+from jotted.adapters.sqlite_repo import SqliteRepository  # noqa: E402
+from jotted.core import service  # noqa: E402
+from jotted.core.model import (  # noqa: E402
     DocInfo, Judgment, PageInfo, PaperRead, Settings, SourceLine, TodoEntry, WrittenItem,
 )
-from rmtasks.store import Store  # noqa: E402
-from rmtasks.strokes import make_stroke  # noqa: E402
+from jotted.store import Store  # noqa: E402
+from jotted.strokes import make_stroke  # noqa: E402
 
 ROOT = Path(__file__).parent.parent
 
@@ -432,14 +432,14 @@ def test_tick_on_a_checkbox_is_read_back():
 
 
 def test_todo_endpoints(tmp_path, monkeypatch):
-    text = config.EXAMPLE.read_text().replace('db   = "./data/rmtasks.db"', f'db = "{tmp_path}/db.sqlite"')
+    text = config.EXAMPLE.read_text().replace('db   = "./data/jotted.db"', f'db = "{tmp_path}/db.sqlite"')
     path = tmp_path / "config.toml"
     path.write_text(text)
     monkeypatch.setenv(config.ENV_VAR, str(path))
     cfg = config.load()
 
-    from rmtasks.app import App
-    from rmtasks.server import create_app
+    from jotted.app import App
+    from jotted.server import create_app
 
     store = Store(cfg.server.db)
     repo = SqliteRepository(cfg.server.db)

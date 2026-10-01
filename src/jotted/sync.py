@@ -15,7 +15,7 @@ from . import analysis, cloud, report, template
 from .config import Config
 from .store import PullSummary, Store
 
-log = logging.getLogger("rmtasks")
+log = logging.getLogger("jotted")
 
 # One sync at a time: the web server may get a second click while a pull is running.
 LOCK = threading.Lock()
@@ -63,7 +63,7 @@ def push(cfg: Config, store: Store, *, dry_run: bool = False, console: Console |
     result = pull(cfg, store, console)
     if result.run.notebook.get("file_type") != "pdf":
         raise SyncError(f"{result.doc.name!r} is not a template notebook; only PDFs made by "
-                        "`rmtasks template upload` are written to")
+                        "`jotted template upload` are written to")
     backups = cfg.paths.cache_dir / "backups"
     backups.mkdir(parents=True, exist_ok=True)
     backup = backups / f"{result.doc.id}-{datetime.now():%Y%m%d-%H%M%S}.rmdoc"

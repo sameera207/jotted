@@ -78,7 +78,7 @@ def _run(cfg: Config, args: list[str], *, cwd: Path | None = None, stdin: str | 
         detail = (proc.stderr.strip() or proc.stdout.strip()).splitlines()[-5:]
         hint = ""
         if not cfg.rmapi.token_file.exists():
-            hint = "\nNo token file yet: run `rmtasks auth` first."
+            hint = "\nNo token file yet: run `jotted auth` first."
         raise CloudError(f"rmapi {' '.join(args)} failed (exit {proc.returncode}):\n" + "\n".join(detail) + hint)
     return proc.stdout
 
@@ -131,7 +131,7 @@ def _ref(n: dict) -> DocRef:
 def library(cfg: Config) -> tuple[list[LibraryEntry], list[str]]:
     """Every document (with its folder path) and every folder path in the library. Trash excluded."""
     if not cfg.rmapi.token_file.exists():
-        raise CloudError(f"no rmapi token at {cfg.rmapi.token_file}; run `rmtasks auth` first")
+        raise CloudError(f"no rmapi token at {cfg.rmapi.token_file}; run `jotted auth` first")
     nodes = _parse_json_list(_run(cfg, ["-ni", "-json", "find", "/"]))
     folders = {n["id"]: n for n in nodes
                if n.get("type") == "CollectionType" and n.get("id") and n["id"] != "trash" and n.get("parent") != "trash"}
@@ -159,7 +159,7 @@ def find_document(cfg: Config, name: str, folder: str = "/") -> DocRef | None:
 
 def find_notebook(cfg: Config) -> DocRef:
     if not cfg.rmapi.token_file.exists():
-        raise CloudError(f"no rmapi token at {cfg.rmapi.token_file}; run `rmtasks auth` first")
+        raise CloudError(f"no rmapi token at {cfg.rmapi.token_file}; run `jotted auth` first")
     doc = find_document(cfg, cfg.notebook.name, cfg.notebook.folder)
     if doc is None:
         raise CloudError(
@@ -198,7 +198,7 @@ def upload_pdf(cfg: Config, pdf: Path, *, content_only: bool, folder: str | None
     created and rmapi refuses if one with that name already exists.
     """
     if not cfg.rmapi.token_file.exists():
-        raise CloudError(f"no rmapi token at {cfg.rmapi.token_file}; run `rmtasks auth` first")
+        raise CloudError(f"no rmapi token at {cfg.rmapi.token_file}; run `jotted auth` first")
     args = ["-ni", "put"] + (["--content-only"] if content_only else []) + [str(pdf), folder or cfg.notebook.folder]
     out = _run(cfg, args)
     log.debug("rmapi put: %s", out.strip())

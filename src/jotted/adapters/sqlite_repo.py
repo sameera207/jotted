@@ -1,6 +1,6 @@
 """SQLite implementation of the core's Repository port.
 
-Shares the database file with the Tasks-notebook store (`rmtasks.store`), so the
+Shares the database file with the Tasks-notebook store (`jotted.store`), so the
 combined list and the To-do document can include those tasks too.
 """
 

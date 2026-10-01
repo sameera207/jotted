@@ -117,7 +117,7 @@ One background scheduler replaces today's auto-pull and auto-push:
 
 | # | Stage | Done when |
 | --- | --- | --- |
-| 1 | Core model and ports; `remarkable.Library` adapter with folder tree, document and page change detection; repository tables; `rmtasks collect --dry-run` | A run over one folder lists new lines per changed page; a second run with no tablet changes reads nothing |
+| 1 | Core model and ports; `remarkable.Library` adapter with folder tree, document and page change detection; repository tables; `jotted collect --dry-run` | A run over one folder lists new lines per changed page; a second run with no tablet changes reads nothing |
 | 2 | `jev.ActionJudge` (action and owner); action items in the store; the combined list and source links in the web app | Actions from a real meeting-notes page appear with owners and link to a highlighted source page |
 | 3 | Settings in the web UI (folder picker, thresholds); the background scheduler | Enabling a folder in the UI starts collecting it without a restart |
 | 4 | `remarkable.TodoDocument`: create, publish to fixed slots, read ticks | Ticking a box on the tablet marks the item done in the web app within one poll |

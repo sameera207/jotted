@@ -3,7 +3,7 @@
 One request per page and question type. The state holds the page's written lines;
 each line or pair to judge gets its own question over that shared state: a Choice
 for line kinds and owners, a Noul for continuations and "is it an action".
-Criteria texts come from `rmtasks.classify`; the question wording is Jev's.
+Criteria texts come from `jotted.classify`; the question wording is Jev's.
 """
 
 from __future__ import annotations

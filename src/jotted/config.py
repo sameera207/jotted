@@ -16,8 +16,9 @@ from dataclasses import dataclass, field, fields
 from pathlib import Path
 from typing import Any, get_type_hints
 
-ENV_VAR = "RMTASKS_CONFIG"
-HOME_VAR = "RMTASKS_HOME"
+ENV_VAR = "JOTTED_CONFIG"
+HOME_VAR = "JOTTED_HOME"
+OLD_NAME = "rmtasks"  # the project's name before Jotted
 DEFAULT_PATH = Path("config.toml")  # in the current folder: a development checkout
 EXAMPLE = Path(__file__).with_name("config.example.toml")  # every setting, with its default
 
@@ -119,7 +120,7 @@ class TemplateConfig:
 class ServerConfig:
     host: str = "127.0.0.1"
     port: int = 8765
-    db: Path = Path("./data/rmtasks.db")
+    db: Path = Path("./data/jotted.db")
     auto_push: bool = True
     auto_push_delay_s: int = 5
 
@@ -193,19 +194,28 @@ KNOWN_CHECKS = {
 }
 
 
+def _platform_home(name: str) -> Path:
+    if sys.platform == "darwin":
+        return Path.home() / "Library" / "Application Support" / name
+    if os.name == "nt":
+        return Path(os.environ.get("APPDATA") or Path.home() / "AppData" / "Roaming") / name
+    return Path(os.environ.get("XDG_DATA_HOME") or Path.home() / ".local" / "share") / name
+
+
 def app_home() -> Path:
-    """Where an installed rmtasks keeps its config, data and secrets. RMTASKS_HOME overrides."""
+    """Where an installed Jotted keeps its config, data and secrets. JOTTED_HOME overrides.
+
+    A folder left by the project's earlier name (rmtasks) is moved here the first time."""
     if os.environ.get(HOME_VAR):
         return Path(os.environ[HOME_VAR]).expanduser()
-    if sys.platform == "darwin":
-        return Path.home() / "Library" / "Application Support" / "rmtasks"
-    if os.name == "nt":
-        return Path(os.environ.get("APPDATA") or Path.home() / "AppData" / "Roaming") / "rmtasks"
-    return Path(os.environ.get("XDG_DATA_HOME") or Path.home() / ".local" / "share") / "rmtasks"
+    home, old = _platform_home("jotted"), _platform_home(OLD_NAME)
+    if not home.exists() and old.is_dir():
+        old.rename(home)
+    return home
 
 
 def resolve_path() -> Path:
-    """RMTASKS_CONFIG; else config.toml in the current folder (a checkout); else the app home's."""
+    """JOTTED_CONFIG; else config.toml in the current folder (a checkout); else the app home's."""
     if os.environ.get(ENV_VAR):
         return Path(os.environ[ENV_VAR])
     if DEFAULT_PATH.is_file():
@@ -251,7 +261,7 @@ def set_value(path: Path, section: str, key: str, value: str) -> None:
 def load(path: Path | None = None) -> Config:
     path = (path or resolve_path()).expanduser()
     if not path.is_file():
-        raise ConfigError(f"config file not found: {path}. Run `rmtasks start` to set up")
+        raise ConfigError(f"config file not found: {path}. Run `jotted start` to set up")
     try:
         raw = tomllib.loads(path.read_text())
     except tomllib.TOMLDecodeError as e:

@@ -17,7 +17,7 @@ from ..config import Config
 from ..core.model import DocInfo, PageInfo, SourceLine
 from ..notebook import page_order
 
-log = logging.getLogger("rmtasks.remarkable")
+log = logging.getLogger("jotted.remarkable")
 
 EMPTY = "empty"  # hash of a page with nothing drawn on it
 

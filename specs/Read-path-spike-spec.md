@@ -23,7 +23,7 @@ Time box: one evening to the first report, one more session to tune detection.
 
 In scope:
 
-- A Python CLI, `rmtasks`, with `auth`, `scan`, `analyse` and `diff` commands.
+- A Python CLI, `jotted`, with `auth`, `scan`, `analyse` and `diff` commands.
 - Download through `rmapi` (the maintained [ddvk fork](https://github.com/ddvk/rmapi)); parsing through [rmscene](https://pypi.org/project/rmscene/).
 - Line clustering.
 - Handwriting recognition per line with Claude (vision), including whether the line starts with an empty or ticked checkbox.
@@ -71,16 +71,16 @@ All settings live in one file, `config.toml`, at the repo root. `config.example.
 
 Rules:
 
-- The CLI reads `./config.toml`, or the path in `RMTASKS_CONFIG`. That is the only environment variable you ever set.
+- The CLI reads `./config.toml`, or the path in `JOTTED_CONFIG`. That is the only environment variable you ever set.
 - rmapi's own settings are driven from this file. The wrapper sets `RMAPI_CONFIG` (token path) and `RMAPI_TRACE` for each rmapi call, so rmapi never reads `~/.rmapi`.
 - Secrets are never pasted into the config. It points at files under `.secrets/`, created with 0700 permissions, or names the environment variable that already holds an API key (`api_key_env`).
 - Detection thresholds are ratios of the line's median stroke height, not absolute units. They hold regardless of writing size or zoom.
 - Later phases (recognition, server, sync) add new sections to this same file.
-- `rmtasks config check` validates the file and prints the resolved values.
+- `jotted config check` validates the file and prints the resolved values.
 
 ```toml
-# rmtasks configuration: the single source of settings.
-# Copy to config.toml (gitignored). Override the path with RMTASKS_CONFIG.
+# jotted configuration: the single source of settings.
+# Copy to config.toml (gitignored). Override the path with JOTTED_CONFIG.
 
 [paths]
 cache_dir   = "./cache"      # downloaded .rmdoc files and unpacked pages
@@ -163,11 +163,11 @@ The threshold values are starting points to tune in the test plan, not measured 
 A small Python package with one module per flow step. Dependencies: `rmscene>=0.7`, `rich` (terminal table), `pillow` (line images), `anthropic` and `typesafe-sdk`; everything else is standard library.
 
 ```text
-rmtasks/
+jotted/
 ├── pyproject.toml
 ├── config.example.toml
 ├── README.md
-├── src/rmtasks/
+├── src/jotted/
 │   ├── cli.py        # commands and argument parsing
 │   ├── config.py     # load and validate config.toml
 │   ├── cloud.py      # rmapi wrapper
@@ -201,11 +201,11 @@ rmtasks/
 
 | Command | What it does |
 | --- | --- |
-| `rmtasks auth` | Registers rmapi with a one-time code; stores the token at `rmapi.token_file` |
-| `rmtasks config check` | Validates `config.toml` and prints resolved values |
-| `rmtasks scan` | Cloud path: find, download, analyse, report |
-| `rmtasks analyse <path>` | Offline path: analyse a cached `.rmdoc` or unpacked folder |
-| `rmtasks diff <runA> <runB>` | Compares two runs' JSON; lists tasks whose anchor changed |
+| `jotted auth` | Registers rmapi with a one-time code; stores the token at `rmapi.token_file` |
+| `jotted config check` | Validates `config.toml` and prints resolved values |
+| `jotted scan` | Cloud path: find, download, analyse, report |
+| `jotted analyse <path>` | Offline path: analyse a cached `.rmdoc` or unpacked folder |
+| `jotted diff <runA> <runB>` | Compares two runs' JSON; lists tasks whose anchor changed |
 
 `Stroke` holds `id` (the rmscene CrdtId as a string), `tool`, `points`, `bbox`, `length`, `start` and `end`. `Line` holds its strokes in x order, its bbox, and its median stroke height.
 
@@ -304,17 +304,17 @@ The spike succeeds when T1–T5 pass on your own handwriting. T6 is a stretch.
 
 | # | Test | How | Pass when |
 | --- | --- | --- | --- |
-| T1 | Auth and download | `rmtasks auth`, then `rmtasks scan` | The notebook lands in `cache/` and the page count matches the tablet |
+| T1 | Auth and download | `jotted auth`, then `jotted scan` | The notebook lands in `cache/` and the page count matches the tablet |
 | T2 | Basic detection | Page with 6 `[ ]` tasks and 4 note lines | 6 tasks, 0 false positives |
 | T3 | Both styles | Page mixing bracket pairs and single boxes, 5 of each | At least 9 of 10 detected; no note line flagged |
 | T3b | Tasks without a box | 4 action lines written without a checkbox, among 4 notes | At least 3 of 4 found as tasks; no note flagged |
 | T3d | Drawings and wrapped lines | A diagram with labels and arrows, and a to-do that wraps onto a second line | The diagram is one `drawing` item, never a task; the wrapped to-do is one task |
 | T3c | Transcription | Every line on the T2 and T3 pages | Text readable and correct apart from minor slips, in the table and JSON |
-| T4 | Anchor stability | Scan; add a line mid-page on the tablet; wait for sync; scan again; `rmtasks diff` | Every pre-existing task keeps its anchor |
+| T4 | Anchor stability | Scan; add a line mid-page on the tablet; wait for sync; scan again; `jotted diff` | Every pre-existing task keeps its anchor |
 | T5 | Empty checkbox | A lone `[ ]` with nothing after it | Reported as `empty_checkbox`, not a task |
 | T6 | Messy page | A real day's page with doodles, arrows and a crossed-out line | No crash; false positives are visible in the SVG and listed as a tuning follow-up |
 
-Tuning loop: after the first `scan`, iterate with `rmtasks analyse` on the cached copy. Change one threshold in `config.toml` at a time and compare the SVG overlays. Once T2 and T3 pass, copy those pages' `.rm` files into `tests/fixtures/` with the expected results, so later threshold changes can't regress them.
+Tuning loop: after the first `scan`, iterate with `jotted analyse` on the cached copy. Change one threshold in `config.toml` at a time and compare the SVG overlays. Once T2 and T3 pass, copy those pages' `.rm` files into `tests/fixtures/` with the expected results, so later threshold changes can't regress them.
 
 ## Risks and open questions
 

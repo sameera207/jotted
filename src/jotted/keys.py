@@ -1,4 +1,4 @@
-"""API keys saved by `rmtasks setup`: a JSON file in the secrets folder, readable by this
+"""API keys saved by `jotted setup`: a JSON file in the secrets folder, readable by this
 user only. A key exported in the shell wins over a saved one, so nothing changes for
 people who already use environment variables."""
 

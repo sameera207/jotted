@@ -11,10 +11,10 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parent))
 import synth  # noqa: E402
 
-from rmtasks import analysis, cli, cloud, config, notebook, strokes  # noqa: E402
-from rmtasks.checkbox import candidate, detect  # noqa: E402
-from rmtasks.lines import Line, cluster  # noqa: E402
-from rmtasks.strokes import make_stroke  # noqa: E402
+from jotted import analysis, cli, cloud, config, notebook, strokes  # noqa: E402
+from jotted.checkbox import candidate, detect  # noqa: E402
+from jotted.lines import Line, cluster  # noqa: E402
+from jotted.strokes import make_stroke  # noqa: E402
 
 ROOT = Path(__file__).parent.parent
 
@@ -209,10 +209,10 @@ def test_cloud_flow_with_fake_rmapi(tmp_path, cfg, monkeypatch):
 
 # ---------------------------------------------------------------- recognition and classification (stubbed)
 
-from rmtasks import classify as classify_mod, recognise, report  # noqa: E402
-from rmtasks.aicache import AICache  # noqa: E402
-from rmtasks.classify import Judgment  # noqa: E402
-from rmtasks.recognise import Transcript  # noqa: E402
+from jotted import classify as classify_mod, recognise, report  # noqa: E402
+from jotted.aicache import AICache  # noqa: E402
+from jotted.classify import Judgment  # noqa: E402
+from jotted.recognise import Transcript  # noqa: E402
 
 
 def _result(t=None, j=None, geo="note"):
@@ -276,7 +276,7 @@ class _FakeAnthropic:
 
 
 def test_transcribe_sends_only_uncached_lines(tmp_path, cfg, monkeypatch):
-    from rmtasks.adapters import anthropic_reader
+    from jotted.adapters import anthropic_reader
 
     monkeypatch.setattr(anthropic_reader.anthropic, "Anthropic", _FakeAnthropic)
     monkeypatch.setenv(cfg.recognition.api_key_env, "test-key")
@@ -326,7 +326,7 @@ def test_a_cached_page_needs_no_reader_or_key(tmp_path, cfg, monkeypatch):
 def test_providers_are_registered_and_checked(cfg, monkeypatch):
     import dataclasses
 
-    from rmtasks.adapters.anthropic_reader import AnthropicReader
+    from jotted.adapters.anthropic_reader import AnthropicReader
 
     assert set(recognise.PROVIDERS) == config.RECOGNITION_PROVIDERS
     monkeypatch.setenv(cfg.recognition.api_key_env, "test-key")
@@ -354,7 +354,7 @@ class _FakeJudge:
         return {(q.above, q.below): 0.9 for q in pairs}
 
     def actions(self, document, lines, targets, context):
-        from rmtasks.core.model import Judgment as ActionJudgment
+        from jotted.core.model import Judgment as ActionJudgment
         self.calls.append(("actions", document, [lines[i].text for i in targets]))
         return {i: ActionJudgment(p_action=0.95, owner="me") for i in targets}
 
@@ -380,8 +380,8 @@ def test_any_judge_plugs_in_for_continuations(tmp_path, cfg):
 
 
 def test_action_judge_asks_the_provider_once_per_line(tmp_path, cfg):
-    from rmtasks.adapters.action_judge import ModelActionJudge
-    from rmtasks.core.model import DocInfo, PageInfo, SourceLine
+    from jotted.adapters.action_judge import ModelActionJudge
+    from jotted.core.model import DocInfo, PageInfo, SourceLine
 
     doc, page = DocInfo("remarkable", "d", "Weekly", "/Meetings", "m"), PageInfo("d", "p", 3, "h")
     lines_ = [SourceLine(anchor=f"1:{i}", key=f"k{i}", text=t, bbox=(0, 0, 1, 1))
@@ -397,7 +397,7 @@ def test_action_judge_asks_the_provider_once_per_line(tmp_path, cfg):
 def test_judge_providers_are_registered_and_checked(cfg, monkeypatch):
     import dataclasses
 
-    from rmtasks.adapters.typesafe_judge import TypeSafeJudge
+    from jotted.adapters.typesafe_judge import TypeSafeJudge
 
     assert set(classify_mod.PROVIDERS) == config.CLASSIFICATION_PROVIDERS
     monkeypatch.setenv(cfg.classification.api_key_env, "test-key")
@@ -429,7 +429,7 @@ def test_classify_builds_one_question_per_line_and_caches(tmp_path, cfg, monkeyp
                        for q in questions}
             return NS(choices=choices, model="jev-test", request_id="req_test")
 
-    from rmtasks.adapters import typesafe_judge
+    from jotted.adapters import typesafe_judge
 
     monkeypatch.setattr(typesafe_judge, "TypeSafeClient", FakeClient)
     monkeypatch.setenv(cfg.classification.api_key_env, "test-key")
@@ -517,7 +517,7 @@ def test_drawing_kind(cfg):
 
 import re  # noqa: E402
 
-from rmtasks import template  # noqa: E402
+from jotted import template  # noqa: E402
 
 
 def test_to_pdf_maps_page_corners():
@@ -554,8 +554,8 @@ def test_zoned_analysis_reads_only_body_as_tasks(tmp_path, cfg):
 
 # ---------------------------------------------------------------- task store and web app
 
-from rmtasks.server import create_app  # noqa: E402
-from rmtasks.store import Store  # noqa: E402
+from jotted.server import create_app  # noqa: E402
+from jotted.store import Store  # noqa: E402
 
 
 def _template_run(tmp_path, cfg, paths, ids=None, name="t"):
@@ -627,7 +627,7 @@ def test_template_draws_moved_marks_and_numbered_footer(tmp_path, cfg):
 def test_scheduler_coalesces_bursts_of_edits():
     import time as _time
 
-    from rmtasks.app import Scheduler
+    from jotted.app import Scheduler
 
     class FakeApp:
         pushes = 0
@@ -693,7 +693,7 @@ def test_web_api(tmp_path, ai_cfg, monkeypatch):
     store = Store(tmp_path / "db.sqlite")
     run = _template_run(tmp_path, ai_cfg, BODY)
 
-    from rmtasks import sync
+    from jotted import sync
 
     def fake_pull(cfg_, store_, console=None):
         summary = store_.apply_run(run, "2026-09-29T10:00:00Z")
@@ -733,7 +733,7 @@ def test_web_api(tmp_path, ai_cfg, monkeypatch):
 
 
 def test_bullets_are_stripped_from_task_text():
-    from rmtasks.store import clean_text
+    from jotted.store import clean_text
 
     assert clean_text("- test prod") == "test prod"
     assert clean_text("• call Bob") == "call Bob"

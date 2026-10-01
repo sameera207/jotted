@@ -24,7 +24,7 @@ from .notebook import NotebookError
 from .recognise import RecognitionError
 from .store import Store, to_utc
 
-log = logging.getLogger("rmtasks")
+log = logging.getLogger("jotted")
 
 SYNC_ERRORS = (cloud.CloudError, sync.SyncError, NotebookError, RecognitionError, ClassificationError)
 

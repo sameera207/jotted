@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>rmtasks</title>
+<title>Jotted</title>
 <style>
   /* Paper: each section is a sheet on a desk. The To-do sheet is ruled, one item per line. */
   :root {
@@ -232,7 +232,7 @@
 <body>
 <main>
   <div class="top">
-    <span class="brand">rmtasks</span>
+    <span class="brand">Jotted</span>
     <nav class="tabs" role="tablist">
       <button role="tab" data-tab="todo" aria-selected="true">To-do</button>
       <button role="tab" data-tab="tasks" aria-selected="false">Tasks notebook</button>
@@ -831,7 +831,7 @@ $("add").addEventListener("submit", (e) => { e.preventDefault(); addTask($("new"
 $("today").textContent = new Date().toLocaleDateString(undefined, { weekday: "long", day: "numeric", month: "long" });
 $("add-todo").addEventListener("submit", (e) => { e.preventDefault(); addTask($("new-todo")); });
 
-if (location.hash === "#settings") { history.replaceState(null, "", location.pathname); showTab("settings"); }  // `rmtasks start`, first time
+if (location.hash === "#settings") { history.replaceState(null, "", location.pathname); showTab("settings"); }  // `jotted start`, first time
 else refresh();
 </script>
 </body>

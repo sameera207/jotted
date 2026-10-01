@@ -1,4 +1,4 @@
-"""rmtasks command line: auth, config check, scan, analyse, diff."""
+"""Jotted command line: auth, config check, scan, analyse, diff."""
 
 from __future__ import annotations
 
@@ -20,7 +20,7 @@ from . import analysis, cloud, keys, notebook, report, selfupdate, sync, templat
 from .store import Store
 from .config import Config, ConfigError, load, resolve_path
 
-log = logging.getLogger("rmtasks")
+log = logging.getLogger("jotted")
 console = Console()
 
 
@@ -69,7 +69,7 @@ def cmd_config_check(cfg: Config, args: argparse.Namespace) -> int:
     rmapi = shutil.which(cfg.rmapi.binary)
     console.print()
     console.print(f"rmapi binary: {rmapi or '[red]not found[/red]'}")
-    console.print(f"rmapi token:  {'present' if cfg.rmapi.token_file.exists() else '[yellow]missing (run rmtasks auth)[/yellow]'}")
+    console.print(f"rmapi token:  {'present' if cfg.rmapi.token_file.exists() else '[yellow]missing (run jotted auth)[/yellow]'}")
     for section in (cfg.recognition, cfg.classification):
         if section.enabled:
             ok = bool(os.environ.get(section.api_key_env))
@@ -287,7 +287,7 @@ def cmd_collect(cfg: Config, args: argparse.Namespace) -> int:
 
     app = _app(cfg)
     if not app.repo.settings().watch:
-        console.print("Nothing is watched. Add a folder with `rmtasks watch add /Meeting notes` or in the web app.")
+        console.print("Nothing is watched. Add a folder with `jotted watch add /Meeting notes` or in the web app.")
         return 1
     if args.dry_run:
         with console.status("Checking what changed (downloads only, nothing is read)…"):
@@ -330,7 +330,7 @@ def cmd_serve(cfg: Config, args: argparse.Namespace) -> int:
 
 
 def _running_here(url: str) -> bool:
-    """Whether rmtasks already answers at `url` (another start, or `rmtasks serve`)."""
+    """Whether Jotted already answers at `url` (another start, or `jotted serve`)."""
     import urllib.request
 
     try:
@@ -353,16 +353,16 @@ def _serve(cfg: Config, host: str, port: int, *, background: bool = True, dev: b
         busy = probe.connect_ex((host, port)) == 0
     if busy:
         if _running_here(url):
-            console.print(f"rmtasks is already running at [bold]{url}[/bold]")
+            console.print(f"Jotted is already running at [bold]{url}[/bold]")
             if os.environ.get(selfupdate.DONE_VAR):
                 console.print("[yellow]That window still runs the old version:[/yellow] stop it with Ctrl+C, "
-                              "then run [bold]rmtasks start[/bold] again.")
+                              "then run [bold]jotted start[/bold] again.")
             if open_path is not None:
                 webbrowser.open(url + open_path)
             return 0
         console.print(f"[red]Port {port} is in use[/red] by another program. Try `--port {port + 1}`.")
         return 1
-    console.print(f"rmtasks for [bold]{cfg.notebook.name}[/bold] at [bold]{url}[/bold]  (store: {cfg.server.db})")
+    console.print(f"Jotted for [bold]{cfg.notebook.name}[/bold] at [bold]{url}[/bold]  (store: {cfg.server.db})")
     app = create_app(cfg, background=background)
     if dev:
         app.run(host=host, port=port, debug=False, threaded=True)
@@ -370,10 +370,10 @@ def _serve(cfg: Config, host: str, port: int, *, background: bool = True, dev: b
     from waitress import create_server
 
     # One process, many threads: the background scheduler must exist exactly once.
-    server = create_server(app, host=host, port=port, threads=8, ident="rmtasks")
+    server = create_server(app, host=host, port=port, threads=8, ident="jotted")
     if open_path is not None:
         webbrowser.open(url + open_path)
-    console.print("[dim]Leave this window open while you use rmtasks. Press Ctrl+C to stop.[/dim]")
+    console.print("[dim]Leave this window open while you use Jotted. Press Ctrl+C to stop.[/dim]")
     try:
         server.run()
     except KeyboardInterrupt:
@@ -420,7 +420,7 @@ def cmd_start(args: argparse.Namespace) -> int:
 def cmd_update(args: argparse.Namespace) -> int:
     """Update to the latest version on GitHub now."""
     if selfupdate.check(console, force=True):
-        console.print("Run [bold]rmtasks start[/bold] to use it (stop a running app first with Ctrl+C).")
+        console.print("Run [bold]jotted start[/bold] to use it (stop a running app first with Ctrl+C).")
     return 0
 
 
@@ -429,7 +429,7 @@ def cmd_setup(args: argparse.Namespace) -> int:
     cfg = _onboard(redo=True)
     if cfg is None:
         return 1
-    console.print("\n[green]All set.[/green] Run [bold]rmtasks start[/bold] to open the app.")
+    console.print("\n[green]All set.[/green] Run [bold]jotted start[/bold] to open the app.")
     return 0
 
 
@@ -437,7 +437,7 @@ def cmd_setup(args: argparse.Namespace) -> int:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(prog="rmtasks", description="Find [ ] tasks in a handwritten reMarkable notebook.")
+    p = argparse.ArgumentParser(prog="jotted", description="Turn handwritten notes into a to-do list.")
     p.add_argument("--notebook", metavar="NAME", help="use this notebook instead of notebook.name (e.g. Tasks-sandbox)")
     sub = p.add_subparsers(dest="command", required=True)
     sub.add_parser("auth", help="register rmapi with a one-time code").set_defaults(func=cmd_auth)
@@ -478,7 +478,7 @@ def build_parser() -> argparse.ArgumentParser:
     st.add_argument("--no-browser", action="store_true", help="don't open the browser")
     st.add_argument("--no-update", action="store_true", help="don't check GitHub for a newer version")
     st.set_defaults(func=cmd_start, no_config=True)
-    sub.add_parser("update", help="update rmtasks to the latest version on GitHub").set_defaults(
+    sub.add_parser("update", help="update Jotted to the latest version on GitHub").set_defaults(
         func=cmd_update, no_config=True)
     su = sub.add_parser("setup", help="go through setup again: reconnect the tablet, change API keys")
     su.set_defaults(func=cmd_setup, no_config=True)
@@ -505,7 +505,7 @@ def main(argv: list[str] | None = None) -> int:
         keys.load_into_env(cfg)
     except ConfigError as e:
         console.print(f"[red]Config error:[/red] {e}")
-        console.print(f"[dim](config path: {resolve_path()}; set RMTASKS_CONFIG to use another)[/dim]")
+        console.print(f"[dim](config path: {resolve_path()}; set JOTTED_CONFIG to use another)[/dim]")
         return 2
     if args.notebook:
         import dataclasses

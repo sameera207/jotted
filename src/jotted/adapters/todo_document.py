@@ -29,7 +29,7 @@ from ..config import Config
 from ..core.model import PaperRead, TodoEntry, WrittenItem
 from ..notebook import page_order
 
-log = logging.getLogger("rmtasks.todo")
+log = logging.getLogger("jotted.todo")
 
 PAGES = 2
 SLOTS_PER_PAGE = 20

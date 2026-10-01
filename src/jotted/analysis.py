@@ -13,7 +13,7 @@ from . import checkbox, classify, lines, notebook, recognise, report, strokes, t
 from .aicache import AICache
 from .config import Config
 
-log = logging.getLogger("rmtasks")
+log = logging.getLogger("jotted")
 console = Console(stderr=True)
 
 

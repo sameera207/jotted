@@ -1,6 +1,6 @@
 """Claude as the HandwritingReader: one Messages request per page, structured output.
 
-The prompt, schema and line images come from `rmtasks.recognise`; this adapter only
+The prompt, schema and line images come from `jotted.recognise`; this adapter only
 talks to the Anthropic API and turns its answer into transcripts.
 """
 

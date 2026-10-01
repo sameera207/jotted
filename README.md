@@ -1,6 +1,6 @@
-# rmtasks
+# Jotted
 
-Turns handwriting on your reMarkable into a to-do list. It reads the notebooks you choose through reMarkable Cloud, works out which lines are tasks and whose they are, and keeps one list in a local web app. Tick items there or on the tablet.
+Turns your handwritten notes into a to-do list. It works with reMarkable today. It reads the notebooks you choose through reMarkable Cloud, works out which lines are tasks and whose they are, and keeps one list in a local web app. Tick items there or on the tablet.
 
 It runs on your computer. Nothing goes through a server of ours: images of new lines go to Anthropic to be read, and their text goes to TypeSafe to be judged, each with your own API key.
 
@@ -9,27 +9,27 @@ It runs on your computer. Nothing goes through a server of ours: images of new l
 You need a reMarkable with cloud sync (a Connect subscription), an [Anthropic API key](https://console.anthropic.com/settings/keys), a [TypeSafe](https://typesafe.ai) key, and [uv](https://docs.astral.sh/uv/getting-started/installation/).
 
 ```bash
-uv tool install git+https://github.com/sameera207/rmtasks
-rmtasks start
+uv tool install git+https://github.com/sameera207/jotted
+jotted start
 ```
 
-`rmtasks start` walks you through the rest, then opens the app in your browser:
+`jotted start` walks you through the rest, then opens the app in your browser:
 
-1. It creates a folder for settings, data and keys (`~/Library/Application Support/rmtasks` on a Mac, `~/.local/share/rmtasks` on Linux).
+1. It creates a folder for settings, data and keys (`~/Library/Application Support/jotted` on a Mac, `~/.local/share/jotted` on Linux).
 2. It downloads [rmapi](https://github.com/ddvk/rmapi), which talks to reMarkable Cloud, and checks the download against its published checksum.
 3. It connects your reMarkable with a one-time code from my.remarkable.com.
 4. It asks for your API keys and checks them. They're saved in that folder, readable by your user only. Keys exported in your shell take precedence.
 5. It opens the app at Settings: tick the folders whose notes should feed your list.
 
-Run `rmtasks start` again whenever you want the app; finished steps are skipped. `rmtasks setup` goes through the steps again, to reconnect the tablet or change a key. Leave the terminal window open while you use the app.
+Run `jotted start` again whenever you want the app; finished steps are skipped. `jotted setup` goes through the steps again, to reconnect the tablet or change a key. Leave the terminal window open while you use the app.
 
 ### Updates
 
-`rmtasks start` checks GitHub first. When `main` has moved on since you installed, it runs `uv tool upgrade rmtasks` and starts again in the new version. If GitHub can't be reached, or the upgrade fails, it carries on with the version you have.
+`jotted start` checks GitHub first. When `main` has moved on since you installed, it runs `uv tool upgrade jotted` and starts again in the new version. If GitHub can't be reached, or the upgrade fails, it carries on with the version you have.
 
-- An app that is already running keeps its old code: stop it with Ctrl+C, then `rmtasks start` again.
-- `rmtasks update` updates without starting the app.
-- `rmtasks start --no-update`, or `RMTASKS_NO_UPDATE=1`, skips the check.
+- An app that is already running keeps its old code: stop it with Ctrl+C, then `jotted start` again.
+- `jotted update` updates without starting the app.
+- `jotted start --no-update`, or `JOTTED_NO_UPDATE=1`, skips the check.
 
 Only an install from GitHub updates itself. A checkout run with `uv run`, or an install pinned to a tag or commit (`git+…@v1`), never does.
 
@@ -37,13 +37,13 @@ So shipping a fix is: commit it to `main` and push. Each install picks it up the
 
 ## Development setup
 
-To work on rmtasks itself. A `config.toml` in the folder you run from takes precedence over the app folder.
+To work on Jotted itself. A `config.toml` in the folder you run from takes precedence over the app folder.
 
 ### 1. Get the code and dependencies
 
 ```bash
-git clone <your-repo-url> rmtasks
-cd rmtasks
+git clone <your-repo-url> jotted
+cd jotted
 uv sync
 ```
 
@@ -68,21 +68,21 @@ If you don't put it on your `PATH`, set `rmapi.binary` in the config to its abso
 ### 3. Create your config
 
 ```bash
-cp src/rmtasks/config.example.toml config.toml
+cp src/jotted/config.example.toml config.toml
 ```
 
 Edit `config.toml`. For a first run, the only value you're likely to change is `notebook.name`. Then check it:
 
 ```bash
-uv run rmtasks config check
+uv run jotted config check
 ```
 
-Every setting lives in this one file, including rmapi's token location. You never set rmapi environment variables yourself. To keep the config somewhere else, point `RMTASKS_CONFIG` at it.
+Every setting lives in this one file, including rmapi's token location. You never set rmapi environment variables yourself. To keep the config somewhere else, point `JOTTED_CONFIG` at it.
 
 ### 4. Connect to reMarkable Cloud (once)
 
 ```bash
-uv run rmtasks auth
+uv run jotted auth
 ```
 
 1. The command asks for a one-time code.
@@ -104,7 +104,7 @@ Wait for the cloud-sync icon to settle before scanning.
 ### 6. Scan
 
 ```bash
-uv run rmtasks scan
+uv run jotted scan
 ```
 
 This finds the notebook, downloads it into `cache/`, analyses each page and prints a table. Each run also writes:
@@ -121,7 +121,7 @@ Each page's lines are sent to Claude as images in one request, and the transcrip
 Once there's a copy in the cache, iterate without touching the network:
 
 ```bash
-uv run rmtasks analyse cache/<notebook-id>.rmdoc
+uv run jotted analyse cache/<notebook-id>.rmdoc
 ```
 
 `scan` prints the exact cache path. Change one threshold at a time in the `[lines]` or `[checkbox]` section of `config.toml`, re-run, and compare the overlays.
@@ -137,29 +137,29 @@ Run the tests with `uv run pytest`. They use synthetic pages, plus a fake `rmapi
 3. Run `scan` again, then compare the two runs:
 
 ```bash
-uv run rmtasks diff out/<first-run> out/<second-run>
+uv run jotted diff out/<first-run> out/<second-run>
 ```
 
 Every task that existed in the first run should keep identical checkbox IDs.
 
 ## The common to-do list
 
-`rmtasks serve` runs a local web app at http://127.0.0.1:8765. It collects action items from the folders you choose and keeps them in one list. It also keeps that list on the tablet as a To-do document you can tick with the pen.
+`jotted serve` runs a local web app at http://127.0.0.1:8765. It collects action items from the folders you choose and keeps them in one list. It also keeps that list on the tablet as a To-do document you can tick with the pen.
 
 1. Open **Settings**, load your folders, tick the ones to watch (for example `/Meeting Notes`), and save.
 2. In the background, the app checks the tablet every minute. Only documents whose cloud copy changed are downloaded; only pages whose content changed are parsed; only lines with new strokes are sent to Claude (as images) and Jev (as text). Jev decides whether each line is an action and who owns it.
 3. **To-do** shows everything: collected actions, with an image of the handwritten line and a link to its page, plus the Tasks notebook's tasks. Filter by open/done, mine/others and source. Mark "×" on a line that isn't an action.
-4. Turn on **To-do document on the tablet** in Settings. Each item gets a fixed slot with a printed checkbox. Tick a box with the pen and the item is marked done on the next check. The document has two pages. When its rows run out, rmtasks deletes it and prints a fresh one with only the open items.
+4. Turn on **To-do document on the tablet** in Settings. Each item gets a fixed slot with a printed checkbox. Tick a box with the pen and the item is marked done on the next check. The document has two pages. When its rows run out, Jotted deletes it and prints a fresh one with only the open items.
 
-From the command line: `rmtasks library`, `rmtasks watch add "/Meeting Notes"`, `rmtasks collect --dry-run` (what changed, nothing read), `rmtasks collect`, `rmtasks todo`.
+From the command line: `jotted library`, `jotted watch add "/Meeting Notes"`, `jotted collect --dry-run` (what changed, nothing read), `jotted collect`, `jotted todo`.
 
-Code layout: `rmtasks/core` holds the model, ports and services and imports no adapter. `rmtasks/adapters` holds the reMarkable library, SQLite and To-do document implementations, and the AI providers behind two ports: handwriting readers (`recognition.provider`, Anthropic today) and line judges (`classification.provider`, TypeSafe's Jev today). `rmtasks/recognise.py` and `rmtasks/classify.py` explain how to add a provider. `rmtasks/app.py` wires them together and runs the background scheduler. See `specs/Common-todo-spec.md`.
+Code layout: `jotted/core` holds the model, ports and services and imports no adapter. `jotted/adapters` holds the reMarkable library, SQLite and To-do document implementations, and the AI providers behind two ports: handwriting readers (`recognition.provider`, Anthropic today) and line judges (`classification.provider`, TypeSafe's Jev today). `jotted/recognise.py` and `jotted/classify.py` explain how to add a provider. `jotted/app.py` wires them together and runs the background scheduler. See `specs/Common-todo-spec.md`.
 
 ## Troubleshooting
 
 | Symptom | Fix |
 | --- | --- |
-| `auth` or `scan` fails with an auth error | Delete `.secrets/rmapi.conf` and run `rmtasks auth` again |
+| `auth` or `scan` fails with an auth error | Delete `.secrets/rmapi.conf` and run `jotted auth` again |
 | Need to see what rmapi is doing | Set `rmapi.trace = true` in `config.toml` |
 | "Notebook not found" | `notebook.name` must match the visible name exactly; narrow `notebook.folder` if names repeat |
 | Warnings about unreadable blocks | Newer firmware than rmscene knows: `uv lock --upgrade-package rmscene && uv sync` |
@@ -168,9 +168,9 @@ Code layout: `rmtasks/core` holds the model, ports and services and imports no a
 ## Layout
 
 ```text
-src/rmtasks/config.example.toml   every setting with its default; `rmtasks start` copies it
+src/jotted/config.example.toml   every setting with its default; `jotted start` copies it
 config.toml           your settings (gitignored)
-src/rmtasks/          cli, config, cloud, notebook, strokes, lines, checkbox, report
+src/jotted/          cli, config, cloud, notebook, strokes, lines, checkbox, report
 tests/fixtures/       .rm pages with known expected results
 .secrets/             rmapi token (gitignored)
 cache/                downloaded notebooks (gitignored)

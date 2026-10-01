@@ -447,6 +447,41 @@ wheels = [
 ]
 
 [[package]]
+name = "jotted"
+version = "0.1.0"
+source = { editable = "." }
+dependencies = [
+    { name = "anthropic" },
+    { name = "flask" },
+    { name = "pillow" },
+    { name = "reportlab" },
+    { name = "rich" },
+    { name = "rmscene" },
+    { name = "typesafe-sdk" },
+    { name = "waitress" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "pytest" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "anthropic", specifier = ">=1.9.0" },
+    { name = "flask", specifier = ">=3.1.3" },
+    { name = "pillow", specifier = ">=12.3.0" },
+    { name = "reportlab", specifier = ">=5.0.1" },
+    { name = "rich", specifier = ">=13" },
+    { name = "rmscene", specifier = ">=0.7" },
+    { name = "typesafe-sdk", specifier = ">=0.7.2" },
+    { name = "waitress", specifier = ">=3.0.2" },
+]
+
+[package.metadata.requires-dev]
+dev = [{ name = "pytest", specifier = ">=8" }]
+
+[[package]]
 name = "markdown-it-py"
 version = "4.2.0"
 source = { registry = "https://pypi.org/simple" }
@@ -823,41 +858,6 @@ sdist = { url = "https://files.pythonhosted.org/packages/de/dd/2ec964e1f5e007e3b
 wheels = [
     { url = "https://files.pythonhosted.org/packages/1b/bb/c98189fa471986c13acb35dbce444345e05d8b58096b4457c1c4b3494443/rmscene-0.8.0-py3-none-any.whl", hash = "sha256:78f2bb8a746ceb6428005aa5fcb576eb7cf10ad537d043c49659c950633b01d1", size = 26765, upload-time = "2026-04-05T14:56:58.525Z" },
 ]
-
-[[package]]
-name = "rmtasks"
-version = "0.1.0"
-source = { editable = "." }
-dependencies = [
-    { name = "anthropic" },
-    { name = "flask" },
-    { name = "pillow" },
-    { name = "reportlab" },
-    { name = "rich" },
-    { name = "rmscene" },
-    { name = "typesafe-sdk" },
-    { name = "waitress" },
-]
-
-[package.dev-dependencies]
-dev = [
-    { name = "pytest" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "anthropic", specifier = ">=1.9.0" },
-    { name = "flask", specifier = ">=3.1.3" },
-    { name = "pillow", specifier = ">=12.3.0" },
-    { name = "reportlab", specifier = ">=5.0.1" },
-    { name = "rich", specifier = ">=13" },
-    { name = "rmscene", specifier = ">=0.7" },
-    { name = "typesafe-sdk", specifier = ">=0.7.2" },
-    { name = "waitress", specifier = ">=3.0.2" },
-]
-
-[package.metadata.requires-dev]
-dev = [{ name = "pytest", specifier = ">=8" }]
 
 [[package]]
 name = "sniffio"

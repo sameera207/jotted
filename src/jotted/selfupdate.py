@@ -1,8 +1,8 @@
-"""Keep an installed rmtasks up to date with GitHub. Checked by `rmtasks start` and `rmtasks update`.
+"""Keep an installed Jotted up to date with GitHub. Checked by `jotted start` and `jotted update`.
 
 Only an install made with `uv tool install git+<repo>` updates itself. uv records the commit it
 was built from (direct_url.json), which is compared with the head of the branch on GitHub; when
-they differ, `uv tool upgrade rmtasks` fetches the new one. A checkout run with `uv run`, or an
+they differ, `uv tool upgrade jotted` fetches the new one. A checkout run with `uv run`, or an
 install pinned to a tag or commit, is never touched. Offline or rate-limited, the check is skipped.
 """
 
@@ -16,10 +16,10 @@ import urllib.request
 from dataclasses import dataclass
 from importlib import metadata
 
-DIST = "rmtasks"
+DIST = "jotted"
 BRANCH = "main"
-SKIP_VAR = "RMTASKS_NO_UPDATE"  # set to 1 to never check
-DONE_VAR = "RMTASKS_UPDATED"  # set on the re-run after an update, so it happens once
+SKIP_VAR = "JOTTED_NO_UPDATE"  # set to 1 to never check
+DONE_VAR = "JOTTED_UPDATED"  # set on the re-run after an update, so it happens once
 
 
 class UpdateError(Exception):
@@ -65,7 +65,7 @@ def latest(repo: str, branch: str = BRANCH, timeout: float = 4) -> str | None:
 def upgrade() -> None:
     uv = shutil.which("uv")
     if uv is None:
-        raise UpdateError("uv is not on PATH; run `uv tool upgrade rmtasks` yourself")
+        raise UpdateError("uv is not on PATH; run `uv tool upgrade jotted` yourself")
     done = subprocess.run([uv, "tool", "upgrade", DIST], capture_output=True, text=True)
     if done.returncode != 0:
         raise UpdateError((done.stderr or done.stdout).strip() or f"uv exited with {done.returncode}")
@@ -87,9 +87,9 @@ def check(console, *, force: bool = False) -> bool:
         return False
     if head == have.commit:
         if force:
-            console.print(f"rmtasks is up to date ({have.commit[:7]}).")
+            console.print(f"Jotted is up to date ({have.commit[:7]}).")
         return False
-    console.print(f"Updating rmtasks ({have.commit[:7]} → {head[:7]})…")
+    console.print(f"Updating Jotted ({have.commit[:7]} → {head[:7]})…")
     try:
         upgrade()
     except UpdateError as e:
