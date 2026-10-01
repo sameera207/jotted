@@ -95,10 +95,20 @@ def sync_todo(repo: Repository, publisher: TodoPublisher, force: bool = False) -
     1. new items written by hand in empty rows are added, in the rows they were written in;
     2. ticks mark items done;
     3. remaining items get the next free slots (permanent), and the list is printed.
+
+    A document that was deleted, or replaced by another one, takes its rows, ticks and
+    handwriting with it: the list starts again from the top of a fresh document.
     """
     ticked = written = 0
     read = publisher.read_paper(repo.occupied_slots())
-    if read is not None:
+    known = repo.todo_doc_id()
+    if read is None or (known is not None and read.doc_id != known):
+        if known is not None or repo.occupied_slots():
+            log.info("the To-do document is new: printing the list from the top")
+        repo.reset_todo()
+        read = None  # a replacement's ink was laid out by someone else: don't read it as ours
+    else:
+        repo.set_todo_doc_id(read.doc_id)
         written = repo.add_written(read.doc_id, read.written)
         ticked = repo.apply_ticks(read.ticks, read.marker)
     settings = repo.settings()

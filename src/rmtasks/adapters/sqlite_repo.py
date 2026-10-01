@@ -362,14 +362,32 @@ class SqliteRepository:
 
     # ------------------------------------------------------------ the To-do document
 
+    def todo_doc_id(self) -> str | None:
+        return self.todo_meta().get("doc_id")
+
+    def set_todo_doc_id(self, doc_id: str) -> None:
+        with self.db() as db:
+            db.execute("INSERT INTO todo_meta (key, value) VALUES ('doc_id', ?) "
+                       "ON CONFLICT (key) DO UPDATE SET value = excluded.value", (doc_id,))
+
+    def reset_todo(self) -> None:
+        with self.db() as db:
+            db.execute("DELETE FROM todo_slots")
+            db.execute("DELETE FROM todo_meta WHERE key IN ('doc_id', 'fingerprint', 'paper_marker')")
+
     def todo_entries(self, include_others: bool) -> list[TodoEntry]:
+        current = self.todo_doc_id()
         entries = []
         for i in self.items():
             if not include_others and i["owner"] == "someone_else":
                 continue
             src = i["source"]
-            if i["kind"] == "action" and i.get("written"):
+            # Handwriting is the item's text only while it is on the current document.
+            on_paper = bool(i.get("written")) and src["doc_id"] == current
+            if on_paper:
                 label = "written here"
+            elif i["kind"] == "action" and i.get("written"):
+                label = "written on an earlier To-do"
             elif i["kind"] == "action":
                 folder = src["folder"].strip("/") or "Library"
                 label = f"{folder} › {src['name']} · p{src['page']}"
@@ -379,8 +397,8 @@ class SqliteRepository:
                 label = f"{src['name']}" + (f" · p{src['page']}" if src.get("page") else "")
             entries.append(TodoEntry(kind=i["kind"], item_id=i["id"], text=i["text"],
                                      done=i["status"] == "done", source_label=label, slot=i["slot"],
-                                     handwritten=bool(i.get("written")),
-                                     ink=tuple(i["bbox"]) if i.get("written") and i.get("bbox") else None,
+                                     handwritten=on_paper,
+                                     ink=tuple(i["bbox"]) if on_paper and i.get("bbox") else None,
                                      edited=bool(i.get("edited"))))
         return entries
 

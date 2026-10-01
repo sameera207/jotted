@@ -543,3 +543,37 @@ def test_written_rows_groups_handwriting_by_row():
     box_tick = make_stroke("1:20", "fineliner", [tablet(30, top + 9), tablet(34, top + 13), tablet(38, top + 6)])
     rows = todo_document.written_rows(letters + [descender, box_tick], scale, lines_cfg)
     assert list(rows) == [4] and len(rows[4]) == 6  # the tick in the box is not writing
+
+
+def test_a_deleted_todo_document_starts_again_from_the_top(repo):
+    source, judge, pub = FakeSource(), FakeJudge(), FakePublisher()
+    pub.ticks = (set(), "m1")
+    pub.written = [written(5, "Call the bank")]
+    notes(source)
+    service.collect(source, judge, repo)
+    service.sync_todo(repo, pub)  # written item in row 5; collected ones after it
+    assert [e.slot for e in pub.published[-1]] == [5, 6, 7]
+    assert pub.published[-1][0].handwritten
+
+    # Deleted on the tablet: the next document is printed from row 0, handwriting as text.
+    pub.ticks, pub.written = None, []
+    r = service.sync_todo(repo, pub)
+    assert r["published"] and [e.slot for e in pub.published[-1]] == [0, 1, 2]
+    bank = next(e for e in pub.published[-1] if e.text == "Call the bank")
+    assert not bank.handwritten and bank.ink is None and bank.source_label == "written on an earlier To-do"
+
+    # The new document is read as ours from then on: a tick on row 0 counts.
+    pub.ticks = ({0}, "m2")
+    assert service.sync_todo(repo, pub)["ticked"] == 1
+
+
+def test_a_replaced_todo_document_is_not_read_with_the_old_layout(repo):
+    pub = FakePublisher()
+    pub.ticks = (set(), "m1")
+    pub.written = [written(3, "Call the bank")]
+    service.sync_todo(repo, pub)
+    assert repo.todo_doc_id() == "todo-doc"
+    repo.set_todo_doc_id("older-doc")  # as if the document found now isn't the one we laid out
+    pub.ticks = ({3}, "m2")
+    r = service.sync_todo(repo, pub)
+    assert r["ticked"] == 0 and r["published"] and pub.published[-1][0].slot == 0

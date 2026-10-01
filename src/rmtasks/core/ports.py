@@ -65,6 +65,15 @@ class Repository(Protocol):
         """Store the page's lines and turn judged lines into action items.
         Returns (new actions, updated actions, actions now missing)."""
 
+    def todo_doc_id(self) -> str | None:
+        """The To-do document whose rows the slots describe; None before one is read."""
+
+    def set_todo_doc_id(self, doc_id: str) -> None: ...
+
+    def reset_todo(self) -> None:
+        """Forget the old document's rows and ticks. Items written by hand on it are printed
+        as text from now on: their ink went with it."""
+
     def todo_entries(self, include_others: bool) -> list[TodoEntry]:
         """Everything that belongs on the To-do document, slot assigned or not."""
 
