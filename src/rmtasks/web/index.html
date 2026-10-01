@@ -5,101 +5,161 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>rmtasks</title>
 <style>
+  /* Paper: each section is a sheet on a desk. The To-do sheet is ruled, one item per line. */
   :root {
-    --bg: #f6f5f1; --panel: #ffffff; --ink: #1d1d1b; --muted: #75736c; --line: #e4e2da;
-    --accent: #2f6f4f; --accent-ink: #ffffff; --warn: #a15c00; --danger: #b3261e; --chip: #eeece5;
-    --web: #2b5c9e; --other: #7a4fa8; --focus: #2f6f4f55; --shade: rgba(20, 20, 18, .45);
+    --desk: #ecebe6; --paper: #fdfcf9; --rule: #ebe8e0; --margin: #f0d5ce; --ink: #1f1f1d; --muted: #7c7a73;
+    --faint: #a8a59c; --line: #e2dfd6; --hover: #f6f4ee; --accent: #2f6f4f; --accent-ink: #ffffff;
+    --warn: #a15c00; --danger: #b3261e; --other: #7a4fa8; --focus: #2f6f4f55; --shade: rgba(20, 18, 14, .4);
+    --shadow: 0 1px 2px rgba(40, 35, 25, .06), 0 6px 24px rgba(40, 35, 25, .08);
+    --row: 48px; --left: 72px;
   }
   @media (prefers-color-scheme: dark) {
     :root {
-      --bg: #161614; --panel: #1f1f1c; --ink: #ecebe6; --muted: #9c9a92; --line: #33322e;
-      --accent: #6fbf94; --accent-ink: #0f1f16; --warn: #e3a44d; --danger: #f08a82; --chip: #2a2a26;
-      --web: #8db4ea; --other: #c4a3ea; --focus: #6fbf9455; --shade: rgba(0, 0, 0, .6);
+      --desk: #131312; --paper: #1c1c1a; --rule: #272624; --margin: #3d2c28; --ink: #ebe9e3; --muted: #9a978f;
+      --faint: #6f6c65; --line: #33322e; --hover: #23221f; --accent: #6fbf94; --accent-ink: #0f1f16;
+      --warn: #e3a44d; --danger: #f08a82; --other: #c4a3ea; --focus: #6fbf9455; --shade: rgba(0, 0, 0, .6);
+      --shadow: 0 1px 2px rgba(0, 0, 0, .4), 0 6px 24px rgba(0, 0, 0, .4);
     }
   }
+  @media (prefers-color-scheme: dark) { .mark.rm { background: #5c5b56; } }
   * { box-sizing: border-box; }
   [hidden] { display: none !important; }  /* the hidden attribute must win over display: flex on .row etc. */
-  body { margin: 0; background: var(--bg); color: var(--ink);
+  body { margin: 0; background: var(--desk); color: var(--ink); min-height: 100vh;
          font: 15px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; }
-  main { max-width: 1080px; margin: 0 auto; padding: 24px 16px 64px; }
-  header { display: flex; flex-wrap: wrap; gap: 12px; align-items: flex-end; justify-content: space-between; }
-  h1 { font-size: 22px; margin: 0; letter-spacing: -0.01em; }
-  .sub { color: var(--muted); font-size: 13px; margin-top: 2px; min-height: 19px; }
-  .actions { display: flex; gap: 8px; flex-wrap: wrap; }
-  button, select { font: inherit; border: 1px solid var(--line); background: var(--panel); color: var(--ink);
-                   border-radius: 8px; padding: 7px 12px; cursor: pointer; }
-  button:hover:not(:disabled) { border-color: var(--muted); }
+  main { max-width: 880px; margin: 0 auto; padding: 20px 16px 64px; }
+  button, select { font: inherit; border: 1px solid var(--line); background: var(--paper); color: var(--ink);
+                   border-radius: 6px; padding: 6px 12px; cursor: pointer; }
+  button:hover:not(:disabled) { border-color: var(--faint); }
   button:disabled { opacity: .5; cursor: default; }
   button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+  button.link { border: 0; background: none; padding: 0; color: var(--accent); font-weight: 600; }
   button:focus-visible, input:focus-visible, select:focus-visible, a:focus-visible {
     outline: 3px solid var(--focus); outline-offset: 1px; }
-  nav.tabs { display: flex; gap: 4px; margin: 20px 0 0; border-bottom: 1px solid var(--line); }
-  nav.tabs button { border: 0; border-bottom: 2px solid transparent; border-radius: 0; background: none;
-                    padding: 8px 12px; color: var(--muted); }
-  nav.tabs button[aria-selected="true"] { color: var(--ink); border-bottom-color: var(--accent); font-weight: 600; }
-  .banner { margin: 16px 0 0; padding: 10px 12px; border-radius: 8px; background: var(--chip); font-size: 14px; }
+  input[type=text] { font: inherit; padding: 7px 10px; border-radius: 6px; border: 1px solid var(--line);
+                     background: var(--paper); color: var(--ink); min-width: 0; }
+  .sub { color: var(--muted); font-size: 13px; }
+
+  /* ---------------------------------------------------------------- top bar */
+  .top { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; margin: 0 4px 14px; }
+  .brand { font-weight: 650; letter-spacing: -.01em; font-size: 16px; }
+  nav.tabs { display: flex; gap: 2px; }
+  nav.tabs button { border: 0; background: none; padding: 6px 12px; color: var(--muted); }
+  nav.tabs button:hover { color: var(--ink); }
+  nav.tabs button[aria-selected="true"] { color: var(--ink); background: var(--paper); box-shadow: 0 1px 2px rgba(0, 0, 0, .07); }
+  .status { margin-left: auto; display: flex; align-items: center; gap: 10px; font-size: 13px; color: var(--muted); }
+  .status .dot { width: 7px; height: 7px; border-radius: 50%; background: #3d8c5f; flex: none; }
+  .status .dot.busy { background: var(--warn); }
+  .banner { margin: 0 0 14px; padding: 10px 14px; border-radius: 6px; background: var(--paper); box-shadow: var(--shadow);
+            font-size: 14px; }
   .banner.error { color: var(--danger); }
-  .toolbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 18px 0 8px; }
-  .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
-  .seg button { border: 0; border-radius: 0; padding: 6px 11px; background: var(--panel); }
-  .seg button[aria-pressed="true"] { background: var(--chip); font-weight: 600; }
-  form.add { display: flex; gap: 8px; margin: 14px 0 6px; }
-  form.add input, .field input[type=text] { flex: 1; min-width: 0; font: inherit; padding: 9px 12px;
-      border-radius: 8px; border: 1px solid var(--line); background: var(--panel); color: var(--ink); }
-  .hint { color: var(--muted); font-size: 12px; margin-bottom: 14px; }
-  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; margin-top: 14px; }
-  .card > h2 { display: flex; justify-content: space-between; align-items: baseline; margin: 0;
-               padding: 12px 16px; font-size: 14px; border-bottom: 1px solid var(--line); }
-  .card > h2 a { color: var(--muted); font-weight: normal; font-size: 12px; }
-  ul { list-style: none; margin: 0; padding: 0; }
-  li.item { display: flex; gap: 12px; align-items: flex-start; padding: 11px 16px; border-top: 1px solid var(--line); }
-  li.item:first-child { border-top: 0; }
-  li.item input[type=checkbox] { width: 18px; height: 18px; margin: 2px 0 0; accent-color: var(--accent); flex: none; }
-  .body { flex: 1; min-width: 0; }
-  .text { cursor: text; overflow-wrap: anywhere; border-radius: 4px; }
-  .text:hover { background: var(--chip); }
-  li.done .text { text-decoration: line-through; color: var(--muted); }
-  .was { color: var(--muted); font-size: 12px; text-decoration: line-through; }
-  .meta { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 4px; font-size: 12px; }
-  .chip { font-size: 11px; padding: 1px 7px; border-radius: 99px; background: var(--chip); color: var(--muted); }
-  .chip.web { color: var(--web); }
-  .chip.other { color: var(--other); }
-  .chip.edited { color: var(--warn); }
-  .src { color: var(--muted); background: none; border: 0; padding: 0; font-size: 12px; text-decoration: underline;
-         text-underline-offset: 2px; cursor: pointer; }
-  .src:hover { color: var(--ink); }
-  .ink { display: block; margin-top: 6px; max-height: 44px; max-width: 100%; border-radius: 4px;
-         background: #fff; border: 1px solid var(--line); }
-  .edit { width: 100%; font: inherit; padding: 2px 6px; border-radius: 4px; border: 1px solid var(--muted);
-          background: var(--panel); color: var(--ink); }
-  .icon { border: 0; background: none; color: var(--muted); padding: 0 4px; font-size: 18px; line-height: 1; }
-  .icon:hover { color: var(--danger); }
-  .empty { color: var(--muted); padding: 32px 16px; text-align: center; }
-  .spinner { display: inline-block; width: 12px; height: 12px; border: 2px solid currentColor;
-             border-right-color: transparent; border-radius: 50%; animation: spin .8s linear infinite;
-             vertical-align: -1px; margin-right: 6px; }
+  .spinner { display: inline-block; width: 11px; height: 11px; border: 2px solid currentColor;
+             border-right-color: transparent; border-radius: 50%; animation: spin .8s linear infinite; flex: none; }
   @keyframes spin { to { transform: rotate(360deg); } }
-  .page-body { display: grid; grid-template-columns: minmax(0, 1fr) 300px; }
-  .preview { border-left: 1px solid var(--line); padding: 14px; background: var(--bg); }
+
+  /* ---------------------------------------------------------------- sheets */
+  .sheet { position: relative; background: var(--paper); border-radius: 6px; box-shadow: var(--shadow); overflow: hidden; }
+  .sheet + .sheet, .sheet + #pages > .sheet:first-child { margin-top: 16px; }
+  .ruled { background-image:
+      linear-gradient(to right, transparent calc(var(--left) - 1px), var(--margin) calc(var(--left) - 1px),
+                      var(--margin) var(--left), transparent var(--left)),
+      repeating-linear-gradient(to bottom, transparent 0, transparent calc(var(--row) - 1px),
+                                var(--rule) calc(var(--row) - 1px), var(--rule) var(--row)); }
+  .sheet-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 12px; height: calc(var(--row) * 2);
+                padding: 0 24px 12px calc(var(--left) + 20px); }
+  .sheet-head h1 { margin: 0; font-size: 26px; font-weight: 650; letter-spacing: -.015em; line-height: 1; }
+  .sheet-head .date { color: var(--muted); font-size: 14px; }
+
+  /* filters: quiet words on one ruled line */
+  .filters { display: flex; flex-wrap: wrap; align-items: center; gap: 0 18px; min-height: var(--row);
+             padding: 0 24px 0 calc(var(--left) + 20px); font-size: 14px; }
+  .filters .seg { display: flex; gap: 14px; }
+  .filters .seg button { border: 0; background: none; padding: 0; border-radius: 0; color: var(--muted); height: var(--row);
+                         position: relative; }
+  .filters .seg button:hover { color: var(--ink); }
+  .filters .seg button[aria-pressed="true"] { color: var(--ink); font-weight: 600; }
+  .filters .seg button[aria-pressed="true"]::after { content: ""; position: absolute; left: 0; right: 0; bottom: 11px;
+                                                     height: 2px; background: var(--ink); border-radius: 2px; }
+  .filters .sep { color: var(--faint); }
+  .filters select { margin-left: auto; border: 0; background: transparent; color: var(--muted); font-size: 14px; padding: 4px 2px; }
+
+  .section { height: var(--row); display: flex; align-items: flex-end; gap: 10px; padding: 0 24px 11px calc(var(--left) + 20px);
+             font-size: 12px; font-weight: 650; text-transform: uppercase; letter-spacing: .07em; color: var(--muted); }
+  .section small { font-size: 12px; font-weight: 400; letter-spacing: 0; text-transform: none; color: var(--faint); }
+  .empty { color: var(--muted); padding: 0 24px 0 calc(var(--left) + 20px); line-height: var(--row); }
+
+  /* ---------------------------------------------------------------- items: one per ruled line */
+  ul { list-style: none; margin: 0; padding: 0; }
+  .item { display: grid; grid-template-columns: var(--left) minmax(0, 1fr) auto; align-items: center; min-height: var(--row); }
+  .item:hover { background: color-mix(in srgb, var(--hover) 70%, transparent); }
+  .gutter { display: flex; justify-content: center; }
+  .item input[type=checkbox] { appearance: none; -webkit-appearance: none; margin: 0; width: 18px; height: 18px; flex: none;
+      border: 1.5px solid var(--faint); border-radius: 4px; background: transparent no-repeat center / 12px 12px;
+      cursor: pointer; transition: background-color .15s, border-color .15s; }
+  .item input[type=checkbox]:hover { border-color: var(--ink); }
+  .item input[type=checkbox]:checked { background-color: var(--accent); border-color: var(--accent);
+      background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'><path d='M2.2 6.3 4.8 8.8 9.8 3.2' fill='none' stroke='white' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/></svg>"); }
+  .line { display: flex; align-items: baseline; gap: 10px; min-width: 0; padding: 0 12px 0 20px; }
+  .text { font-size: 16px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: text; border-radius: 3px;
+          min-width: 0; text-decoration-thickness: 1.5px; text-decoration-color: var(--faint); }
+  .item.done .text { color: var(--faint); text-decoration-line: line-through; }
+  .edit { flex: 1; min-width: 0; font: inherit; font-size: 16px; padding: 3px 6px; margin-left: -7px; border-radius: 4px;
+          border: 1px solid var(--faint); background: var(--paper); color: var(--ink); }
+  .tag { font-size: 13px; color: var(--muted); white-space: nowrap; }
+  .tag.other { color: var(--other); }
+  .tag.edited { color: var(--warn); }
+  .was { font-size: 12.5px; color: var(--faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+
+  /* where it came from: a quiet note on the right with a mark for the source */
+  .src { display: flex; align-items: center; gap: 4px; padding-right: 16px; font-size: 12.5px; color: var(--muted); white-space: nowrap; }
+  .src .from { display: inline-flex; align-items: center; gap: 6px; border: 0; background: none; color: inherit;
+               padding: 2px 4px; border-radius: 4px; font-size: 12.5px; }
+  .src .from:hover:not(:disabled) { color: var(--ink); background: var(--hover); }
+  .src .from:disabled { opacity: 1; }
+  .mark { width: 16px; height: 16px; border-radius: 4px; display: inline-grid; place-items: center; flex: none;
+          font-size: 9.5px; font-weight: 700; color: #fff; letter-spacing: -.02em; }
+  .mark.rm { background: #3a3a37; }
+  .mark.web { background: var(--accent); color: var(--accent-ink); }
+  .icon { border: 0; background: none; width: 24px; height: 24px; padding: 0; border-radius: 4px; color: var(--faint);
+          font-size: 18px; line-height: 1; opacity: 0; transition: opacity .15s; }
+  .item:hover .icon, .icon:focus-visible { opacity: 1; }
+  .icon:hover:not(:disabled) { color: var(--danger); background: var(--hover); }
+
+  /* the next empty line: type to add */
+  form.write { display: grid; grid-template-columns: var(--left) minmax(0, 1fr); align-items: center; height: var(--row); margin: 0; }
+  form.write .gutter span { width: 18px; height: 18px; border: 1.5px dashed var(--line); border-radius: 4px; }
+  form.write input { font: inherit; font-size: 16px; color: var(--ink); background: transparent; border: 0; outline: none;
+                     height: var(--row); padding: 0 20px; width: 100%; }
+  form.write input::placeholder { color: var(--faint); }
+  form.write input:disabled::placeholder { opacity: .6; }
+
+  .foot { display: flex; flex-direction: column; gap: 2px; padding: 12px 24px 14px calc(var(--left) + 20px);
+          font-size: 12.5px; color: var(--muted); border-top: 1px solid var(--rule); background: var(--paper); }
+
+  /* ---------------------------------------------------------------- Tasks notebook: a sheet per page */
+  .toolbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 0 4px 14px; }
+  .page h2 { display: flex; justify-content: space-between; align-items: baseline; margin: 0; height: var(--row);
+             padding: 14px 24px 0 calc(var(--left) + 20px); font-size: 15px; border-bottom: 1px solid var(--rule); }
+  .page h2 a { color: var(--muted); font-weight: normal; font-size: 12px; }
+  .page-body { display: grid; grid-template-columns: minmax(0, 1fr) 260px; }
+  .page-body .item { border-bottom: 1px solid var(--rule); }
+  .no-tasks { color: var(--muted); padding: 14px 24px 14px calc(var(--left) + 20px); font-size: 14px; }
+  .preview { border-left: 1px solid var(--rule); padding: 16px; background: var(--hover); }
   .preview img { display: block; width: 100%; height: auto; aspect-ratio: 3 / 4; background: #fff;
-                 border-radius: 6px; box-shadow: 0 1px 3px rgba(0,0,0,.18); }
+                 border-radius: 3px; box-shadow: 0 1px 3px rgba(0, 0, 0, .15); }
   .preview .cap { color: var(--muted); font-size: 11px; margin-top: 8px; text-align: center; }
-  .no-tasks { color: var(--muted); padding: 14px 16px; font-size: 14px; }
-  @media (max-width: 760px) {
-    .page-body { grid-template-columns: 1fr; }
-    .preview { border-left: 0; border-top: 1px solid var(--line); }
-    .preview img { max-width: 360px; margin: 0 auto; }
-  }
-  .settings { padding: 4px 16px 16px; }
-  .field { padding: 14px 0; border-top: 1px solid var(--line); }
+  .log { margin: 14px 4px 0; color: var(--faint); font-size: 12px; }
+
+  /* ---------------------------------------------------------------- Settings */
+  .settings { padding: 8px 28px 16px; }
+  .field { padding: 18px 0; border-top: 1px solid var(--rule); }
   .field:first-child { border-top: 0; }
   .field > label, .field > .label { display: block; font-weight: 600; margin-bottom: 4px; }
-  .field .help { color: var(--muted); font-size: 13px; margin-bottom: 8px; }
-  .folders { max-height: 420px; overflow: auto; border: 1px solid var(--line); border-radius: 8px; }
-  .group { border-top: 1px solid var(--line); }
+  .field .help { color: var(--muted); font-size: 13px; margin-bottom: 10px; max-width: 640px; }
+  .folders { max-height: 420px; overflow: auto; border: 1px solid var(--line); border-radius: 6px; }
+  .group { border-top: 1px solid var(--rule); }
   .folders > :first-child { border-top: 0; }
   .node { display: flex; gap: 8px; align-items: center; padding: 5px 10px; font-weight: normal; }
-  .node.watched { background: color-mix(in srgb, var(--accent) 10%, transparent); }
+  .node.watched { background: color-mix(in srgb, var(--accent) 9%, transparent); }
   .node label { display: flex; gap: 10px; align-items: center; flex: 1; min-width: 0; cursor: pointer; }
   .node input[type=checkbox] { width: 16px; height: 16px; accent-color: var(--accent); flex: none; margin: 0; }
   .node .name { overflow-wrap: anywhere; }
@@ -117,67 +177,108 @@
   .fromnow:has(input:disabled) { cursor: default; opacity: .6; }
   .badge { font-size: 11px; padding: 1px 8px; border-radius: 99px; white-space: nowrap; }
   .badge.on { background: var(--accent); color: var(--accent-ink); }
-  .badge.in { background: var(--chip); color: var(--accent); }
+  .badge.in { background: var(--hover); color: var(--accent); }
   .watching { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0 12px; }
   .watching .chip-w { display: inline-flex; align-items: center; gap: 4px; padding: 3px 4px 3px 10px; border-radius: 99px;
-                      background: color-mix(in srgb, var(--accent) 14%, transparent); font-size: 13px; }
+                      background: color-mix(in srgb, var(--accent) 12%, transparent); font-size: 13px; }
   .watching .chip-w button { border: 0; background: none; padding: 0 6px; color: var(--muted); font-size: 15px; }
   .watching .chip-w button:hover { color: var(--danger); }
   .watching .none { color: var(--muted); font-size: 13px; }
   .saved { color: var(--accent); font-size: 13px; }
   .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
   input[type=range] { width: 220px; accent-color: var(--accent); }
-  .log { margin-top: 22px; color: var(--muted); font-size: 12px; }
-  dialog { border: 0; border-radius: 12px; padding: 0; max-width: min(720px, 94vw); width: 100%;
-           background: var(--panel); color: var(--ink); }
+
+  /* ---------------------------------------------------------------- where an item came from */
+  dialog { border: 0; border-radius: 6px; padding: 0; max-width: min(720px, 94vw); width: 100%;
+           background: var(--paper); color: var(--ink); box-shadow: var(--shadow); }
   dialog::backdrop { background: var(--shade); }
-  dialog header { padding: 12px 16px; border-bottom: 1px solid var(--line); align-items: center; }
+  dialog header { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 12px 16px;
+                  border-bottom: 1px solid var(--rule); }
+  dialog header .icon { opacity: 1; }
   dialog img { display: block; width: 100%; height: auto; background: #fff; }
+  dialog .ink-line { padding: 10px 16px; border-bottom: 1px solid var(--rule); background: var(--hover); }
+  dialog .ink-line img { width: auto; max-width: 100%; max-height: 56px; border-radius: 3px; }
+
+  /* ---------------------------------------------------------------- phones */
+  @media (max-width: 640px) {
+    :root { --row: 44px; --left: 44px; }
+    .status { margin-left: 0; width: 100%; }
+    .sheet-head { padding: 0 14px 10px calc(var(--left) + 14px); }
+    .sheet-head h1 { font-size: 22px; }
+    /* items take two lines here, so each draws its own rule instead of the sheet's fixed ones */
+    .ruled { background-image: linear-gradient(to right, transparent calc(var(--left) - 1px), var(--margin) calc(var(--left) - 1px),
+                                 var(--margin) var(--left), transparent var(--left)); }
+    .sheet-head, .filters, .section, .ruled .item, form.write { border-bottom: 1px solid var(--rule); }
+    .filters { padding: 0 14px 0 calc(var(--left) + 14px); gap: 0 14px; }
+    .filters .sep { display: none; }
+    .filters select { margin-left: 0; }
+    .section, .empty { padding-left: calc(var(--left) + 14px); }
+    .item { grid-template-columns: var(--left) minmax(0, 1fr); padding: 8px 0; }
+    .line { padding: 0 14px; flex-wrap: wrap; row-gap: 0; }
+    .text { white-space: normal; }
+    .src { grid-column: 2; padding: 0 10px 0 10px; justify-content: space-between; }
+    .icon { opacity: 1; }
+    form.write input { padding: 0 14px; }
+    .foot { padding: 10px 14px 12px calc(var(--left) + 14px); }
+    .page h2 { padding-left: calc(var(--left) + 14px); padding-right: 14px; }
+    .page-body { grid-template-columns: 1fr; }
+    .preview { border-left: 0; border-top: 1px solid var(--rule); }
+    .preview img { max-width: 320px; margin: 0 auto; }
+    .settings { padding: 4px 16px 12px; }
+  }
+  @media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
 </style>
 </head>
 <body>
 <main>
-  <header>
-    <div>
-      <h1>rmtasks</h1>
-      <div class="sub" id="status">Loading…</div>
+  <div class="top">
+    <span class="brand">rmtasks</span>
+    <nav class="tabs" role="tablist">
+      <button role="tab" data-tab="todo" aria-selected="true">To-do</button>
+      <button role="tab" data-tab="tasks" aria-selected="false">Tasks notebook</button>
+      <button role="tab" data-tab="settings" aria-selected="false">Settings</button>
+    </nav>
+    <div class="status">
+      <span id="status" class="row" style="gap:6px" aria-live="polite">Loading…</span>
+      <button id="poll" class="link" title="Check the Tasks notebook, watched folders and the To-do document now">Check now</button>
     </div>
-    <div class="actions">
-      <button id="poll" title="Check the Tasks notebook, watched folders and the To-do document now">Check tablet now</button>
-      <form method="post" action="/logout" id="logout" hidden class="row">
-        <span class="sub" id="whoami"></span><button type="submit">Sign out</button></form>
-    </div>
-  </header>
-
-  <nav class="tabs" role="tablist">
-    <button role="tab" data-tab="todo" aria-selected="true">To-do</button>
-    <button role="tab" data-tab="tasks" aria-selected="false">Tasks notebook</button>
-    <button role="tab" data-tab="settings" aria-selected="false">Settings</button>
-  </nav>
+  </div>
   <div id="banner" class="banner" hidden></div>
 
-  <!-- To-do: everything, from every source -->
+  <!-- To-do: everything, from every source, one item per ruled line -->
   <section id="tab-todo">
-    <div class="toolbar">
-      <div class="seg" id="f-status">
-        <button data-v="open" aria-pressed="true">Open</button>
-        <button data-v="done" aria-pressed="false">Done</button>
-        <button data-v="" aria-pressed="false">All</button>
+    <div class="sheet">
+      <div class="ruled">
+        <header class="sheet-head">
+          <h1>To-do</h1>
+          <span class="date" id="today"></span>
+        </header>
+        <div class="filters" role="toolbar" aria-label="Filters">
+          <div class="seg" id="f-status">
+            <button data-v="open" aria-pressed="true">Open</button>
+            <button data-v="done" aria-pressed="false">Done</button>
+            <button data-v="" aria-pressed="false">All</button>
+          </div>
+          <span class="sep">·</span>
+          <div class="seg" id="f-owner">
+            <button data-v="" aria-pressed="true">Everyone</button>
+            <button data-v="mine" aria-pressed="false">Mine</button>
+            <button data-v="others" aria-pressed="false">Others</button>
+          </div>
+          <select id="f-folder" aria-label="Source folder"><option value="">All sources</option></select>
+        </div>
+        <div id="todo-list"></div>
+        <form class="write" id="add-todo">
+          <span class="gutter" aria-hidden="true"><span></span></span>
+          <input id="new-todo" placeholder="Add a task…" autocomplete="off" aria-label="New task">
+        </form>
+        <div style="height: var(--row)"></div>
       </div>
-      <div class="seg" id="f-owner">
-        <button data-v="" aria-pressed="true">Everyone</button>
-        <button data-v="mine" aria-pressed="false">Mine</button>
-        <button data-v="others" aria-pressed="false">Others</button>
-      </div>
-      <select id="f-folder" aria-label="Source folder"><option value="">All sources</option></select>
+      <footer class="foot">
+        <span id="todo-hint"></span>
+        <span id="todo-log"></span>
+      </footer>
     </div>
-    <form class="add" id="add-todo">
-      <input id="new-todo" placeholder="Add a task…" autocomplete="off" aria-label="New task">
-      <button type="submit">Add</button>
-    </form>
-    <div class="hint" id="todo-hint"></div>
-    <div class="card"><ul id="todo-list"></ul></div>
-    <div class="log" id="todo-log"></div>
   </section>
 
   <!-- The Tasks notebook, page by page -->
@@ -187,18 +288,20 @@
       <button id="push" class="primary">Push now</button>
       <span class="sub" id="tasks-status"></span>
     </div>
-    <form class="add" id="add">
-      <input id="new" placeholder="Add a task…" autocomplete="off" aria-label="New task">
-      <button type="submit">Add</button>
-    </form>
-    <div class="hint" id="addhint"></div>
+    <div class="sheet" id="add-sheet">
+      <form class="write" id="add">
+        <span class="gutter" aria-hidden="true"><span></span></span>
+        <input id="new" placeholder="Add a task…" autocomplete="off" aria-label="New task">
+      </form>
+      <footer class="foot" id="addhint"></footer>
+    </div>
     <div id="pages"></div>
     <div class="log" id="log"></div>
   </section>
 
   <!-- Settings -->
   <section id="tab-settings" hidden>
-    <div class="card"><div class="settings">
+    <div class="sheet"><div class="settings">
       <div class="field">
         <div class="label">Watched folders</div>
         <div class="help">Handwriting in these folders is read for action items. New lines are sent to
@@ -248,6 +351,7 @@
 
 <dialog id="viewer">
   <header><strong id="viewer-title"></strong><button class="icon" id="viewer-close" aria-label="Close">×</button></header>
+  <div class="ink-line" id="viewer-ink" hidden><img id="viewer-ink-img" alt="The handwritten line"></div>
   <img id="viewer-img" alt="">
 </dialog>
 
@@ -288,7 +392,6 @@ function banner(text, kind = "") {
 async function api(method, path, body) {
   const res = await fetch(path, { method, headers: body ? { "Content-Type": "application/json" } : {},
                                   body: body ? JSON.stringify(body) : undefined });
-  if (res.status === 401) { location.href = "/login"; throw new Error("Signed out"); }
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(data.error || `${res.status} ${res.statusText}`);
   return data;
@@ -305,9 +408,9 @@ function renderStatus(bg) {
   s.replaceChildren();
   const poll = (bg && bg.poll) || {}, push = (bg && bg.push) || {};
   if (push.running) s.append(el("span", { class: "spinner" }), "Writing to the tablet…");
-  else if (push.scheduled) s.append(`Writing to the tablet in ${push.in_s}s…`);
+  else if (push.scheduled) s.append(el("span", { class: "dot busy" }), `Writing to the tablet in ${push.in_s}s…`);
   else if (poll.running) s.append(el("span", { class: "spinner" }), poll.step || "Checking the tablet…");
-  else s.append(`Checked the tablet ${ago(poll.last_run_at)}`);
+  else s.append(el("span", { class: "dot" }), `Checked ${ago(poll.last_run_at)}`);
   const err = poll.last_error || push.last_error;
   if (err && err !== lastError) banner(err, "error");
   lastError = err;
@@ -333,8 +436,6 @@ async function refresh() {
 async function loadTodo() {
   const q = new URLSearchParams(Object.entries(filters).filter(([, v]) => v));
   todo = await api("GET", "/api/todo?" + q);
-  $("logout").hidden = !todo.auth;
-  $("whoami").textContent = todo.user || "";
   settings = settings || todo.settings;
   if (tab === "todo") renderTodo();
   schedule(renderStatus(todo.background));
@@ -343,14 +444,35 @@ async function loadTodo() {
 function sourceLabel(item) {
   const s = item.source;
   if (item.kind === "task") return `${s.name}${s.page ? ` · p${s.page}` : ""}`;
+  if (item.written) return `${s.name} · p${s.page}`;
   return `${(s.folder || "/").replace(/^\//, "") || "Library"} › ${s.name} · p${s.page}`;
 }
 
-function ownerChip(item) {
-  if (item.kind === "task") return el("span", { class: "chip" + (item.source.origin === "web" ? " web" : "") },
-    item.source.origin === "web" ? "added on web" : "Tasks notebook");
-  const text = { me: "mine", someone_else: "someone else", unclear: "owner unclear" }[item.owner] || item.owner;
-  return el("span", { class: "chip" + (item.owner === "someone_else" ? " other" : "") }, text);
+// Where an item came from, as a mark and a label. New sources (Google Tasks…) add a mark here.
+function sourceMark(item) {
+  if (item.kind === "task" && item.source.origin === "web") return { cls: "web", mark: "+", title: "Added here" };
+  return { cls: "rm", mark: "rM", title: "reMarkable" };
+}
+
+// One ruled line: checkbox, text (click to edit), tags, and where it came from.
+function itemRow({ done, text, onToggle, onEdit, tags = [], was, source, onSource, onRemove, removeTitle }) {
+  const li = el("li", { class: "item" + (done ? " done" : "") });
+  const box = el("input", { type: "checkbox", checked: done, "aria-label": `Done: ${text}`,
+    onchange: () => { li.classList.toggle("done", box.checked); act(() => onToggle(box.checked)); } });
+  const t = el("span", { class: "text", tabindex: 0, title: "Click to edit" }, text);
+  t.addEventListener("click", () => startEdit(text, t, onEdit));
+  t.addEventListener("keydown", (e) => { if (e.key === "Enter") startEdit(text, t, onEdit); });
+  const line = el("div", { class: "line" }, t, ...tags);
+  if (was) line.append(el("span", { class: "was", title: "What the paper says" }, "was ", el("s", {}, was)));
+  const src = el("div", { class: "src" });
+  if (source) {
+    src.append(el("button", { class: "from", title: onSource ? `${source.title}: show where this was written` : source.title,
+                              disabled: !onSource, onclick: onSource },
+      el("span", { class: "mark " + source.cls, "aria-hidden": "true" }, source.mark), source.label));
+  }
+  if (onRemove) src.append(el("button", { class: "icon", title: removeTitle, "aria-label": removeTitle, onclick: () => act(onRemove) }, "×"));
+  li.append(el("span", { class: "gutter" }, box), line, src);
+  return li;
 }
 
 function renderTodo() {
@@ -361,52 +483,48 @@ function renderTodo() {
     ...[...folders].sort().map((f) => el("option", { value: f }, f === "/" ? "/ (top level)" : f)));
   sel.value = current;
 
-  const watched = (todo.settings.watch || []).length;
-  $("todo-hint").textContent = (watched ? `Collecting from ${watched} watched location(s).` :
+  const watched = todo.settings.watch || [];
+  $("todo-hint").textContent = (watched.length ? `Collecting from ${watched.join(", ")}.` :
       "No folders watched yet: choose some in Settings.") +
-    " New tasks go to the Tasks notebook." + (todo.settings.todo_enabled ? " The list is also on the tablet as “" + todo.settings.todo_name + "”." : "");
+    " New tasks go to the Tasks notebook." + (todo.settings.todo_enabled ? " Also on the tablet as “" + todo.settings.todo_name + "”." : "");
 
+  const mine = (i) => i.owner === "me";
+  const groups = [
+    ["Mine", todo.items.filter((i) => i.status === "open" && mine(i))],
+    ["Waiting on others", todo.items.filter((i) => i.status === "open" && !mine(i))],
+    ["Done", todo.items.filter((i) => i.status === "done")],
+  ];
   const list = $("todo-list");
   list.replaceChildren();
-  if (!todo.items.length) {
-    list.append(el("li", { class: "empty" }, filters.status === "open" ? "Nothing open." : "Nothing here."));
+  for (const [title, items] of groups) {
+    if (!items.length) continue;
+    list.append(el("div", { class: "section" }, title, el("small", {}, String(items.length))),
+                el("ul", {}, ...items.map(todoRow)));
   }
-  for (const it of todo.items) list.append(todoRow(it));
+  if (!todo.items.length) list.append(el("div", { class: "empty" }, filters.status === "open" ? "Nothing open." : "Nothing here."));
 
-  const log = $("todo-log");
   const sum = todo.background && todo.background.poll && todo.background.poll.last_summary;
   const c = sum && sum.collect;
-  log.textContent = c ? `Last check: ${c.docs_changed} changed document(s), ${c.pages_read} page(s) read, ` +
-    `${c.pages_skipped} unchanged page(s) skipped, ${c.lines_judged} new line(s) judged, ${c.actions_new} new action(s).` : "";
+  $("todo-log").textContent = c ? `Last check: ${c.docs_changed} changed document(s), ${c.pages_read} page(s) read, ` +
+    `${c.pages_skipped} unchanged skipped, ${c.lines_judged} new line(s) judged, ${c.actions_new} new action(s).` : "";
 }
 
 function todoRow(it) {
-  const done = it.status === "done";
-  const li = el("li", { class: "item" + (done ? " done" : "") });
-  const box = el("input", { type: "checkbox", checked: done, "aria-label": "Done",
-    onchange: () => act(async () => { await api("PATCH", `/api/items/${it.kind}/${it.id}`,
-      { status: box.checked ? "done" : "open" }); await loadTodo(); }) });
-  const text = el("div", { class: "text", tabindex: 0, title: "Click to edit" }, it.text);
-  text.addEventListener("click", () => startEdit(it.text, text, (v) => api("PATCH", `/api/items/${it.kind}/${it.id}`, { text: v }).then(loadTodo)));
-  const body = el("div", { class: "body" }, text);
-  if (it.edited && it.paper_text) body.append(el("div", { class: "was" }, it.paper_text));
-  const meta = el("div", { class: "meta" }, ownerChip(it));
-  if (it.edited) meta.append(el("span", { class: "chip edited" }, "edited here"));
-  if (it.kind === "action" || it.source.anchor) {
-    meta.append(el("button", { class: "src", title: "Show where this was written",
-      onclick: () => openSource(it) }, sourceLabel(it)));
-  }
-  body.append(meta);
-  if (it.kind === "action") {
-    body.append(el("img", { class: "ink", loading: "lazy", alt: "The handwritten line",
-      src: `/api/sources/${encodeURIComponent(it.source.doc_id)}/line/${encodeURIComponent(it.source.anchor)}.svg` }));
-  }
-  li.append(box, body);
-  if (it.kind === "action") {
-    li.append(el("button", { class: "icon", title: "Not an action: remove from the list", "aria-label": "Not an action",
-      onclick: () => act(async () => { await api("PATCH", `/api/items/action/${it.id}`, { dismissed: true }); await loadTodo(); }) }, "×"));
-  }
-  return li;
+  const path = `/api/items/${it.kind}/${it.id}`;
+  const tags = [];
+  if (it.owner === "someone_else") tags.push(el("span", { class: "tag other" }, "→ someone else"));
+  if (it.owner === "unclear") tags.push(el("span", { class: "tag" }, "owner unclear"));
+  const hasSource = it.kind === "action" || !!it.source.anchor;
+  return itemRow({
+    done: it.status === "done", text: it.text,
+    onToggle: async (on) => { await api("PATCH", path, { status: on ? "done" : "open" }); await loadTodo(); },
+    onEdit: (v) => api("PATCH", path, { text: v }).then(loadTodo),
+    tags, was: it.edited && it.paper_text ? it.paper_text : null,
+    source: { ...sourceMark(it), label: sourceLabel(it) },
+    onSource: hasSource ? () => openSource(it) : null,
+    onRemove: it.kind === "action" ? async () => { await api("PATCH", path, { dismissed: true }); await loadTodo(); } : null,
+    removeTitle: "Not an action: remove from the list",
+  });
 }
 
 function openSource(it) {
@@ -415,13 +533,17 @@ function openSource(it) {
     ? `/api/sources/${encodeURIComponent(s.doc_id)}/${s.page}/preview.svg?anchor=${encodeURIComponent(s.anchor)}`
     : `/api/pages/${s.page}/preview.svg`;
   $("viewer-title").textContent = sourceLabel(it);
+  $("viewer-ink").hidden = it.kind !== "action";
+  if (it.kind === "action") {
+    $("viewer-ink-img").src = `/api/sources/${encodeURIComponent(s.doc_id)}/line/${encodeURIComponent(s.anchor)}.svg`;
+  }
   $("viewer-img").src = src;
   $("viewer-img").alt = `Page ${s.page} of ${s.name}`;
   $("viewer").showModal();
 }
 
 function startEdit(value, node, save) {
-  const input = el("input", { class: "edit", value, "aria-label": "Task text" });
+  const input = el("input", { class: "edit", type: "text", value, "aria-label": "Task text" });
   node.replaceWith(input);
   input.focus(); input.select();
   let done = false;
@@ -453,11 +575,13 @@ function renderTasks() {
   $("push").title = s.writable ? "Print web changes into the notebook's PDF" : "Only template notebooks can be written to";
   $("pull").disabled = busy;
   $("new").disabled = !nb;
+  $("add-sheet").hidden = !nb;
   $("addhint").textContent = nb ? `New tasks go in the footer of page ${s.current_page}.` +
     (s.writable ? " Changes are written to the tablet automatically." : "") : "";
   const root = $("pages");
   root.replaceChildren();
-  if (!s.pages.length) root.append(el("div", { class: "empty" }, nb ? "No tasks found yet." : "Nothing here yet."));
+  if (!s.pages.length) root.append(el("div", { class: "sheet" }, el("div", { class: "empty" },
+    nb ? "No tasks found yet." : `${s.notebook_name} hasn't been pulled from the tablet yet.`)));
   const version = nb ? encodeURIComponent([nb.last_pull_at, nb.web_changed_at, nb.last_push_at].join("|")) : "";
   for (const page of s.pages) {
     const head = el("h2", {}, el("span", {}, `Page ${page.index}` + (page.date ? ` · ${page.date}` : "")),
@@ -469,7 +593,7 @@ function renderTasks() {
       el("a", { href: src, target: "_blank", title: "Open full size" },
         el("img", { src, alt: `Page ${page.index} as the tablet shows it`, loading: "lazy" })),
       el("div", { class: "cap" }, s.pending_push ? "After the next write" : "As on the tablet"));
-    root.append(el("section", { class: "card" }, head,
+    root.append(el("section", { class: "sheet page" }, head,
       el("div", { class: "page-body" }, page.tasks.length ? list : el("div", { class: "no-tasks" }, "No tasks on this page."), preview)));
   }
   const log = $("log");
@@ -483,21 +607,18 @@ function renderTasks() {
 }
 
 function taskRow(t) {
-  const done = t.status === "done";
-  const li = el("li", { class: "item" + (done ? " done" : "") });
-  const box = el("input", { type: "checkbox", checked: done, "aria-label": "Done",
-    onchange: () => act(async () => { tasks = (await api("PATCH", `/api/tasks/${t.id}`, { status: box.checked ? "done" : "open" })).state; renderTasks(); }) });
-  const text = el("div", { class: "text", tabindex: 0, title: "Click to edit" }, t.text);
-  text.addEventListener("click", () => startEdit(t.text, text, async (v) => { tasks = (await api("PATCH", `/api/tasks/${t.id}`, { text: v })).state; renderTasks(); }));
-  const meta = el("div", { class: "meta" }, el("span", { class: "chip " + t.origin }, t.origin === "web" ? "from web" : "handwritten"));
-  if (t.edited) meta.append(el("span", { class: "chip edited" }, "edited on web · new text in the footer"));
-  const body = el("div", { class: "body" }, text);
-  if (t.edited) body.append(el("div", { class: "was" }, t.paper_text));
-  body.append(meta);
-  li.append(box, body);
-  if (t.origin === "web") li.append(el("button", { class: "icon", title: "Delete", "aria-label": "Delete",
-    onclick: () => act(async () => { tasks = (await api("DELETE", `/api/tasks/${t.id}`)).state; renderTasks(); }) }, "×"));
-  return li;
+  const patch = async (body) => { tasks = (await api("PATCH", `/api/tasks/${t.id}`, body)).state; renderTasks(); };
+  const tags = t.edited ? [el("span", { class: "tag edited" }, "new text goes in the footer")] : [];
+  return itemRow({
+    done: t.status === "done", text: t.text,
+    onToggle: (on) => patch({ status: on ? "done" : "open" }),
+    onEdit: (v) => patch({ text: v }),
+    tags, was: t.edited ? t.paper_text : null,
+    source: t.origin === "web" ? { cls: "web", mark: "+", title: "Added here", label: "added here" }
+                               : { cls: "rm", mark: "rM", title: "reMarkable", label: "handwritten" },
+    onRemove: t.origin === "web" ? async () => { tasks = (await api("DELETE", `/api/tasks/${t.id}`)).state; renderTasks(); } : null,
+    removeTitle: "Delete",
+  });
 }
 
 async function syncAction(kind) {
@@ -707,6 +828,7 @@ async function addTask(input) {
   await act(async () => { await api("POST", "/api/tasks", { text }); input.value = ""; await refresh(); });
 }
 $("add").addEventListener("submit", (e) => { e.preventDefault(); addTask($("new")); });
+$("today").textContent = new Date().toLocaleDateString(undefined, { weekday: "long", day: "numeric", month: "long" });
 $("add-todo").addEventListener("submit", (e) => { e.preventDefault(); addTask($("new-todo")); });
 
 refresh();
