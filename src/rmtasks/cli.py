@@ -323,7 +323,7 @@ def cmd_serve(cfg: Config, args: argparse.Namespace) -> int:
     methods = [m for m, on in (("Google", auth_cfg.google), ("password", bool(auth_cfg.password))) if on]
     console.print(f"rmtasks for [bold]{cfg.notebook.name}[/bold] at http://{host}:{port}  (store: {cfg.server.db})"
                   + (f"  · sign-in: {' + '.join(methods)}" if methods else ""))
-    app = create_app(cfg)
+    app = create_app(cfg, background=not args.no_background)
     if args.dev:
         app.run(host=host, port=port, debug=False, threaded=True)
     else:
@@ -376,6 +376,8 @@ def build_parser() -> argparse.ArgumentParser:
     sv.add_argument("--host", help="default: server.host")
     sv.add_argument("--port", type=int, help="default: $PORT, else server.port")
     sv.add_argument("--dev", action="store_true", help="use Flask's development server")
+    sv.add_argument("--no-background", action="store_true",
+                    help="don't check or write to the tablet in the background (debugging)")
     sv.set_defaults(func=cmd_serve)
     df = sub.add_parser("diff", help="compare checkbox stroke IDs between two runs")
     df.add_argument("run_a")

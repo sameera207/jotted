@@ -18,6 +18,7 @@
     }
   }
   * { box-sizing: border-box; }
+  [hidden] { display: none !important; }  /* the hidden attribute must win over display: flex on .row etc. */
   body { margin: 0; background: var(--bg); color: var(--ink);
          font: 15px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; }
   main { max-width: 1080px; margin: 0 auto; padding: 24px 16px 64px; }
@@ -95,19 +96,30 @@
   .field > label, .field > .label { display: block; font-weight: 600; margin-bottom: 4px; }
   .field .help { color: var(--muted); font-size: 13px; margin-bottom: 8px; }
   .folders { max-height: 420px; overflow: auto; border: 1px solid var(--line); border-radius: 8px; }
-  .folders details { border-top: 1px solid var(--line); }
+  .group { border-top: 1px solid var(--line); }
   .folders > :first-child { border-top: 0; }
-  .folders summary { list-style: none; cursor: pointer; }
-  .folders summary::-webkit-details-marker { display: none; }
-  .folders .node { display: flex; gap: 10px; align-items: center; padding: 6px 10px; font-weight: normal; }
-  .folders .node .twist { width: 12px; color: var(--muted); font-size: 11px; flex: none; }
-  .folders details[open] > summary .twist { transform: rotate(90deg); }
-  .folders .doc { padding-left: 34px; }
-  .folders .node .name { overflow-wrap: anywhere; }
-  .folders .node.folder .name { font-weight: 600; }
-  .folders .count, .folders .note { margin-left: auto; color: var(--muted); font-size: 12px; white-space: nowrap; }
-  .folders input:disabled + .name { color: var(--muted); }
-  .picked { color: var(--muted); font-size: 13px; margin-top: 8px; }
+  .node { display: flex; gap: 8px; align-items: center; padding: 5px 10px; font-weight: normal; }
+  .node.watched { background: color-mix(in srgb, var(--accent) 10%, transparent); }
+  .node label { display: flex; gap: 10px; align-items: center; flex: 1; min-width: 0; cursor: pointer; }
+  .node input[type=checkbox] { width: 16px; height: 16px; accent-color: var(--accent); flex: none; margin: 0; }
+  .node .name { overflow-wrap: anywhere; }
+  .node.folder .name { font-weight: 600; }
+  .node input:disabled + .name { color: var(--muted); }
+  .twist { width: 22px; height: 22px; padding: 0; border: 0; background: none; color: var(--muted); font-size: 11px;
+           flex: none; border-radius: 4px; }
+  .twist[aria-expanded="true"] { transform: rotate(90deg); }
+  .twist:disabled { visibility: hidden; }
+  .count, .note { color: var(--muted); font-size: 12px; white-space: nowrap; }
+  .badge { font-size: 11px; padding: 1px 8px; border-radius: 99px; white-space: nowrap; }
+  .badge.on { background: var(--accent); color: var(--accent-ink); }
+  .badge.in { background: var(--chip); color: var(--accent); }
+  .watching { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0 12px; }
+  .watching .chip-w { display: inline-flex; align-items: center; gap: 4px; padding: 3px 4px 3px 10px; border-radius: 99px;
+                      background: color-mix(in srgb, var(--accent) 14%, transparent); font-size: 13px; }
+  .watching .chip-w button { border: 0; background: none; padding: 0 6px; color: var(--muted); font-size: 15px; }
+  .watching .chip-w button:hover { color: var(--danger); }
+  .watching .none { color: var(--muted); font-size: 13px; }
+  .saved { color: var(--accent); font-size: 13px; }
   .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
   input[type=range] { width: 220px; accent-color: var(--accent); }
   .log { margin-top: 22px; color: var(--muted); font-size: 12px; }
@@ -187,14 +199,14 @@
         <div class="help">Handwriting in these folders is read for action items. New lines are sent to
           Anthropic (as images) and TypeSafe (as text); nothing else leaves this machine.
           Your Tasks notebook and the To-do document are always handled separately.</div>
+        <div class="watching" id="watching" aria-live="polite"></div>
         <div class="row" style="margin-bottom:8px">
-          <button id="load-library">Load folders and documents from the tablet</button>
           <input type="text" id="library-filter" placeholder="Filter by name…" aria-label="Filter folders and documents"
-                 style="max-width:220px" hidden>
+                 style="max-width:240px">
+          <button id="load-library" title="Read the folder list from the tablet again">Refresh list</button>
           <span class="sub" id="library-status"></span>
         </div>
-        <div class="folders" id="folders"><div class="empty">Load your library to choose.</div></div>
-        <div class="picked" id="picked"></div>
+        <div class="folders" id="folders"><div class="empty">Loading your library…</div></div>
       </div>
       <div class="field">
         <label for="threshold">How sure Jev must be that a line is an action</label>
@@ -221,10 +233,8 @@
           <select id="todo-folder" aria-label="Folder"><option value="/">/ (top level)</option></select>
         </div>
       </div>
-      <div class="field row">
-        <button class="primary" id="save-settings">Save settings</button>
-        <span class="sub" id="settings-status"></span>
-      </div>
+      <div class="field row"><span class="sub">Changes save as you make them.</span>
+        <span class="saved" id="settings-status" aria-live="polite"></span></div>
     </div></div>
   </section>
 </main>
@@ -504,7 +514,10 @@ async function loadSettings() {
   $("todo-enabled").checked = settings.todo_enabled;
   $("todo-others").checked = settings.tablet_include_others;
   $("todo-name").value = settings.todo_name;
+  const sel = $("todo-folder");
+  if (!library) { sel.replaceChildren(el("option", { value: settings.todo_folder }, settings.todo_folder)); sel.value = settings.todo_folder; }
   renderFolders();
+  if (!library) loadLibrary();
 }
 
 // Watch entries are paths: a folder (watched with everything under it) or a single document.
@@ -512,98 +525,128 @@ function covers(entry, path) {
   return path === entry || path.startsWith(entry.replace(/\/$/, "") + "/");
 }
 
-function pickedWatch() {
-  // Entries hidden by the name filter are kept as they were; visible ones follow their checkbox.
-  const inputs = [...$("folders").querySelectorAll("input[type=checkbox][data-path]")];
-  const visible = new Set(inputs.map((x) => x.dataset.path));
-  const hidden = (settings.watch || []).filter((w) => !visible.has(w));
-  const shown = inputs.filter((x) => x.checked && !x.disabled).map((x) => x.dataset.path);
-  return [...new Set([...hidden, ...shown])].sort();
+const expanded = new Set();  // folders opened in the tree; survives re-renders
+let saveTimer = null;
+
+// Every change saves straight away (debounced for the slider), so nothing is lost by switching tabs.
+function saveSoon(delay = 0) {
+  clearTimeout(saveTimer);
+  $("settings-status").textContent = "Saving…";
+  saveTimer = setTimeout(() => act(async () => {
+    settings = await api("PUT", "/api/settings", {
+      watch: settings.watch || [], action_threshold: Number($("threshold").value),
+      poll_interval_s: Number($("poll-interval").value), todo_enabled: $("todo-enabled").checked,
+      tablet_include_others: $("todo-others").checked, todo_name: $("todo-name").value.trim() || "To-do",
+      todo_folder: $("todo-folder").value || settings.todo_folder || "/",
+    });
+    $("settings-status").textContent = "Saved ✓ The tablet is being checked now.";
+    renderFolders();
+  }), delay);
 }
 
-function renderPicked(watch) {
-  $("picked").textContent = watch.length ? "Watching: " + watch.join(", ") : "Nothing watched.";
+function setWatched(path, on) {
+  let watch = (settings.watch || []).filter((w) => w !== path);
+  if (on) watch = watch.filter((w) => !covers(path, w)).concat(path);  // a folder replaces entries inside it
+  settings = { ...settings, watch: watch.sort() };
+  renderFolders();
+  saveSoon();
+}
+
+function libraryInfo(path) {
+  if (!library) return "";
+  const f = library.folders.find((x) => x.path === path);
+  if (f) return `${f.documents} document(s)`;
+  return library.documents.some((d) => d.path === path) ? "document" : "not found in the library";
+}
+
+function renderWatching() {
+  const box = $("watching");
+  const watch = settings.watch || [];
+  box.replaceChildren(...(watch.length ? watch.map((w) => el("span", { class: "chip-w" },
+      el("span", {}, "Watching ", el("strong", {}, w), libraryInfo(w) ? ` · ${libraryInfo(w)}` : ""),
+      el("button", { type: "button", title: `Stop watching ${w}`, "aria-label": `Stop watching ${w}`,
+                     onclick: () => setWatched(w, false) }, "×")))
+    : [el("span", { class: "none" }, "Nothing is watched yet. Tick folders or documents below.")]));
 }
 
 function renderFolders() {
+  renderWatching();
   const box = $("folders");
+  if (!library) return;
   const watch = settings.watch || [];
-  renderPicked(watch);
-  if (!library) {
-    box.replaceChildren(...(watch.length ? watch.map((w) => el("label", { class: "node" },
-      el("input", { type: "checkbox", checked: true, "data-path": w }), el("span", { class: "name" }, w)))
-      : [el("div", { class: "empty" }, "Load your library to choose.")]));
-    return;
-  }
   const filter = $("library-filter").value.trim().toLowerCase();
   const docsIn = {};
   for (const d of library.documents) (docsIn[d.folder] = docsIn[d.folder] || []).push(d);
-  const known = new Set([...library.folders.map((f) => f.path), ...library.documents.map((d) => d.path)]);
   const coveredBy = (path) => watch.find((w) => w !== path && covers(w, path));
-
-  const docRow = (d) => {
-    const parent = coveredBy(d.path);
-    const input = el("input", { type: "checkbox", "data-path": d.path, checked: !!parent || watch.includes(d.path),
-                                disabled: d.own || !!parent });
-    return el("label", { class: "node doc" }, input, el("span", { class: "name" }, d.path.split("/").pop()),
-      d.own ? el("span", { class: "note" }, "handled separately") : parent ? el("span", { class: "note" }, `in ${parent}`) : null);
-  };
   const matches = (path) => !filter || path.toLowerCase().includes(filter);
+
+  const row = ({ path, name, folder, depth, own, count, docs }) => {
+    const parent = coveredBy(path), on = watch.includes(path);
+    const box = el("input", { type: "checkbox", checked: on || !!parent, disabled: own || !!parent,
+      onchange: (e) => setWatched(path, e.target.checked) });
+    const open = expanded.has(path) || (!!filter && docs && docs.length > 0);
+    const twist = el("button", { type: "button", class: "twist", "aria-expanded": open ? "true" : "false",
+      "aria-label": `Show documents in ${name}`, disabled: !(docs && docs.length),
+      onclick: () => { expanded.has(path) ? expanded.delete(path) : expanded.add(path); renderFolders(); } }, "▶");
+    const badge = own ? el("span", { class: "note" }, "handled separately")
+      : on ? el("span", { class: "badge on" }, "Watching")
+      : parent ? el("span", { class: "badge in" }, "included") : null;
+    const node = el("div", { class: "node" + (folder ? " folder" : "") + (on ? " watched" : ""),
+                             style: `padding-left:${10 + depth * 18}px` },
+      folder ? twist : el("span", { style: "width:22px;flex:none" }),
+      el("label", {}, box, el("span", { class: "name" }, name)),
+      badge, count ? el("span", { class: "count" }, count) : null);
+    if (!folder) return node;
+    const group = el("div", { class: "group" }, node);
+    if (open) for (const d of docs) group.append(row({ path: d.path, name: d.path.split("/").pop(), folder: false,
+                                                        depth: depth + 1, own: d.own }));
+    return group;
+  };
 
   const nodes = [];
   const top = (docsIn["/"] || []).filter((d) => matches(d.path));
   if (top.length) {
-    nodes.push(el("details", { open: !!filter },
-      el("summary", {}, el("div", { class: "node folder" }, el("span", { class: "twist" }, "▶"),
-        el("span", { class: "name" }, "Top level"), el("span", { class: "count" }, `${(docsIn["/"] || []).length} document(s)`))),
-      ...top.map(docRow)));
+    const open = expanded.has("/") || !!filter;
+    const twist = el("button", { type: "button", class: "twist", "aria-expanded": open ? "true" : "false",
+      "aria-label": "Show top-level documents", onclick: () => { expanded.has("/") ? expanded.delete("/") : expanded.add("/"); renderFolders(); } }, "▶");
+    const group = el("div", { class: "group" }, el("div", { class: "node folder" }, twist,
+      el("span", { class: "name", style: "flex:1" }, "Top level (documents not in a folder)"),
+      el("span", { class: "count" }, `${(docsIn["/"] || []).length} document(s)`)));
+    if (open) for (const d of top) group.append(row({ path: d.path, name: d.path.split("/").pop(), folder: false, depth: 1, own: d.own }));
+    nodes.push(group);
   }
   for (const f of library.folders) {
     const docs = (docsIn[f.path] || []).filter((d) => matches(d.path));
     if (filter && !matches(f.path) && !docs.length) continue;
-    const parent = coveredBy(f.path);
-    const depth = f.path.split("/").length - 2;
-    const input = el("input", { type: "checkbox", "data-path": f.path, checked: !!parent || watch.includes(f.path),
-                                disabled: !!parent, onclick: (e) => e.stopPropagation() });
-    input.addEventListener("change", () => { settings = { ...settings, watch: pickedWatch() }; renderFolders(); });
-    nodes.push(el("details", { open: !!filter && docs.length > 0 },
-      el("summary", {}, el("div", { class: "node folder", style: `padding-left:${10 + depth * 18}px` },
-        el("span", { class: "twist" }, (docsIn[f.path] || []).length ? "▶" : ""), input,
-        el("span", { class: "name" }, f.path.split("/").pop()),
-        el("span", { class: "count" }, parent ? `in ${parent}` : `${f.documents} document(s)`))),
-      ...docs.map(docRow)));
-  }
-  for (const w of watch.filter((w) => !known.has(w))) {  // watched but no longer in the library: keep visible
-    nodes.push(el("label", { class: "node" }, el("input", { type: "checkbox", checked: true, "data-path": w }),
-      el("span", { class: "name" }, w), el("span", { class: "note" }, "not found in the library")));
+    nodes.push(row({ path: f.path, name: f.path.split("/").pop(), folder: true, depth: f.path.split("/").length - 2,
+                     count: `${f.documents} doc(s)`, docs }));
   }
   box.replaceChildren(...(nodes.length ? nodes : [el("div", { class: "empty" }, "Nothing matches.")]));
-  box.querySelectorAll(".doc input").forEach((x) => x.addEventListener("change", () => renderPicked(pickedWatch())));
 
   const sel = $("todo-folder");
+  const current = settings.todo_folder || "/";
   sel.replaceChildren(el("option", { value: "/" }, "/ (top level)"), ...library.folders.map((f) => el("option", { value: f.path }, f.path)));
-  sel.value = settings.todo_folder || "/";
+  sel.value = current;
 }
 
-$("load-library").addEventListener("click", () => act(async () => {
-  $("library-status").textContent = "Listing your library…";
-  library = await api("GET", "/api/library");
-  $("library-status").textContent = `${library.folders.length} folder(s), ${library.documents.length} document(s)`;
-  $("library-filter").hidden = false;
+async function loadLibrary() {
+  $("library-status").textContent = "Reading your library…";
+  try {
+    library = await api("GET", "/api/library");
+    $("library-status").textContent = `${library.folders.length} folder(s), ${library.documents.length} document(s)`;
+  } catch (e) {
+    $("library-status").textContent = "";
+    $("folders").replaceChildren(el("div", { class: "empty" }, `Couldn't read the library: ${e.message}`));
+    return;
+  }
   renderFolders();
-}));
-$("library-filter").addEventListener("input", () => { settings = { ...settings, watch: pickedWatch() }; renderFolders(); });
-$("threshold").addEventListener("input", () => { $("threshold-v").textContent = Math.round($("threshold").value * 100) + "%"; });
-$("save-settings").addEventListener("click", () => act(async () => {
-  const watch = pickedWatch();
-  settings = await api("PUT", "/api/settings", {
-    watch, action_threshold: Number($("threshold").value), poll_interval_s: Number($("poll-interval").value),
-    todo_enabled: $("todo-enabled").checked, tablet_include_others: $("todo-others").checked,
-    todo_name: $("todo-name").value.trim(), todo_folder: library ? $("todo-folder").value : settings.todo_folder,
-  });
-  $("settings-status").textContent = "Saved. Checking the tablet now…";
-  renderFolders();
-}));
+}
+
+$("load-library").addEventListener("click", () => loadLibrary());
+$("library-filter").addEventListener("input", () => renderFolders());
+$("threshold").addEventListener("input", () => { $("threshold-v").textContent = Math.round($("threshold").value * 100) + "%"; saveSoon(600); });
+for (const id of ["poll-interval", "todo-enabled", "todo-others", "todo-folder"]) $(id).addEventListener("change", () => saveSoon());
+$("todo-name").addEventListener("change", () => saveSoon());
 
 // ------------------------------------------------------------ wiring
 
