@@ -25,27 +25,28 @@ tall_stroke_factor   = 3.0  # taller strokes are placed after the first pass
 merge_containment    = 0.6  # merge a line into another whose box holds this share of it (drawings); 0 = off
 same_row_overlap     = 0.35 # join side-by-side pieces overlapping vertically by this share (a tall letter); 0 = off
 
-# Handwriting to text: one request per page to the provider below, cached by stroke IDs.
-# Line images are sent to that provider.
-[recognition]
-enabled     = true
-provider    = "anthropic"           # the model provider that reads the lines
+# The language model (LLM): it reads handwriting (images of new lines are sent to it) and,
+# unless the Jev plugin is on, judges which lines are actions and whose (their text is sent
+# to it). One request per page and question, cached by stroke IDs.
+[llm]
+provider    = "anthropic"           # the adapter: anthropic (Claude)
 model       = "claude-opus-5"
 api_key_env = "ANTHROPIC_API_KEY"   # name of the variable holding the key, never the key
 effort      = "low"                 # anthropic only
 timeout_s   = 120
 
-# Judging lines (wrapped lines, actions and owners): one request
-# per page to the provider below, cached. Transcribed text is sent to that provider.
-[classification]
-enabled          = true
-provider         = "typesafe"     # the judge: Jev, from TypeSafe
-model            = "jev-latest"
-api_key_env      = "TYPESAFE_API_KEY"
+# Judging lines, whichever model judges them.
+[judging]
 continuation_spacing   = 0.75  # a line this close under another (share of the page's usual line spacing) may continue it
-continuation_threshold = 0.25  # ... and is merged unless Jev's P(continues) is below this; geometry leads, Jev vetoes
-context_lines    = 2      # neighbouring lines given to Jev on each side
-timeout_s        = 30
+continuation_threshold = 0.25  # ... and is merged unless the judge's P(continues) is below this; geometry leads, the judge vetoes
+context_lines          = 2     # neighbouring lines given to Jev on each side
+
+# The Jev plugin (TypeSafe): optional. While its key is set (in Settings, or exported),
+# Jev judges which lines are actions and whose, instead of the LLM.
+[jev]
+model       = "jev-latest"
+api_key_env = "TYPESAFE_API_KEY"
+timeout_s   = 30
 
 # Printed documents (the To-do document): how the tablet maps a PDF page to ink.
 [template]

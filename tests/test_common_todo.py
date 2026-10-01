@@ -712,3 +712,27 @@ def test_two_todo_documents_with_the_same_name_stop_with_advice(monkeypatch):
         doc.find()
     monkeypatch.setattr(cloud, "find_documents", lambda cfg, name, folder: docs[:1])
     assert doc.find().id == "a"
+
+
+def test_two_apps_starting_at_once_migrate_once(tmp_path):
+    import sqlite3
+    import threading
+
+    path = tmp_path / "old.sqlite"
+    with sqlite3.connect(path) as db:
+        db.executescript(OLD_TASKS_SCHEMA)
+    errors = []
+
+    def start():
+        try:
+            SqliteRepository(path)
+        except Exception as e:  # noqa: BLE001
+            errors.append(e)
+
+    threads = [threading.Thread(target=start) for _ in range(4)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert not errors
+    assert len(SqliteRepository(path).items()) == 2

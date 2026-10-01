@@ -19,12 +19,13 @@ ROOT = Path(__file__).parent.parent
 
 @pytest.fixture
 def cfg(tmp_path, monkeypatch):
-    # AI steps off: tests never call external APIs (they are stubbed where exercised).
-    text = config.EXAMPLE.read_text().replace("enabled     = true", "enabled     = false")
-    text = text.replace("enabled          = true", "enabled          = false")
+    # Tests never call external APIs (they are stubbed where exercised), and no key from the
+    # shell turns the Jev plugin on behind their back.
     path = tmp_path / "config.toml"
-    path.write_text(text)
+    path.write_text(config.EXAMPLE.read_text())
     monkeypatch.setenv(config.ENV_VAR, str(path))
+    for name in ("ANTHROPIC_API_KEY", "TYPESAFE_API_KEY"):
+        monkeypatch.delenv(name, raising=False)
     return config.load()
 
 
@@ -49,14 +50,27 @@ def test_old_config_files_still_load(tmp_path):
     assert config.load(p).template.scale == 1.05
 
 
+def test_old_ai_sections_move_to_llm_judging_and_jev(tmp_path):
+    p = tmp_path / "c.toml"
+    p.write_text('[recognition]\nenabled = true\nmodel = "claude-x"\neffort = "high"\n'
+                 '[classification]\nenabled = true\nprovider = "typesafe"\nmodel = "jev-9"\n'
+                 'api_key_env = "MY_JEV"\ncontinuation_threshold = 0.4\ncontext_lines = 3\n'
+                 '[llm]\neffort = "medium"\n')
+    cfg = config.load(p)
+    assert (cfg.llm.model, cfg.llm.effort) == ("claude-x", "medium")  # the new section wins
+    assert (cfg.jev.model, cfg.jev.api_key_env) == ("jev-9", "MY_JEV")
+    assert (cfg.judging.continuation_threshold, cfg.judging.context_lines) == (0.4, 3)
+
+
 @pytest.mark.parametrize(
     "extra, message",
     [
         ("[nope]\n", "unknown section"),
         ("[lines]\nband_tolrance = 1\n", "unknown key"),
         ("[template]\nscale = 3\n", "template.scale"),
-        ('[recognition]\nprovider = "nope"\n', "recognition.provider"),
-        ('[classification]\nprovider = "nope"\n', "classification.provider"),
+        ('[llm]\nprovider = "nope"\n', "llm.provider"),
+        ('[recognition]\nprovider = "nope"\n', "llm.provider"),  # the old name for [llm]
+        ("[classification]\nbogus = 1\n", "unknown key"),
     ],
 )
 def test_config_rejects_bad_values(tmp_path, extra, message):
@@ -149,9 +163,9 @@ def test_cloud_flow_with_fake_rmapi(tmp_path, cfg, monkeypatch):
 
 # ---------------------------------------------------------------- recognition and classification (stubbed)
 
-from jotted import classify as classify_mod, recognise  # noqa: E402
+from jotted import classify as classify_mod, llm, recognise  # noqa: E402
 from jotted.aicache import AICache  # noqa: E402
-from jotted.recognise import Transcript  # noqa: E402
+from jotted.llm import Document, Transcript  # noqa: E402
 
 
 def test_render_line_is_png(cfg):
@@ -174,27 +188,63 @@ class _FakeAnthropic:
 
     def create(self, **kw):
         _FakeAnthropic.calls += 1
-        ns = [int(b["text"].split()[1].rstrip(":")) for b in kw["messages"][0]["content"]
-              if b["type"] == "text" and b["text"].startswith("Line ")]
-        body = json.dumps({"lines": [{"n": n, "drawing": False, "checkbox": "empty", "text": f"line {n}"} for n in ns]})
+        _FakeAnthropic.last = kw
+        content = kw["messages"][0]["content"]
+        if "judge" in kw["system"].split("\n")[0]:  # judging: lines containing "TODO" are actions
+            q = json.loads(content[0]["text"])
+            if "pairs" in q:
+                body = json.dumps({"pairs": [dict(above=p["above"], below=p["below"], continues=True) for p in q["pairs"]]})
+            else:
+                body = json.dumps({"lines": [{"i": i, "action": "TODO" in q["lines"][i]["text"], "owner": "me"}
+                                             for i in q["judge"]]})
+        else:
+            ns = [int(b["text"].split()[1].rstrip(":")) for b in content
+                  if b["type"] == "text" and b["text"].startswith("Line ")]
+            body = json.dumps({"lines": [{"n": n, "drawing": False, "checkbox": "empty", "text": f"line {n}"}
+                                         for n in ns]})
         from types import SimpleNamespace as NS
         return NS(stop_reason="end_turn", content=[NS(type="text", text=body)],
                   usage=NS(input_tokens=1, output_tokens=1), _request_id="req_test")
 
 
 def test_transcribe_sends_only_uncached_lines(tmp_path, cfg, monkeypatch):
-    from jotted.adapters import anthropic_reader
+    from jotted.adapters import anthropic_llm
 
-    monkeypatch.setattr(anthropic_reader.anthropic, "Anthropic", _FakeAnthropic)
-    monkeypatch.setenv(cfg.recognition.api_key_env, "test-key")
+    monkeypatch.setattr(anthropic_llm.anthropic, "Anthropic", _FakeAnthropic)
+    monkeypatch.setenv(cfg.llm.api_key_env, "test-key")
     _FakeAnthropic.calls = 0
     lines_, _ = cluster(to_strokes(synth.demo_page()[0]), cfg.lines)
     cache = AICache(tmp_path / "ai")
-    got = recognise.transcribe(lines_, cfg.recognition, cache)
+    got = recognise.transcribe(lines_, cfg.llm, cache)
     assert _FakeAnthropic.calls == 1 and len(got) == len(lines_)
     assert got[lines_[0].n].text == f"line {lines_[0].n}" and got[lines_[0].n].checkbox == "empty"
-    again = recognise.transcribe(lines_, cfg.recognition, cache)
+    again = recognise.transcribe(lines_, cfg.llm, cache)
     assert _FakeAnthropic.calls == 1 and all(t.cached for t in again.values())
+
+
+def test_claude_judges_actions_and_wrapped_lines_when_jev_is_off(tmp_path, cfg, monkeypatch):
+    from jotted.adapters import anthropic_llm
+    from jotted.adapters.action_judge import ModelActionJudge
+    from jotted.core.model import DocInfo, PageInfo, SourceLine
+
+    monkeypatch.setattr(anthropic_llm.anthropic, "Anthropic", _FakeAnthropic)
+    monkeypatch.setenv(cfg.llm.api_key_env, "test-key")
+    assert isinstance(classify_mod.judge_for(cfg), anthropic_llm.AnthropicLLM)
+    assert classify_mod.judge_model(cfg) == cfg.llm.model
+
+    doc, page = DocInfo("remarkable", "d", "Weekly", "/Meetings", "m"), PageInfo("d", "p", 1, "h")
+    lines_ = [SourceLine(anchor=f"1:{i}", key=f"k{i}", text=t, bbox=(0, 0, 1, 1))
+              for i, t in enumerate(["Agenda", "TODO book the room"])]
+    _FakeAnthropic.calls = 0
+    got = ModelActionJudge(cfg, AICache(tmp_path / "ai")).judge(doc, page, lines_, lines_)
+    assert (got["1:0"].p_action, got["1:1"].p_action, got["1:1"].owner) == (0.0, 1.0, "me")
+    assert _FakeAnthropic.calls == 1 and _FakeAnthropic.last["model"] == cfg.llm.model
+    assert json.loads(_FakeAnthropic.last["messages"][0]["content"][0]["text"])["document"]["name"] == "Weekly"
+
+    page_ = [(0, "+ email the landlord about"), (40, "the broken heater"), (140, "buy milk")]
+    lines2 = [Line(to_strokes([[(20, y), (300, y + 20)]]), n=i + 1) for i, (y, _) in enumerate(page_)]
+    ts = {i + 1: Transcript(i + 1, "none", text) for i, (_, text) in enumerate(page_)}
+    assert classify_mod.continuations(lines2, ts, cfg, AICache(tmp_path / "ai")) == [(1, 2)]
 
 
 class _FakeReader:
@@ -213,36 +263,35 @@ class _FakeReader:
 def test_any_reader_plugs_in_and_its_answers_are_cached(tmp_path, cfg):
     lines_, _ = cluster(to_strokes(synth.demo_page()[0]), cfg.lines)
     reader, cache = _FakeReader(), AICache(tmp_path / "ai")
-    got = recognise.transcribe(lines_, cfg.recognition, cache, reader=reader)
+    got = recognise.transcribe(lines_, cfg.llm, cache, reader=reader)
     assert reader.seen == [[ln.n for ln in lines_]]
     assert 2 not in got and got[1].text == "text 1"  # a skipped line is left out, text is trimmed
-    recognise.transcribe(lines_, cfg.recognition, cache, reader=reader)
+    recognise.transcribe(lines_, cfg.llm, cache, reader=reader)
     assert reader.seen[1] == [2]  # only the line without an answer is asked again
 
 
 def test_a_cached_page_needs_no_reader_or_key(tmp_path, cfg, monkeypatch):
     lines_, _ = cluster(to_strokes(synth.demo_page()[0]), cfg.lines)
     cache = AICache(tmp_path / "ai")
-    recognise.transcribe(lines_, cfg.recognition, cache, reader=_FakeReader())
+    recognise.transcribe(lines_, cfg.llm, cache, reader=_FakeReader())
     lines_ = [ln for ln in lines_ if ln.n != 2]
-    monkeypatch.delenv(cfg.recognition.api_key_env, raising=False)
-    monkeypatch.setattr(recognise, "reader_for", lambda c: pytest.fail("no reader should be made"))
-    assert all(t.cached for t in recognise.transcribe(lines_, cfg.recognition, cache).values())
+    monkeypatch.setattr(recognise, "llm_for", lambda c: pytest.fail("no reader should be made"))
+    assert all(t.cached for t in recognise.transcribe(lines_, cfg.llm, cache).values())
 
 
 def test_providers_are_registered_and_checked(cfg, monkeypatch):
     import dataclasses
 
-    from jotted.adapters.anthropic_reader import AnthropicReader
+    from jotted.adapters.anthropic_llm import AnthropicLLM
 
-    assert set(recognise.PROVIDERS) == config.RECOGNITION_PROVIDERS
-    monkeypatch.setenv(cfg.recognition.api_key_env, "test-key")
-    assert isinstance(recognise.reader_for(cfg.recognition), AnthropicReader)
-    monkeypatch.delenv(cfg.recognition.api_key_env)
-    with pytest.raises(recognise.RecognitionError, match="is not set"):
-        recognise.reader_for(cfg.recognition)
-    with pytest.raises(recognise.RecognitionError, match="unknown recognition provider"):
-        recognise.reader_for(dataclasses.replace(cfg.recognition, provider="nope"))
+    assert set(llm.PROVIDERS) == config.LLM_PROVIDERS
+    monkeypatch.setenv(cfg.llm.api_key_env, "test-key")
+    assert isinstance(llm.llm_for(cfg.llm), AnthropicLLM)
+    monkeypatch.delenv(cfg.llm.api_key_env)
+    with pytest.raises(llm.ModelError, match="is not set"):
+        llm.llm_for(cfg.llm)
+    with pytest.raises(llm.ModelError, match="unknown LLM provider"):
+        llm.llm_for(dataclasses.replace(cfg.llm, provider="nope"))
 
 
 class _FakeJudge:
@@ -267,9 +316,9 @@ def test_any_judge_plugs_in_for_continuations(tmp_path, cfg):
     lines_ = [Line(to_strokes([[(20, y), (300, y + 20)]]), n=i + 1) for i, (y, _) in enumerate(page)]
     ts = {i + 1: Transcript(i + 1, "none", text) for i, (_, text) in enumerate(page)}
     judge, cache = _FakeJudge(), AICache(tmp_path / "ai")
-    assert classify_mod.continuations(lines_, ts, cfg.classification, cache, judge=judge) == [(1, 2)]
+    assert classify_mod.continuations(lines_, ts, cfg, cache, judge=judge) == [(1, 2)]
     assert judge.calls == [("continues", [(1, 2)])]
-    assert classify_mod.continuations(lines_, ts, cfg.classification, cache, judge=judge) == [(1, 2)]
+    assert classify_mod.continuations(lines_, ts, cfg, cache, judge=judge) == [(1, 2)]
     assert len(judge.calls) == 1  # cached
 
 
@@ -281,26 +330,20 @@ def test_action_judge_asks_the_provider_once_per_line(tmp_path, cfg):
     lines_ = [SourceLine(anchor=f"1:{i}", key=f"k{i}", text=t, bbox=(0, 0, 1, 1))
               for i, t in enumerate(["Agenda", "book the room", ""])]
     fake = _FakeJudge()
-    judge = ModelActionJudge(cfg.classification, AICache(tmp_path / "ai"), judge=fake)
+    judge = ModelActionJudge(cfg, AICache(tmp_path / "ai"), judge=fake)
     got = judge.judge(doc, page, lines_, [lines_[1], lines_[2]])
     assert set(got) == {"1:1"} and got["1:1"].p_action == 0.95  # the empty line is not judged
-    assert fake.calls == [("actions", classify_mod.Document("Weekly", "/Meetings", 3), ["book the room"])]
+    assert fake.calls == [("actions", Document("Weekly", "/Meetings", 3), ["book the room"])]
     assert judge.judge(doc, page, lines_, [lines_[1]])["1:1"].owner == "me" and len(fake.calls) == 1
 
 
-def test_judge_providers_are_registered_and_checked(cfg, monkeypatch):
-    import dataclasses
-
+def test_jev_judges_while_its_key_is_set(cfg, monkeypatch):
     from jotted.adapters.typesafe_judge import TypeSafeJudge
 
-    assert set(classify_mod.PROVIDERS) == config.CLASSIFICATION_PROVIDERS
-    monkeypatch.setenv(cfg.classification.api_key_env, "test-key")
-    assert isinstance(classify_mod.judge_for(cfg.classification), TypeSafeJudge)
-    monkeypatch.delenv(cfg.classification.api_key_env)
-    with pytest.raises(classify_mod.ClassificationError, match="is not set"):
-        classify_mod.judge_for(cfg.classification)
-    with pytest.raises(classify_mod.ClassificationError, match="unknown classification provider"):
-        classify_mod.judge_for(dataclasses.replace(cfg.classification, provider="nope"))
+    assert not classify_mod.jev_enabled(cfg)
+    monkeypatch.setenv(cfg.jev.api_key_env, "test-key")
+    assert classify_mod.jev_enabled(cfg) and classify_mod.judge_model(cfg) == cfg.jev.model
+    assert isinstance(classify_mod.judge_for(cfg), TypeSafeJudge)
 
 
 # ---------------------------------------------------------------- drawings and wrapped lines
@@ -328,7 +371,7 @@ def test_continuation_candidates_use_page_spacing(cfg):
                                                    (4, "the broken heater"), (5, "- pay rent"), (6, "tidy desk")]}
     ys = {1: 100, 2: 200, 3: 300, 4: 345, 5: 390, 6: 500}  # 4 sits tight under 3; 5 is tight but bulleted
     lines_ = [_line(synth.text(0, ys[n], 2), n, 100 * n) for n in ts]
-    got = classify_mod.continuation_candidates(lines_, ts, cfg.classification)
+    got = classify_mod.continuation_candidates(lines_, ts, cfg.judging)
     assert [(a, b) for a, b, _, _ in got] == [(3, 4)]
     assert got[0][2] < 0.75
 
@@ -338,7 +381,7 @@ def test_indented_line_under_a_bullet_is_a_candidate_at_normal_spacing(cfg):
           3: Transcript(3, "none", "testing"), 4: Transcript(4, "none", "- pay rent")}
     lines_ = [_line(synth.text(0, 100, 3), 1, 100), _line(synth.text(0, 200, 3), 2, 200),
               _line(synth.text(250, 300, 1), 3, 300), _line(synth.text(0, 400, 2), 4, 400)]
-    got = classify_mod.continuation_candidates(lines_, ts, cfg.classification)
+    got = classify_mod.continuation_candidates(lines_, ts, cfg.judging)
     assert [(a, b, ind) for a, b, _, ind in got] == [(2, 3, True)]
 
 
@@ -355,7 +398,7 @@ def test_adjacent_drawings_pair_up(cfg):
     lines_ = [_line([[(0, 0), (100, 0), (100, 90), (0, 90)]], 1, 100),
               _line([[(10, 95), (90, 96)]], 2, 200),
               _line(synth.text(0, 200, 1), 3, 300)]
-    assert classify_mod.adjacent_drawings(lines_, ts, cfg.classification) == [(1, 2)]
+    assert classify_mod.adjacent_drawings(lines_, ts, cfg.judging) == [(1, 2)]
 
 
 def test_merge_continuations_keeps_first_line_and_anchor():

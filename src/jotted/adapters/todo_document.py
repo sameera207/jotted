@@ -226,7 +226,7 @@ class TodoDocument:
     def _read_row(self, row_strokes: list, slot: int, page_id: str, page_index: int,
                   box_inked: bool) -> WrittenItem | None:
         line = lines_mod.Line(strokes=sorted(row_strokes, key=lambda s: s.x0), n=1)
-        transcript = recognise.transcribe([line], self.cfg.recognition, self.cache).get(1)
+        transcript = recognise.transcribe([line], self.cfg.llm, self.cache).get(1)
         if transcript is None or transcript.drawing or not transcript.text.strip():
             return None
         ids = ",".join(sorted(s.id for s in row_strokes))

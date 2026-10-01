@@ -136,7 +136,11 @@ class SqliteRepository:
             db.executescript(SCHEMA)
             cols = {r["name"] for r in db.execute("PRAGMA table_info(actions)")}
             if "written" not in cols:  # 1 = written by hand on the To-do document itself
-                db.execute("ALTER TABLE actions ADD COLUMN written INTEGER NOT NULL DEFAULT 0")
+                try:
+                    db.execute("ALTER TABLE actions ADD COLUMN written INTEGER NOT NULL DEFAULT 0")
+                except sqlite3.OperationalError as e:  # another app starting at the same time added it
+                    if "duplicate column" not in str(e):
+                        raise
             self._migrate_tasks(db)
 
     @contextmanager
@@ -159,6 +163,8 @@ class SqliteRepository:
         """
         if db.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'tasks'").fetchone() is None:
             return
+        db.commit()
+        db.execute("BEGIN IMMEDIATE")  # two apps starting at once: the second waits, then sees it done
         if db.execute("SELECT 1 FROM todo_meta WHERE key = 'tasks_migrated'").fetchone():
             return
         books = {r["id"]: r["name"] for r in db.execute("SELECT id, name FROM notebooks")}

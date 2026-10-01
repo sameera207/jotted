@@ -155,21 +155,23 @@ def world(home, monkeypatch, tmp_path):
                 raise error(f"{label} rejected this key")
         return verify
 
-    from jotted import classify, recognise
-    from jotted.adapters.anthropic_reader import AnthropicReader
+    from jotted.adapters.anthropic_llm import AnthropicLLM
     from jotted.adapters.typesafe_judge import TypeSafeJudge
+    from jotted.llm import ModelError
 
     monkeypatch.setattr(rmapi_install, "install", install)
     monkeypatch.setattr(onboarding.shutil, "which", lambda b: b if os.path.isabs(b) and os.path.exists(b) else None)
     monkeypatch.setattr(cloud, "register", register)
     monkeypatch.setattr(cloud, "library", lambda cfg: (["a", "b", "c"], []))
-    monkeypatch.setattr(AnthropicReader, "verify", make_verify("Anthropic", recognise.RecognitionError))
-    monkeypatch.setattr(TypeSafeJudge, "verify", make_verify("TypeSafe", classify.ClassificationError))
+    for name in ("ANTHROPIC_API_KEY", "TYPESAFE_API_KEY"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setattr(AnthropicLLM, "verify", make_verify("Anthropic", ModelError))
+    monkeypatch.setattr(TypeSafeJudge, "verify", make_verify("TypeSafe", ModelError))
     return calls
 
 
 def test_first_run_goes_from_nothing_to_ready(world, home):
-    ui = ScriptedUI(True, "wrong123", "ABCD1234", "bad-key", "good-anthropic", "good-typesafe")
+    ui = ScriptedUI(True, "wrong123", "ABCD1234", "bad-key", "good-anthropic", True, "good-typesafe")
     cfg = onboarding.run(ui)
 
     assert (home / "config.toml").is_file() and cfg.rmapi.binary == str(home / "bin" / "rmapi")
@@ -182,21 +184,32 @@ def test_first_run_goes_from_nothing_to_ready(world, home):
 
 
 def test_second_run_asks_nothing(world, home, monkeypatch):
-    onboarding.run(ScriptedUI(True, "ABCD1234", "good-a", "good-t"))
+    onboarding.run(ScriptedUI(True, "ABCD1234", "good-a", True, "good-t"))
     for name in ("ANTHROPIC_API_KEY", "TYPESAFE_API_KEY"):
         monkeypatch.delenv(name)  # a new shell: keys come back from the saved file
     ui = ScriptedUI()
     onboarding.run(ui)
     assert [s for s in ui.shown if s.startswith("✓")] == [
-        f"✓ rmapi: {home / 'bin' / 'rmapi'}", "✓ reMarkable connected", "✓ Anthropic key", "✓ TypeSafe key"]
+        f"✓ rmapi: {home / 'bin' / 'rmapi'}", "✓ reMarkable connected", "✓ Anthropic key",
+        "✓ Jev plugin (TypeSafe key)"]
 
 
 def test_setup_again_keeps_what_is_there_by_default(world, home):
-    onboarding.run(ScriptedUI(True, "ABCD1234", "good-a", "good-t"))
-    ui = ScriptedUI(False, "", "good-new-t")  # keep the tablet, keep Anthropic, replace TypeSafe
+    onboarding.run(ScriptedUI(True, "ABCD1234", "good-a", True, "good-t"))
+    ui = ScriptedUI(False, "", True, "good-new-t")  # keep the tablet, keep Anthropic, replace TypeSafe
     cfg = onboarding.run(ui, redo=True)
     assert keys.saved(cfg) == {"ANTHROPIC_API_KEY": "good-a", "TYPESAFE_API_KEY": "good-new-t"}
     assert cfg.rmapi.token_file.read_text() == "token"
+    cfg = onboarding.run(ScriptedUI(False, "", False), redo=True)  # stop using Jev
+    assert keys.saved(cfg) == {"ANTHROPIC_API_KEY": "good-a"} and "TYPESAFE_API_KEY" not in os.environ
+
+
+def test_jev_is_optional_and_not_asked_about_again(world, home):
+    cfg = onboarding.run(ScriptedUI(True, "ABCD1234", "good-a", False))
+    assert keys.saved(cfg) == {"ANTHROPIC_API_KEY": "good-a"}
+    ui = ScriptedUI()  # a later start: no question about Jev
+    onboarding.run(ui)
+    assert not any("Jev" in line for line in ui.shown)
 
 
 def test_declining_rmapi_stops_with_directions(world, home):
@@ -205,7 +218,7 @@ def test_declining_rmapi_stops_with_directions(world, home):
 
 
 def test_a_failed_reconnect_keeps_the_old_connection(world, home):
-    onboarding.run(ScriptedUI(True, "ABCD1234", "good-a", "good-t"))
+    onboarding.run(ScriptedUI(True, "ABCD1234", "good-a", True, "good-t"))
     with pytest.raises(onboarding.SetupError, match="previous connection is kept"):
         onboarding.run(ScriptedUI(True, "nope1234", "nope1234", "nope1234"), redo=True)
     cfg = config.load(home / "config.toml")

@@ -7,12 +7,13 @@ writing to the tablet run in the background (`app.Scheduler`); one at a time.
 from __future__ import annotations
 
 import logging
-from dataclasses import asdict, fields
+import os
+from dataclasses import asdict, fields, replace
 from importlib import resources
 
 from flask import Flask, Response, abort, jsonify, request
 
-from . import cloud
+from . import classify, cloud, keys, llm
 from .page import render_svg
 from .app import SYNC_ERRORS, App, Scheduler
 from .config import Config
@@ -127,6 +128,74 @@ def create_app(cfg: Config, background: bool = True, app_: App | None = None) ->
         core.repo.save_settings(s)
         scheduler.poll_now()  # pick up new folders without waiting for the next round
         return jsonify(asdict(s))
+
+    # ------------------------------------------------------------ AI: the LLM and the Jev plugin
+
+    def jev_class() -> type:
+        from .adapters.typesafe_judge import TypeSafeJudge
+
+        return TypeSafeJudge
+
+    def ai_state() -> dict:
+        cls, jev = llm.llm_class(cfg.llm), jev_class()
+        return {
+            "llm": {"provider": cfg.llm.provider, "label": cls.LABEL, "family": cls.MODEL_FAMILY,
+                    "model": cfg.llm.model, "key_url": cls.KEY_URL, "key": keys.describe(cfg, cfg.llm.api_key_env),
+                    "providers": [{"id": p, "label": llm.llm_class(replace(cfg.llm, provider=p)).LABEL}
+                                  for p in sorted(llm.PROVIDERS)]},
+            "jev": {"name": jev.NAME, "by": jev.LABEL, "model": cfg.jev.model, "key_url": jev.KEY_URL,
+                    "key": keys.describe(cfg, cfg.jev.api_key_env), "enabled": classify.jev_enabled(cfg)},
+            "judge": "jev" if classify.jev_enabled(cfg) else "llm",
+        }
+
+    def ai_parts(which: str):
+        if which == "llm":
+            cls = llm.llm_class(cfg.llm)
+            return cfg.llm.api_key_env, cls, lambda: cls(cfg.llm)
+        if which == "jev":
+            cls = jev_class()
+            return cfg.jev.api_key_env, cls, lambda: cls(cfg.jev)
+        abort(404)
+
+    @flask.get("/api/ai")
+    def get_ai():
+        return jsonify(ai_state())
+
+    @flask.put("/api/ai/<which>/key")
+    def put_ai_key(which: str):
+        """Check a key with its provider, then save it. Turning Jev on is adding its key."""
+        name, cls, make = ai_parts(which)
+        value = (request.get_json(silent=True) or {}).get("key")
+        value = value.strip() if isinstance(value, str) else ""
+        if not value:
+            return jsonify(error="Paste a key first"), 400
+        previous = os.environ.get(name)
+        os.environ[name] = value
+        try:
+            make().verify()
+        except llm.ModelError as e:
+            if previous is None:
+                os.environ.pop(name, None)
+            else:
+                os.environ[name] = previous
+            rejected = "rejected" in str(e)
+            return jsonify(error=f"{e}. Check it was copied in full." if rejected else f"{e}. The key wasn't saved."), \
+                400 if rejected else 502
+        keys.save(cfg, name, value)
+        log.info("%s key saved from the web app", cls.LABEL)
+        return jsonify(ai_state())
+
+    @flask.delete("/api/ai/<which>/key")
+    def delete_ai_key(which: str):
+        """Turn the Jev plugin off. The LLM's key can be replaced but not removed: nothing works without it."""
+        name, cls, _ = ai_parts(which)
+        if which == "llm":
+            return jsonify(error=f"Jotted needs a {cls.LABEL} key to read handwriting; replace it instead"), 400
+        if keys.describe(cfg, name)["source"] == "environment":
+            return jsonify(error=f"{name} is exported in the shell that started Jotted. Remove it there, "
+                                 "then start Jotted again."), 409
+        keys.remove(cfg, name)
+        return jsonify(ai_state())
 
     @flask.get("/api/library")
     def get_library():

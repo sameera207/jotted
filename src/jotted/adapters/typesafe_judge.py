@@ -1,4 +1,4 @@
-"""Jev (TypeSafe System One) as the LineJudge.
+"""Jev (TypeSafe System One) as the LineJudge: the optional Jev plugin.
 
 One request per page and question type. The state holds the page's written lines;
 each line or pair to judge gets its own question over that shared state: a Choice
@@ -13,10 +13,10 @@ import os
 
 from typesafe_sdk import Choice, Noul, TypeSafeAuthenticationError, TypeSafeClient, TypeSafeError
 
-from ..classify import ACTION, NOTEBOOK, OWNER, ClassificationError, Continuation, Document, state_line
-from ..config import ClassificationConfig
+from ..classify import ACTION, NOTEBOOK, OWNER, state_line
+from ..config import JevConfig
 from ..core.model import Judgment as ActionJudgment
-from ..recognise import Transcript
+from ..llm import Continuation, Document, ModelError, Transcript
 
 log = logging.getLogger(__name__)
 
@@ -27,33 +27,34 @@ def _neighbours(lines: list, i: int, context: int, phrase: str, always: bool = F
 
 
 class TypeSafeJudge:
+    NAME = "Jev"  # the plugin, as the web app shows it
     LABEL = "TypeSafe"
     KEY_URL = "https://typesafe.ai"
 
-    def __init__(self, cfg: ClassificationConfig):
+    def __init__(self, cfg: JevConfig):
         self.cfg = cfg
         self.model = cfg.model
         self._key = os.environ.get(cfg.api_key_env)
         if not self._key:
-            raise ClassificationError(f"{cfg.api_key_env} is not set; export it or set classification.enabled = false")
+            raise ModelError(f"{cfg.api_key_env} is not set; add a Jev key in Settings")
 
     def verify(self) -> None:
         try:
             with TypeSafeClient(api_key=self._key, timeout=float(self.cfg.timeout_s)) as client:
                 client.models.list()
         except TypeSafeAuthenticationError as e:
-            raise ClassificationError("TypeSafe rejected this key") from e
+            raise ModelError("TypeSafe rejected this key") from e
         except TypeSafeError as e:
-            raise ClassificationError(f"could not check the key with TypeSafe: {e}") from e
+            raise ModelError(f"could not check the key with TypeSafe: {e}") from e
 
     def _ask(self, questions: dict, state: dict):
         try:
             with TypeSafeClient(api_key=self._key, model=self.cfg.model, timeout=float(self.cfg.timeout_s)) as client:
                 resp = client.system_one(state=state, questions=questions)
         except TypeSafeAuthenticationError as e:
-            raise ClassificationError(f"TypeSafe rejected the key in {self.cfg.api_key_env}") from e
+            raise ModelError(f"TypeSafe rejected the key in {self.cfg.api_key_env}") from e
         except TypeSafeError as e:
-            raise ClassificationError(f"TypeSafe request failed: {e}") from e
+            raise ModelError(f"TypeSafe request failed: {e}") from e
         log.debug("asked %d question(s) of %s (request %s)", len(questions), resp.model, resp.request_id)
         return resp
 

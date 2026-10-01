@@ -172,6 +172,31 @@
   .watching .none { color: var(--muted); font-size: 13px; }
   .saved { color: var(--accent); font-size: 13px; }
   .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+
+  /* AI: the language model and plugins, one card each */
+  .card { border: 1px solid var(--line); border-radius: 8px; padding: 14px 16px; max-width: 640px; }
+  .card + .card { margin-top: 10px; }
+  .card-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .card-head .mark { width: 26px; height: 26px; border-radius: 6px; font-size: 13px; }
+  .mark.llm { background: #c96442; }
+  .mark.jev { background: var(--other); }
+  .card-title { flex: 1; min-width: 0; }
+  .pill { font-size: 12px; color: var(--muted); border: 1px solid var(--line); border-radius: 99px; padding: 1px 9px;
+          font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+  .duties { margin: 10px 0 0; display: grid; gap: 4px; font-size: 13.5px; }
+  .duties li { display: flex; gap: 8px; align-items: baseline; }
+  .duties .tick { color: var(--accent); font-weight: 700; width: 12px; flex: none; }
+  .duties .off { color: var(--faint); }
+  .card-text { margin: 8px 0 0; font-size: 13.5px; color: var(--muted); max-width: 560px; }
+  .keyrow { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; margin-top: 12px; padding-top: 12px;
+            border-top: 1px solid var(--rule); font-size: 13.5px; }
+  .keyrow .what { color: var(--muted); }
+  .keyrow input[type=password] { font: inherit; padding: 6px 10px; border-radius: 6px; border: 1px solid var(--line);
+                                 background: var(--paper); color: var(--ink); width: min(320px, 100%); }
+  .keyrow .err { color: var(--danger); width: 100%; }
+  .keyrow a { color: var(--accent); }
+  .card .sub-field { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--rule); }
+  .card .sub-field label { font-weight: 600; font-size: 14px; display: block; margin-bottom: 2px; }
   input[type=range] { width: 220px; accent-color: var(--accent); }
 
   /* ---------------------------------------------------------------- where an item came from */
@@ -267,8 +292,8 @@
     <div class="sheet"><div class="settings">
       <div class="field">
         <div class="label">Watched folders</div>
-        <div class="help">Handwriting in these folders is read for action items. New lines are sent to
-          Anthropic (as images) and TypeSafe (as text); nothing else leaves this machine.
+        <div class="help">Handwriting in these folders is read for action items. <span id="privacy">New lines
+          are sent to your language model to be read</span>; nothing else leaves this machine.
           The To-do document itself is never read this way.
           For a long document, tick <em>New writing only</em> (before or after you watch it): what is
           already in it is skipped, and only pages and lines you add afterwards are read.</div>
@@ -282,10 +307,40 @@
         <div class="folders" id="folders"><div class="empty">Loading your library…</div></div>
       </div>
       <div class="field">
-        <label for="threshold">How sure Jev must be that a line is an action</label>
-        <div class="help">Higher means fewer, surer items. Lines below this stay out of the list.</div>
-        <div class="row"><input type="range" id="threshold" min="0.4" max="0.95" step="0.05">
-          <span id="threshold-v"></span></div>
+        <div class="label">Language model</div>
+        <div class="help">Reads your handwriting. Unless a plugin takes over, it also decides which lines are
+          actions and whose they are.</div>
+        <div class="card" id="llm-card">
+          <div class="card-head">
+            <span class="mark llm" id="llm-mark" aria-hidden="true"></span>
+            <div class="card-title"><strong id="llm-name">Loading…</strong> <span class="sub" id="llm-adapter"></span></div>
+            <span class="pill" id="llm-model" title="llm.model in config.toml"></span>
+          </div>
+          <ul class="duties" id="llm-duties"></ul>
+          <div class="keyrow" id="llm-key"></div>
+        </div>
+        <div class="help" style="margin:8px 0 0">The adapter and model are set in config.toml
+          (<code>[llm]</code> <code>provider</code> and <code>model</code>).</div>
+      </div>
+      <div class="field">
+        <div class="label">Plugins</div>
+        <div class="help">Optional. A plugin takes over part of the work from the language model.</div>
+        <div class="card" id="jev-card">
+          <div class="card-head">
+            <span class="mark jev" aria-hidden="true">J</span>
+            <div class="card-title"><strong>Jev</strong> <span class="sub">by TypeSafe</span></div>
+            <span class="pill" id="jev-model" hidden></span>
+            <span class="badge on" id="jev-on" hidden>On</span>
+          </div>
+          <p class="card-text" id="jev-about"></p>
+          <div class="keyrow" id="jev-key"></div>
+          <div class="sub-field" id="jev-settings" hidden>
+            <label for="threshold">How sure Jev must be that a line is an action</label>
+            <div class="help">Higher means fewer, surer items. Lines below this stay out of the list.</div>
+            <div class="row"><input type="range" id="threshold" min="0.4" max="0.95" step="0.05">
+              <span id="threshold-v"></span></div>
+          </div>
+        </div>
       </div>
       <div class="field">
         <label for="poll-interval">Check the tablet every</label>
@@ -321,7 +376,7 @@
 <script>
 const $ = (id) => document.getElementById(id);
 let tab = "todo";
-let todo = null, settings = null, library = null;
+let todo = null, settings = null, library = null, ai = null;
 let filters = { status: "open", owner: "", folder: "" };
 let pollTimer = null, lastError = null;
 
@@ -535,6 +590,90 @@ async function loadSettings() {
   if (!library) { sel.replaceChildren(el("option", { value: settings.todo_folder }, settings.todo_folder)); sel.value = settings.todo_folder; }
   renderFolders();
   if (!library) loadLibrary();
+  await loadAI();
+}
+
+// ------------------------------------------------------------ AI: the language model and plugins
+
+async function loadAI() {
+  ai = await api("GET", "/api/ai");
+  renderAI();
+}
+
+const editing = new Set();  // key forms open: "llm" / "jev"; survives re-renders
+
+function renderAI() {
+  const m = ai.llm, j = ai.jev, jevOn = j.enabled;
+  $("llm-mark").textContent = m.label.slice(0, 1);
+  $("llm-name").textContent = `${m.family} by ${m.label}`;
+  $("llm-adapter").textContent = `· ${m.providers.length > 1 ? "adapter" : "the adapter"} “${m.provider}”`;
+  $("llm-model").textContent = m.model;
+  const duty = (on, text) => el("li", { class: on ? "" : "off" }, el("span", { class: "tick", "aria-hidden": "true" }, on ? "✓" : "–"), text);
+  $("llm-duties").replaceChildren(
+    duty(true, `Reads handwriting: images of new lines go to ${m.label}`),
+    duty(!jevOn, jevOn ? `Judging actions and owners: handed to ${j.name}` :
+                         `Judges which lines are actions and whose: their text goes to ${m.label}`));
+  keyRow("llm", m, $("llm-key"), { removable: false });
+
+  $("jev-on").hidden = !jevOn;
+  $("jev-model").hidden = !jevOn;
+  $("jev-model").textContent = j.model;
+  $("jev-about").textContent = jevOn
+    ? `Decides which lines are actions and whose they are, instead of ${m.family}. Only the text of new lines goes to ${j.by}.`
+    : `Optional. Add a ${j.by} key and Jev decides which lines are actions and whose they are, instead of ${m.family}. ` +
+      `Only the text of new lines would go to ${j.by}.`;
+  keyRow("jev", j, $("jev-key"), { removable: true, addLabel: "Add Jev" });
+  $("jev-settings").hidden = !jevOn;  // Jev's own settings only exist while it is on
+
+  $("privacy").textContent = jevOn
+    ? `New lines are sent to ${m.label} (as images, to be read) and ${j.by} (as text, to be judged)`
+    : `New lines are sent to ${m.label} (as images, to be read, and as text, to be judged)`;
+}
+
+// A key: where it comes from and a way to replace it, or, for a plugin without one, a way to add it.
+function keyRow(which, part, box, { removable, addLabel }) {
+  const k = part.key, name = part.label || part.by;
+  box.replaceChildren();
+  if (!editing.has(which)) {
+    if (!k.set) {
+      box.append(el("button", { type: "button", class: "primary", onclick: () => { editing.add(which); renderAI(); } },
+                    addLabel || `Add ${name} key`));
+      return;
+    }
+    box.append(el("span", { class: "what" }, `${name} key ${k.hint}`),
+               el("span", { class: "sub" }, k.source === "environment" ? "from your shell" : "saved on this computer"),
+               el("button", { type: "button", onclick: () => { editing.add(which); renderAI(); } }, "Replace key"));
+    if (removable) {
+      box.append(el("button", { type: "button", class: "link", title: k.source === "environment" ? "Set in your shell" : "",
+        onclick: () => act(async () => {
+          if (!confirm(`Turn ${part.name || name} off? Its key is forgotten, and ${ai.llm.family} judges new lines again.`)) return;
+          ai = await api("DELETE", `/api/ai/${which}/key`); renderAI();
+        }) }, "Remove"));
+    }
+    return;
+  }
+  const input = el("input", { type: "password", autocomplete: "off", spellcheck: "false",
+                              placeholder: `Paste your ${name} key`, "aria-label": `${name} API key` });
+  const err = el("span", { class: "err", role: "alert" });
+  const save = el("button", { type: "submit", class: "primary" }, "Check and save");
+  const form = el("form", { class: "row", style: "width:100%" }, input, save,
+    el("button", { type: "button", onclick: () => { editing.delete(which); renderAI(); } }, "Cancel"),
+    el("a", { href: part.key_url, target: "_blank", rel: "noopener" }, "Get a key"), err);
+  form.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    if (!input.value.trim()) { err.textContent = "Paste a key first."; return; }
+    save.disabled = true; save.textContent = "Checking…"; err.textContent = "";
+    try {
+      ai = await api("PUT", `/api/ai/${which}/key`, { key: input.value });
+      editing.delete(which);
+      renderAI();
+    } catch (x) {
+      err.textContent = x.message;
+      save.disabled = false; save.textContent = "Check and save";
+    }
+  });
+  box.append(form);
+  input.focus();
 }
 
 // Watch entries are paths: a folder (watched with everything under it) or a single document.

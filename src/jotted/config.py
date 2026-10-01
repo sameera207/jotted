@@ -57,9 +57,9 @@ class LinesConfig:
 
 
 @dataclass(frozen=True)
-class RecognitionConfig:
-    enabled: bool = True
-    provider: str = "anthropic"  # which HandwritingReader adapter reads the lines
+class LLMConfig:
+    """The language model: reads handwriting, and judges lines when Jev isn't set up."""
+    provider: str = "anthropic"  # which LLM adapter (llm.PROVIDERS)
     model: str = "claude-opus-5"
     api_key_env: str = "ANTHROPIC_API_KEY"
     effort: str = "low"  # anthropic only
@@ -67,14 +67,18 @@ class RecognitionConfig:
 
 
 @dataclass(frozen=True)
-class ClassificationConfig:
-    enabled: bool = True
-    provider: str = "typesafe"  # which LineJudge adapter judges the lines
-    model: str = "jev-latest"
-    api_key_env: str = "TYPESAFE_API_KEY"
+class JudgingConfig:
+    """Policy for judging lines, whichever model answers."""
     continuation_threshold: float = 0.25
     continuation_spacing: float = 0.75
     context_lines: int = 2
+
+
+@dataclass(frozen=True)
+class JevConfig:
+    """Jev, TypeSafe's judging model: an optional plugin, on while its key is set."""
+    model: str = "jev-latest"
+    api_key_env: str = "TYPESAFE_API_KEY"
     timeout_s: int = 30
 
 
@@ -104,8 +108,9 @@ class Config:
     rmapi: RmapiConfig
     strokes: StrokesConfig
     lines: LinesConfig
-    recognition: RecognitionConfig
-    classification: ClassificationConfig
+    llm: LLMConfig
+    judging: JudgingConfig
+    jev: JevConfig
     template: TemplateConfig
     server: ServerConfig
     logging: LoggingConfig
@@ -130,23 +135,51 @@ SECTIONS: dict[str, type] = {
     "rmapi": RmapiConfig,
     "strokes": StrokesConfig,
     "lines": LinesConfig,
-    "recognition": RecognitionConfig,
-    "classification": ClassificationConfig,
+    "llm": LLMConfig,
+    "judging": JudgingConfig,
+    "jev": JevConfig,
     "template": TemplateConfig,
     "server": ServerConfig,
     "logging": LoggingConfig,
 }
 
-RECOGNITION_PROVIDERS = {"anthropic"}  # kept in step with recognise.PROVIDERS
-CLASSIFICATION_PROVIDERS = {"typesafe"}  # kept in step with classify.PROVIDERS
+LLM_PROVIDERS = {"anthropic"}  # kept in step with llm.PROVIDERS
 
 # Settings of the retired Tasks notebook: still accepted in old config files, and ignored.
 RETIRED_SECTIONS = {"notebook", "checkbox", "output"}
 RETIRED_KEYS = {
     "paths": {"output_dir"},
-    "classification": {"todo_threshold", "checkbox_is_task"},
     "template": {"pages", "header_height", "footer_height", "line_spacing", "strike_width"},
 }
+
+# Sections renamed when the LLM became a port and Jev a plugin: old config files still load.
+# (old section, key) -> new section; None drops the key.
+RENAMED = {
+    **{("recognition", k): "llm" for k in ("provider", "model", "api_key_env", "effort", "timeout_s")},
+    ("recognition", "enabled"): None,
+    **{("classification", k): "judging" for k in ("continuation_threshold", "continuation_spacing", "context_lines")},
+    **{("classification", k): "jev" for k in ("model", "api_key_env", "timeout_s")},
+    **{("classification", k): None for k in ("enabled", "provider", "todo_threshold", "checkbox_is_task")},
+}
+
+
+def _upgrade(raw: dict[str, Any]) -> dict[str, Any]:
+    """Move keys from renamed sections into their new ones. A key already set in the new
+    section wins."""
+    raw = dict(raw)
+    for old in {o for o, _ in RENAMED}:
+        values = raw.pop(old, None)
+        if values is None:
+            continue
+        if not isinstance(values, dict):
+            raise ConfigError(f"[{old}] must be a table")
+        for key, value in values.items():
+            if (old, key) not in RENAMED:
+                raise ConfigError(f"[{old}] unknown key(s): {key}")
+            new = RENAMED[(old, key)]
+            if new is not None:
+                raw.setdefault(new, {}).setdefault(key, value)
+    return raw
 
 
 def _platform_home(name: str) -> Path:
@@ -222,6 +255,7 @@ def load(path: Path | None = None) -> Config:
     except tomllib.TOMLDecodeError as e:
         raise ConfigError(f"{path}: {e}") from e
 
+    raw = _upgrade(raw)
     unknown = set(raw) - set(SECTIONS) - RETIRED_SECTIONS
     if unknown:
         raise ConfigError(f"{path}: unknown section(s): {', '.join(sorted(unknown))}")
@@ -279,20 +313,14 @@ def _section(name: str, cls: type, values: dict[str, Any], base: Path) -> Any:
 def _validate(cfg: Config) -> None:
     if cfg.logging.level.upper() not in ("DEBUG", "INFO", "WARNING", "ERROR"):
         raise ConfigError("logging.level must be DEBUG, INFO, WARNING or ERROR")
-    if cfg.recognition.provider not in RECOGNITION_PROVIDERS:
-        raise ConfigError(f"recognition.provider: unknown {cfg.recognition.provider!r}; "
-                          f"known: {sorted(RECOGNITION_PROVIDERS)}")
-    if cfg.recognition.provider == "anthropic" and cfg.recognition.effort not in ("low", "medium", "high", "xhigh", "max"):
-        raise ConfigError("recognition.effort must be low, medium, high, xhigh or max")
-    if cfg.classification.provider not in CLASSIFICATION_PROVIDERS:
-        raise ConfigError(f"classification.provider: unknown {cfg.classification.provider!r}; "
-                          f"known: {sorted(CLASSIFICATION_PROVIDERS)}")
-    if not 0 <= cfg.classification.continuation_threshold <= 1:
-        raise ConfigError("classification.continuation_threshold must be between 0 and 1")
-    if cfg.classification.context_lines < 0:
-        raise ConfigError("classification.context_lines must be 0 or more")
-    if cfg.classification.enabled and not cfg.recognition.enabled:
-        raise ConfigError("classification needs recognition: the judge reads the transcribed text")
+    if cfg.llm.provider not in LLM_PROVIDERS:
+        raise ConfigError(f"llm.provider: unknown {cfg.llm.provider!r}; known: {sorted(LLM_PROVIDERS)}")
+    if cfg.llm.provider == "anthropic" and cfg.llm.effort not in ("low", "medium", "high", "xhigh", "max"):
+        raise ConfigError("llm.effort must be low, medium, high, xhigh or max")
+    if not 0 <= cfg.judging.continuation_threshold <= 1:
+        raise ConfigError("judging.continuation_threshold must be between 0 and 1")
+    if cfg.judging.context_lines < 0:
+        raise ConfigError("judging.context_lines must be 0 or more")
     if not 0.5 < cfg.template.scale < 2:
         raise ConfigError("template.scale must be between 0.5 and 2")
     if cfg.rmapi.timeout_s <= 0:

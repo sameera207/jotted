@@ -94,12 +94,10 @@ class RemarkableLibrary:
         page_lines, _ = lines_mod.cluster(page_strokes, self.cfg.lines)
         if not page_lines:
             return []
-        transcripts = recognise.transcribe(page_lines, self.cfg.recognition, self.cache)
-        merged: dict[int, list[int]] = {}
-        if self.cfg.classification.enabled:
-            pairs = sorted(classify.adjacent_drawings(page_lines, transcripts, self.cfg.classification)
-                           + classify.continuations(page_lines, transcripts, self.cfg.classification, self.cache))
-            page_lines, transcripts, merged = classify.merge_continuations(page_lines, transcripts, pairs)
+        transcripts = recognise.transcribe(page_lines, self.cfg.llm, self.cache)
+        pairs = sorted(classify.adjacent_drawings(page_lines, transcripts, self.cfg.judging)
+                       + classify.continuations(page_lines, transcripts, self.cfg, self.cache))
+        page_lines, transcripts, _ = classify.merge_continuations(page_lines, transcripts, pairs)
         out = []
         for ln in sorted(page_lines, key=lambda x: x.n):
             t = transcripts.get(ln.n)

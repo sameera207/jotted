@@ -68,10 +68,11 @@ def cmd_config_check(cfg: Config, args: argparse.Namespace) -> int:
     console.print()
     console.print(f"rmapi binary: {rmapi or '[red]not found[/red]'}")
     console.print(f"rmapi token:  {'present' if cfg.rmapi.token_file.exists() else '[yellow]missing (run jotted auth)[/yellow]'}")
-    for section in (cfg.recognition, cfg.classification):
-        if section.enabled:
-            ok = bool(os.environ.get(section.api_key_env))
-            console.print(f"{section.api_key_env}: {'set' if ok else '[yellow]not set[/yellow]'}")
+    llm_key = bool(os.environ.get(cfg.llm.api_key_env))
+    console.print(f"LLM ({cfg.llm.provider}, {cfg.llm.model}): {cfg.llm.api_key_env} "
+                  f"{'set' if llm_key else '[yellow]not set (run jotted setup)[/yellow]'}")
+    jev = bool(os.environ.get(cfg.jev.api_key_env))
+    console.print(f"Jev plugin: {'on' if jev else 'off'} ({cfg.jev.api_key_env} {'set' if jev else 'not set'})")
     return 0
 
 

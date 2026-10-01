@@ -5,7 +5,8 @@ change a key, say). Every step checks first and is skipped when already done, so
 second start asks nothing. Input and output go through `UI`, so a Mac app can drive
 the same steps with its own windows.
 
-Steps: a home for settings and data, rmapi, the reMarkable connection, API keys.
+Steps: a home for settings and data, rmapi, the reMarkable connection, the LLM's API
+key, and the optional Jev plugin (offered on first setup and when run again on purpose).
 """
 
 from __future__ import annotations
@@ -13,12 +14,12 @@ from __future__ import annotations
 import getpass
 import os
 import shutil
-from typing import Callable, Protocol
+from typing import Protocol
 
 from rich.console import Console
 from rich.markup import escape
 
-from . import classify, cloud, config, keys, recognise, rmapi_install
+from . import cloud, config, keys, llm, rmapi_install
 from .config import Config
 
 CONNECT_URL = "https://my.remarkable.com/device/desktop/connect"
@@ -70,7 +71,8 @@ def run(ui: UI, redo: bool = False) -> Config:
     """Bring this machine to a working setup and return its config. `redo` asks again
     about the reMarkable connection and the keys, keeping what's there by default."""
     path = config.resolve_path()
-    if not path.is_file():
+    fresh = not path.is_file()
+    if fresh:
         ui.step("Setting up Jotted")
         config.create(path)
         ui.done(f"Settings, data and keys will live in {path.parent}")
@@ -78,7 +80,8 @@ def run(ui: UI, redo: bool = False) -> Config:
     keys.load_into_env(cfg)
     cfg = _rmapi(ui, cfg)
     _connect(ui, cfg, redo)
-    _keys(ui, cfg, redo)
+    _llm_key(ui, cfg, redo)
+    _jev(ui, cfg, ask=fresh or redo)
     return cfg
 
 
@@ -147,46 +150,61 @@ def _connect(ui: UI, cfg: Config, redo: bool) -> None:
 
 # ---------------------------------------------------------------- API keys
 
-PURPOSE = {
-    "recognition": "reads your handwriting: images of new lines are sent to {label}",
-    "classification": "decides which lines are tasks: their transcribed text is sent to {label}",
-}
+
+def _llm_key(ui: UI, cfg: Config, redo: bool) -> None:
+    cls = llm.llm_class(cfg.llm)
+    current = os.environ.get(cfg.llm.api_key_env)
+    if current and not redo:
+        ui.done(f"{cls.LABEL} key")
+        return
+    ui.step(f"{cls.LABEL} API key")
+    ui.info(f"Jotted reads your handwriting with {cls.MODEL_FAMILY}: images of new lines are sent to {cls.LABEL}, "
+            "and their text to judge which lines are actions.")
+    ui.info(f"Create a key at {cls.KEY_URL}")
+    if not _ask_key(ui, cfg, cfg.llm.api_key_env, lambda: cls(cfg.llm), cls, current):
+        raise SetupError(f"Jotted needs a {cls.LABEL} key to read your notes. Create one at {cls.KEY_URL}, "
+                         "then run `jotted start` again")
 
 
-def _keys(ui: UI, cfg: Config, redo: bool) -> None:
-    needed: list[tuple[str, object, Callable[[object], type]]] = []
-    if cfg.recognition.enabled:
-        needed.append(("recognition", cfg.recognition, recognise.reader_class))
-    if cfg.classification.enabled:
-        needed.append(("classification", cfg.classification, classify.judge_class))
-    for kind, section, class_of in needed:
-        cls = class_of(section)
-        name = section.api_key_env
-        current = os.environ.get(name)
-        if current and not redo:
-            ui.done(f"{cls.LABEL} key")
-            continue
-        ui.step(f"{cls.LABEL} API key")
-        ui.info("Jotted " + PURPOSE[kind].format(label=cls.LABEL) + ".")
-        ui.info(f"Create a key at {cls.KEY_URL}")
-        _ask_key(ui, cfg, section, cls, current)
+def _jev(ui: UI, cfg: Config, ask: bool) -> None:
+    """The Jev plugin: optional, so only offered on first setup or `jotted setup`."""
+    from .adapters.typesafe_judge import TypeSafeJudge as cls
+
+    name = cfg.jev.api_key_env
+    current = os.environ.get(name)
+    if not ask:
+        if current:
+            ui.done(f"{cls.NAME} plugin ({cls.LABEL} key)")
+        return
+    ui.step(f"{cls.NAME} plugin (optional)")
+    ui.info(f"{cls.NAME}, from {cls.LABEL}, can judge which lines are actions and whose they are, instead of "
+            f"the LLM. Their text is then sent to {cls.LABEL}. You can add or remove it in Settings any time.")
+    if not ui.confirm(f"Use {cls.NAME}?", default=bool(current)):
+        if current and keys.describe(cfg, name)["source"] == "saved":
+            keys.remove(cfg, name)
+            ui.done(f"{cls.NAME} removed")
+        else:
+            ui.done(f"Not using {cls.NAME}")
+        return
+    ui.info(f"Create a key at {cls.KEY_URL}")
+    if not _ask_key(ui, cfg, name, lambda: cls(cfg.jev), cls, current):
+        ui.warn(f"Carrying on without {cls.NAME}")
 
 
-def _ask_key(ui: UI, cfg: Config, section, cls: type, current: str | None) -> None:
-    name = section.api_key_env
-    errors = (recognise.RecognitionError, classify.ClassificationError)
+def _ask_key(ui: UI, cfg: Config, name: str, make, cls: type, current: str | None) -> bool:
+    """Ask for a key until one checks out (or is kept). False if none was given."""
     for _ in range(TRIES):
         hint = " (Enter keeps the current one)" if current else ""
         value = ui.secret(f"Paste your {cls.LABEL} key, it stays hidden{hint}").strip()
         if not value:
             if current:
                 ui.done(f"Keeping the current {cls.LABEL} key")
-                return
+                return True
             continue
         os.environ[name] = value
         try:
-            cls(section).verify()
-        except errors as e:
+            make().verify()
+        except llm.ModelError as e:
             _restore(name, current)
             if "rejected" in str(e):
                 ui.warn(f"{e}. Check it was copied in full.")
@@ -196,12 +214,11 @@ def _ask_key(ui: UI, cfg: Config, section, cls: type, current: str | None) -> No
                 continue
         keys.save(cfg, name, value)
         ui.done(f"{cls.LABEL} key saved (only your user can read it)")
-        return
+        return True
     if current:
         ui.warn(f"Keeping the current {cls.LABEL} key")
-        return
-    raise SetupError(f"Jotted needs a {cls.LABEL} key to read your notes. Create one at {cls.KEY_URL}, "
-                     "then run `jotted start` again")
+        return True
+    return False
 
 
 def _restore(name: str, value: str | None) -> None:

@@ -1,26 +1,21 @@
 """Judging lines: whether each one continues the line above, and whether it is an
 action (and whose).
 
-The model is behind a port, `LineJudge`, with an adapter per provider
-(`adapters/typesafe_judge.py` for Jev). Policy stays here and is shared: which lines
-are judged and with what context, the criteria, thresholds, geometry, and a cache per
-question. To add a provider: write an adapter with `continues()` and `actions()`,
-then register it in `PROVIDERS` and `config.CLASSIFICATION_PROVIDERS`.
+The judge is a `llm.LineJudge`: the Jev plugin while its key is set, otherwise the
+configured LLM. Policy stays here and is shared by both: which lines are judged and
+with what context, the criteria, thresholds, geometry, and a cache per question.
 """
 
 from __future__ import annotations
 
-import importlib
 import logging
+import os
 import statistics
-from dataclasses import dataclass
-from typing import Protocol
 
 from .aicache import AICache
-from .config import ClassificationConfig
-from .core.model import Judgment as ActionJudgment
+from .config import Config, JudgingConfig
 from .lines import Line
-from .recognise import Transcript
+from .llm import Continuation, LineJudge, Transcript, llm_for
 
 log = logging.getLogger(__name__)
 
@@ -51,63 +46,25 @@ OWNER = {
 }
 
 
-class ClassificationError(Exception):
-    pass
+# ---------------------------------------------------------------- which judge
 
 
-# ---------------------------------------------------------------- the port
+def jev_enabled(cfg: Config) -> bool:
+    """Jev is a plugin: it judges while its key is set (saved in Settings, or exported)."""
+    return bool(os.environ.get(cfg.jev.api_key_env))
 
 
-@dataclass(frozen=True)
-class Continuation:
-    """Does lines[below] continue lines[above]? Positions are in the judged lines."""
-    above: int
-    below: int
-    spacing: float  # their distance as a share of the page's usual line spacing
-    indented: bool  # below is indented under the text of a bulleted or boxed line
+def judge_model(cfg: Config) -> str:
+    """The model that judges now, without creating it (cached answers need no key)."""
+    return cfg.jev.model if jev_enabled(cfg) else cfg.llm.model
 
 
-@dataclass(frozen=True)
-class Document:
-    name: str
-    folder: str
-    page: int
+def judge_for(cfg: Config) -> LineJudge:
+    if jev_enabled(cfg):
+        from .adapters.typesafe_judge import TypeSafeJudge
 
-
-class LineJudge(Protocol):
-    """A model that judges transcribed lines. Every method gets the page's written lines in
-    order and the positions to judge; the others are context. Raises ClassificationError.
-    Answers it cannot give are simply absent.
-
-    Adapter classes also carry LABEL and KEY_URL (where to get a key), for setup."""
-
-    model: str
-
-    def verify(self) -> None:
-        """Check the key works, without judging anything (setup calls this)."""
-
-    def continues(self, lines: list[Transcript], pairs: list[Continuation]) -> dict[tuple[int, int], float]:
-        """Per (above, below): the probability that below continues above."""
-
-    def actions(self, document: Document, lines: list[Transcript], targets: list[int],
-                context: int) -> dict[int, ActionJudgment]:
-        """Per target: the probability it is an action (ACTION) and who owns it (OWNER)."""
-
-
-# provider name -> "module:class", imported only when used.
-PROVIDERS = {"typesafe": "jotted.adapters.typesafe_judge:TypeSafeJudge"}
-
-
-def judge_class(cfg: ClassificationConfig) -> type:
-    target = PROVIDERS.get(cfg.provider)
-    if target is None:
-        raise ClassificationError(f"unknown classification provider {cfg.provider!r}; known: {sorted(PROVIDERS)}")
-    module, cls = target.split(":")
-    return getattr(importlib.import_module(module), cls)
-
-
-def judge_for(cfg: ClassificationConfig) -> LineJudge:
-    return judge_class(cfg)(cfg)
+        return TypeSafeJudge(cfg.jev)
+    return llm_for(cfg.llm)
 
 
 # ---------------------------------------------------------------- shared policy
@@ -143,7 +100,7 @@ def line_pitch(lines: list[Line], transcripts: dict[int, Transcript]) -> float |
 
 
 def continuation_candidates(lines: list[Line], transcripts: dict[int, Transcript],
-                            cfg: ClassificationConfig) -> list[tuple[int, int, float, bool]]:
+                            cfg: JudgingConfig) -> list[tuple[int, int, float, bool]]:
     """(above, below, spacing, indented) where `below` might be `above` wrapped onto a new line.
 
     `below` starts with no checkbox or bullet, is not outdented, and either:
@@ -176,7 +133,7 @@ def continuation_candidates(lines: list[Line], transcripts: dict[int, Transcript
 
 
 def adjacent_drawings(lines: list[Line], transcripts: dict[int, Transcript],
-                      cfg: ClassificationConfig) -> list[tuple[int, int]]:
+                      cfg: JudgingConfig) -> list[tuple[int, int]]:
     """Pairs of drawings that touch vertically and overlap horizontally: one drawing cut in two
     (a diagram's base line just outside its outline, say). No model call needed."""
     ordered = sorted(lines, key=lambda ln: ln.n)
@@ -193,14 +150,14 @@ def adjacent_drawings(lines: list[Line], transcripts: dict[int, Transcript],
     return pairs
 
 
-def continuations(lines: list[Line], transcripts: dict[int, Transcript], cfg: ClassificationConfig,
+def continuations(lines: list[Line], transcripts: dict[int, Transcript], cfg: Config,
                   cache: AICache, judge: LineJudge | None = None) -> list[tuple[int, int]]:
     """Candidate pairs the judge does not reject: `below` continues `above`.
 
     Geometry is the main evidence here and the judge acts as a veto: on real pages Jev put
     a genuine wrap at ~0.33 and separate neighbouring items at 0.08-0.17, so the default
     threshold is low. Tune `continuation_threshold` on your own pages."""
-    pairs = continuation_candidates(lines, transcripts, cfg)
+    pairs = continuation_candidates(lines, transcripts, cfg.judging)
     if not pairs:
         return []
     ordered = _judgeable(transcripts)
@@ -208,12 +165,14 @@ def continuations(lines: list[Line], transcripts: dict[int, Transcript], cfg: Cl
     confirmed: list[tuple[int, int]] = []
     ask: dict[tuple[int, int], tuple[int, int, str]] = {}  # (i, j) -> (above n, below n, cache key)
     questions = []
+    model = judge.model if judge else judge_model(cfg)
+    threshold = cfg.judging.continuation_threshold
     for above, below, spacing, indented in pairs:
-        key = AICache.key("continuation", PROMPT_VERSION, cfg.model, round(spacing, 2), indented,
+        key = AICache.key("continuation", PROMPT_VERSION, model, round(spacing, 2), indented,
                           state_line(transcripts[above]), state_line(transcripts[below]))
         hit = cache.get("continuations", key)
         if hit is not None:
-            if hit["p"] >= cfg.continuation_threshold:
+            if hit["p"] >= threshold:
                 confirmed.append((above, below))
             continue
         q = Continuation(index[above], index[below], spacing, indented)
@@ -226,7 +185,7 @@ def continuations(lines: list[Line], transcripts: dict[int, Transcript], cfg: Cl
             if p is None:
                 continue
             cache.put("continuations", key, {"p": p})
-            if p >= cfg.continuation_threshold:
+            if p >= threshold:
                 confirmed.append((above, below))
     return sorted(confirmed)
 

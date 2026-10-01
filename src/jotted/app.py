@@ -17,14 +17,13 @@ from .adapters.remarkable_library import RemarkableLibrary
 from .adapters.sqlite_repo import SqliteRepository
 from .adapters.todo_document import TodoDocument
 from .aicache import AICache
-from .classify import ClassificationError
 from .config import Config
 from .core import service
-from .recognise import RecognitionError
+from .llm import ModelError
 
 log = logging.getLogger("jotted")
 
-SYNC_ERRORS = (cloud.CloudError, RecognitionError, ClassificationError)
+SYNC_ERRORS = (cloud.CloudError, ModelError)
 
 
 @dataclass
@@ -38,7 +37,7 @@ class App:
     def build(cls, cfg: Config) -> "App":
         cache = AICache(cfg.paths.cache_dir / "ai")
         return cls(cfg=cfg, repo=SqliteRepository(cfg.server.db),
-                   source=RemarkableLibrary(cfg, cache), judge=ModelActionJudge(cfg.classification, cache))
+                   source=RemarkableLibrary(cfg, cache), judge=ModelActionJudge(cfg, cache))
 
     def todo_document(self) -> TodoDocument:
         s = self.repo.settings()

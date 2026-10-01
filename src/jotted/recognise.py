@@ -3,26 +3,22 @@
 One request per page carries every uncached line, each image labelled with its
 line number. Structured output returns {n, drawing, checkbox, text} per line.
 
-The model is behind a port, `HandwritingReader`, with an adapter per provider
-(`adapters/anthropic_reader.py`). The prompt, schema, rendering and cache live
-here, so they are shared. To add a provider: write an adapter with a `read()`
-that sends `SYSTEM`, the images and `SCHEMA`, then register it in `PROVIDERS`
-and `config.RECOGNITION_PROVIDERS`.
+The model is the configured LLM (`jotted.llm`); its adapter's `read()` sends
+`SYSTEM`, the images and `SCHEMA`. The prompt, schema, rendering and cache live
+here, so every provider shares them.
 """
 
 from __future__ import annotations
 
-import importlib
 import io
 import logging
-from dataclasses import dataclass
-from typing import Protocol
 
 from PIL import Image, ImageDraw
 
 from .aicache import AICache
-from .config import RecognitionConfig
+from .config import LLMConfig
 from .lines import Line
+from .llm import LLM, LineImage, Transcript, llm_for
 
 log = logging.getLogger(__name__)
 
@@ -70,56 +66,6 @@ SCHEMA = {
 }
 
 
-class RecognitionError(Exception):
-    pass
-
-
-@dataclass
-class Transcript:
-    n: int
-    checkbox: str  # "empty", "checked" or "none"
-    text: str
-    drawing: bool = False
-    cached: bool = False
-
-
-@dataclass(frozen=True)
-class LineImage:
-    n: int  # the line's number on the page, as the model must report it back
-    png: bytes
-
-
-class HandwritingReader(Protocol):
-    """A model that reads handwritten lines. Raises RecognitionError on failure.
-
-    Adapter classes also carry LABEL and KEY_URL (where to get a key), for setup."""
-
-    model: str
-
-    def read(self, images: list[LineImage]) -> dict[int, Transcript]:
-        """A transcript per line number; lines the model skipped are simply absent."""
-
-    def verify(self) -> None:
-        """Check the key works, without reading anything (setup calls this)."""
-
-
-# provider name -> "module:class", imported only when used, so other providers'
-# SDKs need not be installed.
-PROVIDERS = {"anthropic": "jotted.adapters.anthropic_reader:AnthropicReader"}
-
-
-def reader_class(cfg: RecognitionConfig) -> type:
-    target = PROVIDERS.get(cfg.provider)
-    if target is None:
-        raise RecognitionError(f"unknown recognition provider {cfg.provider!r}; known: {sorted(PROVIDERS)}")
-    module, cls = target.split(":")
-    return getattr(importlib.import_module(module), cls)
-
-
-def reader_for(cfg: RecognitionConfig) -> HandwritingReader:
-    return reader_class(cfg)(cfg)
-
-
 def render_line(line: Line) -> bytes:
     """Scale so a typical stroke is STROKE_PX tall, whatever the line's size; a drawing
     spanning several lines keeps its labels legible instead of being squashed."""
@@ -139,13 +85,13 @@ def render_line(line: Line) -> bytes:
     return buf.getvalue()
 
 
-def line_key(line: Line, cfg: RecognitionConfig) -> str:
+def line_key(line: Line, cfg: LLMConfig) -> str:
     # The model name tells providers apart, so the provider itself is left out (older keys stay valid).
     return AICache.key("transcript", PROMPT_VERSION, cfg.model, sorted(s.id for s in line.strokes))
 
 
-def transcribe(lines: list[Line], cfg: RecognitionConfig, cache: AICache,
-               reader: HandwritingReader | None = None) -> dict[int, Transcript]:
+def transcribe(lines: list[Line], cfg: LLMConfig, cache: AICache,
+               reader: LLM | None = None) -> dict[int, Transcript]:
     """Transcripts for `lines`, from the cache where possible. Only uncached lines are sent,
     and the reader is only created when there are some (so a cached page needs no API key)."""
     out: dict[int, Transcript] = {}
@@ -160,7 +106,7 @@ def transcribe(lines: list[Line], cfg: RecognitionConfig, cache: AICache,
     if not todo:
         return out
 
-    reader = reader or reader_for(cfg)
+    reader = reader or llm_for(cfg)
     got = reader.read([LineImage(line.n, render_line(line)) for line in todo])
     for line in todo:
         t = got.get(line.n)
