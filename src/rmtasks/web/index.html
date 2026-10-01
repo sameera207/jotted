@@ -8,44 +8,78 @@
   :root {
     --bg: #f6f5f1; --panel: #ffffff; --ink: #1d1d1b; --muted: #75736c; --line: #e4e2da;
     --accent: #2f6f4f; --accent-ink: #ffffff; --warn: #a15c00; --danger: #b3261e; --chip: #eeece5;
-    --web: #2b5c9e; --focus: #2f6f4f55;
+    --web: #2b5c9e; --other: #7a4fa8; --focus: #2f6f4f55; --shade: rgba(20, 20, 18, .45);
   }
   @media (prefers-color-scheme: dark) {
     :root {
       --bg: #161614; --panel: #1f1f1c; --ink: #ecebe6; --muted: #9c9a92; --line: #33322e;
       --accent: #6fbf94; --accent-ink: #0f1f16; --warn: #e3a44d; --danger: #f08a82; --chip: #2a2a26;
-      --web: #8db4ea; --focus: #6fbf9455;
+      --web: #8db4ea; --other: #c4a3ea; --focus: #6fbf9455; --shade: rgba(0, 0, 0, .6);
     }
   }
   * { box-sizing: border-box; }
   body { margin: 0; background: var(--bg); color: var(--ink);
          font: 15px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; }
-  main { max-width: 1080px; margin: 0 auto; padding: 28px 16px 64px; }
+  main { max-width: 1080px; margin: 0 auto; padding: 24px 16px 64px; }
   header { display: flex; flex-wrap: wrap; gap: 12px; align-items: flex-end; justify-content: space-between; }
   h1 { font-size: 22px; margin: 0; letter-spacing: -0.01em; }
-  .sub { color: var(--muted); font-size: 13px; margin-top: 2px; }
-  .actions { display: flex; gap: 8px; }
-  button { font: inherit; border: 1px solid var(--line); background: var(--panel); color: var(--ink);
-           border-radius: 8px; padding: 7px 12px; cursor: pointer; }
+  .sub { color: var(--muted); font-size: 13px; margin-top: 2px; min-height: 19px; }
+  .actions { display: flex; gap: 8px; flex-wrap: wrap; }
+  button, select { font: inherit; border: 1px solid var(--line); background: var(--panel); color: var(--ink);
+                   border-radius: 8px; padding: 7px 12px; cursor: pointer; }
   button:hover:not(:disabled) { border-color: var(--muted); }
   button:disabled { opacity: .5; cursor: default; }
   button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
-  button:focus-visible, input:focus-visible { outline: 3px solid var(--focus); outline-offset: 1px; }
+  button:focus-visible, input:focus-visible, select:focus-visible, a:focus-visible {
+    outline: 3px solid var(--focus); outline-offset: 1px; }
+  nav.tabs { display: flex; gap: 4px; margin: 20px 0 0; border-bottom: 1px solid var(--line); }
+  nav.tabs button { border: 0; border-bottom: 2px solid transparent; border-radius: 0; background: none;
+                    padding: 8px 12px; color: var(--muted); }
+  nav.tabs button[aria-selected="true"] { color: var(--ink); border-bottom-color: var(--accent); font-weight: 600; }
   .banner { margin: 16px 0 0; padding: 10px 12px; border-radius: 8px; background: var(--chip); font-size: 14px; }
   .banner.error { color: var(--danger); }
-  .banner.warn { color: var(--warn); }
-  form.add { display: flex; gap: 8px; margin: 22px 0 8px; }
-  form.add input { flex: 1; min-width: 0; font: inherit; padding: 9px 12px; border-radius: 8px;
-                   border: 1px solid var(--line); background: var(--panel); color: var(--ink); }
-  .hint { color: var(--muted); font-size: 12px; margin-bottom: 18px; }
-  section.page { background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
-                 margin-top: 16px; overflow: hidden; }
-  section.page > h2 { display: flex; justify-content: space-between; align-items: baseline; margin: 0;
-                      padding: 12px 16px; font-size: 14px; border-bottom: 1px solid var(--line); }
-  section.page > h2 a { color: var(--muted); font-weight: normal; font-size: 12px; }
+  .toolbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 18px 0 8px; }
+  .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+  .seg button { border: 0; border-radius: 0; padding: 6px 11px; background: var(--panel); }
+  .seg button[aria-pressed="true"] { background: var(--chip); font-weight: 600; }
+  form.add { display: flex; gap: 8px; margin: 14px 0 6px; }
+  form.add input, .field input[type=text] { flex: 1; min-width: 0; font: inherit; padding: 9px 12px;
+      border-radius: 8px; border: 1px solid var(--line); background: var(--panel); color: var(--ink); }
+  .hint { color: var(--muted); font-size: 12px; margin-bottom: 14px; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; margin-top: 14px; }
+  .card > h2 { display: flex; justify-content: space-between; align-items: baseline; margin: 0;
+               padding: 12px 16px; font-size: 14px; border-bottom: 1px solid var(--line); }
+  .card > h2 a { color: var(--muted); font-weight: normal; font-size: 12px; }
+  ul { list-style: none; margin: 0; padding: 0; }
+  li.item { display: flex; gap: 12px; align-items: flex-start; padding: 11px 16px; border-top: 1px solid var(--line); }
+  li.item:first-child { border-top: 0; }
+  li.item input[type=checkbox] { width: 18px; height: 18px; margin: 2px 0 0; accent-color: var(--accent); flex: none; }
+  .body { flex: 1; min-width: 0; }
+  .text { cursor: text; overflow-wrap: anywhere; border-radius: 4px; }
+  .text:hover { background: var(--chip); }
+  li.done .text { text-decoration: line-through; color: var(--muted); }
+  .was { color: var(--muted); font-size: 12px; text-decoration: line-through; }
+  .meta { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 4px; font-size: 12px; }
+  .chip { font-size: 11px; padding: 1px 7px; border-radius: 99px; background: var(--chip); color: var(--muted); }
+  .chip.web { color: var(--web); }
+  .chip.other { color: var(--other); }
+  .chip.edited { color: var(--warn); }
+  .src { color: var(--muted); background: none; border: 0; padding: 0; font-size: 12px; text-decoration: underline;
+         text-underline-offset: 2px; cursor: pointer; }
+  .src:hover { color: var(--ink); }
+  .ink { display: block; margin-top: 6px; max-height: 44px; max-width: 100%; border-radius: 4px;
+         background: #fff; border: 1px solid var(--line); }
+  .edit { width: 100%; font: inherit; padding: 2px 6px; border-radius: 4px; border: 1px solid var(--muted);
+          background: var(--panel); color: var(--ink); }
+  .icon { border: 0; background: none; color: var(--muted); padding: 0 4px; font-size: 18px; line-height: 1; }
+  .icon:hover { color: var(--danger); }
+  .empty { color: var(--muted); padding: 32px 16px; text-align: center; }
+  .spinner { display: inline-block; width: 12px; height: 12px; border: 2px solid currentColor;
+             border-right-color: transparent; border-radius: 50%; animation: spin .8s linear infinite;
+             vertical-align: -1px; margin-right: 6px; }
+  @keyframes spin { to { transform: rotate(360deg); } }
   .page-body { display: grid; grid-template-columns: minmax(0, 1fr) 300px; }
   .preview { border-left: 1px solid var(--line); padding: 14px; background: var(--bg); }
-  .preview a { display: block; }
   .preview img { display: block; width: 100%; height: auto; aspect-ratio: 3 / 4; background: #fff;
                  border-radius: 6px; box-shadow: 0 1px 3px rgba(0,0,0,.18); }
   .preview .cap { color: var(--muted); font-size: 11px; margin-top: 8px; text-align: center; }
@@ -55,76 +89,143 @@
     .preview { border-left: 0; border-top: 1px solid var(--line); }
     .preview img { max-width: 360px; margin: 0 auto; }
   }
-  ul { list-style: none; margin: 0; padding: 0; }
-  li { display: flex; gap: 12px; align-items: flex-start; padding: 10px 16px; border-top: 1px solid var(--line); }
-  li:first-child { border-top: 0; }
-  li input[type=checkbox] { width: 18px; height: 18px; margin: 2px 0 0; accent-color: var(--accent); flex: none; }
-  .body { flex: 1; min-width: 0; }
-  .text { cursor: text; overflow-wrap: anywhere; border-radius: 4px; }
-  .text:hover { background: var(--chip); }
-  li.done .text { text-decoration: line-through; color: var(--muted); }
-  li.missing { opacity: .55; }
-  .was { color: var(--muted); font-size: 12px; text-decoration: line-through; }
-  .meta { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
-  .chip { font-size: 11px; padding: 1px 7px; border-radius: 99px; background: var(--chip); color: var(--muted); }
-  .chip.web { color: var(--web); }
-  .chip.edited, .chip.missing { color: var(--warn); }
-  .edit { width: 100%; font: inherit; padding: 2px 6px; border-radius: 4px; border: 1px solid var(--muted);
-          background: var(--panel); color: var(--ink); }
-  .del { border: 0; background: none; color: var(--muted); padding: 0 4px; font-size: 18px; line-height: 1; }
-  .del:hover { color: var(--danger); }
-  .empty { color: var(--muted); padding: 32px 16px; text-align: center; }
-  .spinner { display: inline-block; width: 12px; height: 12px; border: 2px solid currentColor;
-             border-right-color: transparent; border-radius: 50%; animation: spin .8s linear infinite;
-             vertical-align: -1px; margin-right: 6px; }
-  @keyframes spin { to { transform: rotate(360deg); } }
-  footer { margin-top: 28px; color: var(--muted); font-size: 12px; }
-  footer li { border: 0; padding: 2px 0; display: block; }
+  .settings { padding: 4px 16px 16px; }
+  .field { padding: 14px 0; border-top: 1px solid var(--line); }
+  .field:first-child { border-top: 0; }
+  .field > label, .field > .label { display: block; font-weight: 600; margin-bottom: 4px; }
+  .field .help { color: var(--muted); font-size: 13px; margin-bottom: 8px; }
+  .folders { max-height: 320px; overflow: auto; border: 1px solid var(--line); border-radius: 8px; }
+  .folders label { display: flex; gap: 10px; align-items: center; padding: 6px 10px; border-top: 1px solid var(--line);
+                   font-weight: normal; }
+  .folders label:first-child { border-top: 0; }
+  .folders .count { margin-left: auto; color: var(--muted); font-size: 12px; }
+  .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+  input[type=range] { width: 220px; accent-color: var(--accent); }
+  .log { margin-top: 22px; color: var(--muted); font-size: 12px; }
+  dialog { border: 0; border-radius: 12px; padding: 0; max-width: min(720px, 94vw); width: 100%;
+           background: var(--panel); color: var(--ink); }
+  dialog::backdrop { background: var(--shade); }
+  dialog header { padding: 12px 16px; border-bottom: 1px solid var(--line); align-items: center; }
+  dialog img { display: block; width: 100%; height: auto; background: #fff; }
 </style>
 </head>
 <body>
 <main>
   <header>
     <div>
-      <h1 id="title">rmtasks</h1>
+      <h1>rmtasks</h1>
       <div class="sub" id="status">Loading…</div>
     </div>
     <div class="actions">
-      <button id="pull" title="Download the notebook and read new handwriting">Pull from tablet</button>
-      <button id="push" class="primary" title="Print web changes into the notebook's PDF">Push now</button>
+      <button id="poll" title="Check the Tasks notebook, watched folders and the To-do document now">Check tablet now</button>
     </div>
   </header>
+
+  <nav class="tabs" role="tablist">
+    <button role="tab" data-tab="todo" aria-selected="true">To-do</button>
+    <button role="tab" data-tab="tasks" aria-selected="false">Tasks notebook</button>
+    <button role="tab" data-tab="settings" aria-selected="false">Settings</button>
+  </nav>
   <div id="banner" class="banner" hidden></div>
 
-  <form class="add" id="add">
-    <input id="new" placeholder="Add a task…" autocomplete="off" aria-label="New task">
-    <button type="submit">Add</button>
-  </form>
-  <div class="hint" id="addhint"></div>
+  <!-- To-do: everything, from every source -->
+  <section id="tab-todo">
+    <div class="toolbar">
+      <div class="seg" id="f-status">
+        <button data-v="open" aria-pressed="true">Open</button>
+        <button data-v="done" aria-pressed="false">Done</button>
+        <button data-v="" aria-pressed="false">All</button>
+      </div>
+      <div class="seg" id="f-owner">
+        <button data-v="" aria-pressed="true">Everyone</button>
+        <button data-v="mine" aria-pressed="false">Mine</button>
+        <button data-v="others" aria-pressed="false">Others</button>
+      </div>
+      <select id="f-folder" aria-label="Source folder"><option value="">All sources</option></select>
+    </div>
+    <form class="add" id="add-todo">
+      <input id="new-todo" placeholder="Add a task…" autocomplete="off" aria-label="New task">
+      <button type="submit">Add</button>
+    </form>
+    <div class="hint" id="todo-hint"></div>
+    <div class="card"><ul id="todo-list"></ul></div>
+    <div class="log" id="todo-log"></div>
+  </section>
 
-  <div id="pages"></div>
-  <footer id="log"></footer>
+  <!-- The Tasks notebook, page by page -->
+  <section id="tab-tasks" hidden>
+    <div class="toolbar">
+      <button id="pull">Pull from tablet</button>
+      <button id="push" class="primary">Push now</button>
+      <span class="sub" id="tasks-status"></span>
+    </div>
+    <form class="add" id="add">
+      <input id="new" placeholder="Add a task…" autocomplete="off" aria-label="New task">
+      <button type="submit">Add</button>
+    </form>
+    <div class="hint" id="addhint"></div>
+    <div id="pages"></div>
+    <div class="log" id="log"></div>
+  </section>
+
+  <!-- Settings -->
+  <section id="tab-settings" hidden>
+    <div class="card"><div class="settings">
+      <div class="field">
+        <div class="label">Watched folders</div>
+        <div class="help">Handwriting in these folders is read for action items. New lines are sent to
+          Anthropic (as images) and TypeSafe (as text); nothing else leaves this machine.
+          Your Tasks notebook and the To-do document are always handled separately.</div>
+        <div class="row" style="margin-bottom:8px">
+          <button id="load-library">Load folders from the tablet</button>
+          <span class="sub" id="library-status"></span>
+        </div>
+        <div class="folders" id="folders"><div class="empty">Load the folders to choose.</div></div>
+      </div>
+      <div class="field">
+        <label for="threshold">How sure Jev must be that a line is an action</label>
+        <div class="help">Higher means fewer, surer items. Lines below this stay out of the list.</div>
+        <div class="row"><input type="range" id="threshold" min="0.4" max="0.95" step="0.05">
+          <span id="threshold-v"></span></div>
+      </div>
+      <div class="field">
+        <label for="poll-interval">Check the tablet every</label>
+        <select id="poll-interval">
+          <option value="30">30 seconds</option><option value="60">minute</option>
+          <option value="300">5 minutes</option><option value="900">15 minutes</option>
+        </select>
+      </div>
+      <div class="field">
+        <div class="label">To-do document on the tablet</div>
+        <div class="help">A generated document listing every open item with a checkbox. Tick a box with the pen
+          and the item is marked done here on the next check. Items keep their place, so ticks never move.</div>
+        <label class="row" style="font-weight:normal"><input type="checkbox" id="todo-enabled"> Keep a To-do document on the tablet</label>
+        <label class="row" style="font-weight:normal;margin-top:6px"><input type="checkbox" id="todo-others"> Include actions for other people</label>
+        <div class="row" style="margin-top:10px">
+          <input type="text" id="todo-name" aria-label="Document name" style="max-width:220px">
+          <span class="sub">in</span>
+          <select id="todo-folder" aria-label="Folder"><option value="/">/ (top level)</option></select>
+        </div>
+      </div>
+      <div class="field row">
+        <button class="primary" id="save-settings">Save settings</button>
+        <span class="sub" id="settings-status"></span>
+      </div>
+    </div></div>
+  </section>
 </main>
+
+<dialog id="viewer">
+  <header><strong id="viewer-title"></strong><button class="icon" id="viewer-close" aria-label="Close">×</button></header>
+  <img id="viewer-img" alt="">
+</dialog>
 
 <script>
 const $ = (id) => document.getElementById(id);
-let state = null;
-let busy = false;
-let lastAutoError = null;
-let lastPullError = null;
-let pollTimer = null;
-
-// Poll quickly while an automatic sync is pending or running, slowly otherwise.
-function schedulePoll(active) {
-  clearTimeout(pollTimer);
-  pollTimer = setTimeout(refresh, active ? 1500 : 10000);  // 10s: pick up automatic pulls soon after they finish
-}
-
-async function refresh() {
-  if (busy) return schedulePoll(true);
-  try { render(await api("GET", "/api/state")); }
-  catch (e) { banner(e.message, "error"); schedulePoll(false); }
-}
+let tab = "todo";
+let todo = null, tasks = null, settings = null, library = null;
+let filters = { status: "open", owner: "", folder: "" };
+let pollTimer = null, busy = false, lastError = null;
 
 function el(tag, attrs = {}, ...children) {
   const node = document.createElement(tag);
@@ -137,196 +238,317 @@ function el(tag, attrs = {}, ...children) {
   return node;
 }
 
-function ago(iso) {
-  if (!iso) return "never";
-  const s = (Date.now() - new Date(iso).getTime()) / 1000;
+function ago(when) {
+  if (!when) return "never";
+  const t = typeof when === "number" ? when * 1000 : new Date(when).getTime();
+  const s = (Date.now() - t) / 1000;
   if (s < 60) return "just now";
   if (s < 3600) return `${Math.round(s / 60)} min ago`;
   if (s < 86400) return `${Math.round(s / 3600)} h ago`;
-  return new Date(iso).toLocaleString();
+  return new Date(t).toLocaleString();
 }
 
 function banner(text, kind = "") {
   const b = $("banner");
   if (!text) { b.hidden = true; return; }
-  b.hidden = false;
-  b.className = "banner " + kind;
-  b.textContent = text;
+  b.hidden = false; b.className = "banner " + kind; b.textContent = text;
 }
 
 async function api(method, path, body) {
-  const res = await fetch(path, {
-    method, headers: body ? { "Content-Type": "application/json" } : {},
-    body: body ? JSON.stringify(body) : undefined,
-  });
+  const res = await fetch(path, { method, headers: body ? { "Content-Type": "application/json" } : {},
+                                  body: body ? JSON.stringify(body) : undefined });
   const data = await res.json().catch(() => ({}));
-  if (data.state) render(data.state);
   if (!res.ok) throw new Error(data.error || `${res.status} ${res.statusText}`);
   return data;
 }
 
-function render(s) {
-  if (!s) return;
-  state = s;
-  const nb = s.notebook;
-  $("title").textContent = s.notebook_name;
-  const auto = s.auto || {};
-  const status = $("status");
-  status.replaceChildren();
-  if (auto.running) {
-    status.append(el("span", { class: "spinner" }), "Syncing to the tablet…");
-  } else if (auto.scheduled) {
-    status.append(`Syncing to the tablet in ${auto.in_s}s…`);
-  } else if (s.auto_pull && s.auto_pull.running) {
-    status.append(el("span", { class: "spinner" }), "Reading new handwriting from the tablet…");
-  } else {
-    status.append(nb
-      ? `Pulled ${ago(nb.last_pull_at)} · pushed ${ago(nb.last_push_at)}` +
-        (s.pending_push ? " · changes waiting to be pushed" : "")
-      : "Not pulled yet. Pull from the tablet to start.");
+async function act(fn) {
+  try { banner(""); await fn(); } catch (e) { banner(e.message, "error"); }
+}
+
+// ------------------------------------------------------------ background status
+
+function renderStatus(bg) {
+  const s = $("status");
+  s.replaceChildren();
+  const poll = (bg && bg.poll) || {}, push = (bg && bg.push) || {};
+  if (push.running) s.append(el("span", { class: "spinner" }), "Writing to the tablet…");
+  else if (push.scheduled) s.append(`Writing to the tablet in ${push.in_s}s…`);
+  else if (poll.running) s.append(el("span", { class: "spinner" }), poll.step || "Checking the tablet…");
+  else s.append(`Checked the tablet ${ago(poll.last_run_at)}`);
+  const err = poll.last_error || push.last_error;
+  if (err && err !== lastError) banner(err, "error");
+  lastError = err;
+  $("poll").disabled = !!poll.running;
+  return !!(poll.running || push.running || push.scheduled);
+}
+
+function schedule(active) {
+  clearTimeout(pollTimer);
+  pollTimer = setTimeout(refresh, active ? 2000 : 15000);
+}
+
+async function refresh() {
+  if (busy) return schedule(true);
+  try {
+    if (tab === "tasks") { tasks = await api("GET", "/api/state"); renderTasks(); schedule(renderStatus(tasks.background)); }
+    else { await loadTodo(); }
+  } catch (e) { banner(e.message, "error"); schedule(false); }
+}
+
+// ------------------------------------------------------------ To-do
+
+async function loadTodo() {
+  const q = new URLSearchParams(Object.entries(filters).filter(([, v]) => v));
+  todo = await api("GET", "/api/todo?" + q);
+  settings = settings || todo.settings;
+  if (tab === "todo") renderTodo();
+  schedule(renderStatus(todo.background));
+}
+
+function sourceLabel(item) {
+  const s = item.source;
+  if (item.kind === "task") return `${s.name}${s.page ? ` · p${s.page}` : ""}`;
+  return `${(s.folder || "/").replace(/^\//, "") || "Library"} › ${s.name} · p${s.page}`;
+}
+
+function ownerChip(item) {
+  if (item.kind === "task") return el("span", { class: "chip" + (item.source.origin === "web" ? " web" : "") },
+    item.source.origin === "web" ? "added on web" : "Tasks notebook");
+  const text = { me: "mine", someone_else: "someone else", unclear: "owner unclear" }[item.owner] || item.owner;
+  return el("span", { class: "chip" + (item.owner === "someone_else" ? " other" : "") }, text);
+}
+
+function renderTodo() {
+  const folders = new Set((todo.sources || []).map((d) => d.folder));
+  const sel = $("f-folder");
+  const current = sel.value;
+  sel.replaceChildren(el("option", { value: "" }, "All sources"),
+    ...[...folders].sort().map((f) => el("option", { value: f }, f === "/" ? "/ (top level)" : f)));
+  sel.value = current;
+
+  const watched = (todo.settings.watch || []).length;
+  $("todo-hint").textContent = (watched ? `Collecting from ${watched} watched location(s).` :
+      "No folders watched yet: choose some in Settings.") +
+    " New tasks go to the Tasks notebook." + (todo.settings.todo_enabled ? " The list is also on the tablet as “" + todo.settings.todo_name + "”." : "");
+
+  const list = $("todo-list");
+  list.replaceChildren();
+  if (!todo.items.length) {
+    list.append(el("li", { class: "empty" }, filters.status === "open" ? "Nothing open." : "Nothing here."));
   }
-  if (auto.last_error && auto.last_error !== lastAutoError) banner(`Automatic sync failed: ${auto.last_error}`, "error");
-  lastAutoError = auto.last_error;
-  if (s.auto_pull && s.auto_pull.last_error && s.auto_pull.last_error !== lastPullError)
-    banner(`Automatic pull failed: ${s.auto_pull.last_error}`, "error");
-  lastPullError = s.auto_pull && s.auto_pull.last_error;
-  schedulePoll(auto.running || auto.scheduled || (s.auto_pull && s.auto_pull.running));
+  for (const it of todo.items) list.append(todoRow(it));
+
+  const log = $("todo-log");
+  const sum = todo.background && todo.background.poll && todo.background.poll.last_summary;
+  const c = sum && sum.collect;
+  log.textContent = c ? `Last check: ${c.docs_changed} changed document(s), ${c.pages_read} page(s) read, ` +
+    `${c.pages_skipped} unchanged page(s) skipped, ${c.lines_judged} new line(s) judged, ${c.actions_new} new action(s).` : "";
+}
+
+function todoRow(it) {
+  const done = it.status === "done";
+  const li = el("li", { class: "item" + (done ? " done" : "") });
+  const box = el("input", { type: "checkbox", checked: done, "aria-label": "Done",
+    onchange: () => act(async () => { await api("PATCH", `/api/items/${it.kind}/${it.id}`,
+      { status: box.checked ? "done" : "open" }); await loadTodo(); }) });
+  const text = el("div", { class: "text", tabindex: 0, title: "Click to edit" }, it.text);
+  text.addEventListener("click", () => startEdit(it.text, text, (v) => api("PATCH", `/api/items/${it.kind}/${it.id}`, { text: v }).then(loadTodo)));
+  const body = el("div", { class: "body" }, text);
+  if (it.edited && it.paper_text) body.append(el("div", { class: "was" }, it.paper_text));
+  const meta = el("div", { class: "meta" }, ownerChip(it));
+  if (it.edited) meta.append(el("span", { class: "chip edited" }, "edited here"));
+  if (it.kind === "action" || it.source.anchor) {
+    meta.append(el("button", { class: "src", title: "Show where this was written",
+      onclick: () => openSource(it) }, sourceLabel(it)));
+  }
+  body.append(meta);
+  if (it.kind === "action") {
+    body.append(el("img", { class: "ink", loading: "lazy", alt: "The handwritten line",
+      src: `/api/sources/${encodeURIComponent(it.source.doc_id)}/line/${encodeURIComponent(it.source.anchor)}.svg` }));
+  }
+  li.append(box, body);
+  if (it.kind === "action") {
+    li.append(el("button", { class: "icon", title: "Not an action: remove from the list", "aria-label": "Not an action",
+      onclick: () => act(async () => { await api("PATCH", `/api/items/action/${it.id}`, { dismissed: true }); await loadTodo(); }) }, "×"));
+  }
+  return li;
+}
+
+function openSource(it) {
+  const s = it.source;
+  const src = it.kind === "action"
+    ? `/api/sources/${encodeURIComponent(s.doc_id)}/${s.page}/preview.svg?anchor=${encodeURIComponent(s.anchor)}`
+    : `/api/pages/${s.page}/preview.svg`;
+  $("viewer-title").textContent = sourceLabel(it);
+  $("viewer-img").src = src;
+  $("viewer-img").alt = `Page ${s.page} of ${s.name}`;
+  $("viewer").showModal();
+}
+
+function startEdit(value, node, save) {
+  const input = el("input", { class: "edit", value, "aria-label": "Task text" });
+  node.replaceWith(input);
+  input.focus(); input.select();
+  let done = false;
+  const finish = (ok) => {
+    if (done) return; done = true;
+    const v = input.value.trim();
+    if (ok && v && v !== value) act(() => save(v)); else refresh();
+  };
+  input.addEventListener("keydown", (e) => { if (e.key === "Enter") finish(true); if (e.key === "Escape") finish(false); });
+  input.addEventListener("blur", () => finish(true));
+}
+
+function bindSeg(id, key) {
+  $(id).addEventListener("click", (e) => {
+    const b = e.target.closest("button"); if (!b) return;
+    for (const x of $(id).querySelectorAll("button")) x.setAttribute("aria-pressed", x === b ? "true" : "false");
+    filters[key] = b.dataset.v;
+    act(loadTodo);
+  });
+}
+
+// ------------------------------------------------------------ Tasks notebook
+
+function renderTasks() {
+  const s = tasks, nb = s.notebook;
+  $("tasks-status").textContent = nb ? `Pulled ${ago(nb.last_pull_at)} · pushed ${ago(nb.last_push_at)}` +
+    (s.pending_push ? " · changes waiting to be written" : "") : `${s.notebook_name}: not pulled yet.`;
   $("push").disabled = busy || !s.writable;
-  $("push").title = s.writable ? "Print web changes into the notebook's PDF"
-    : "Only template notebooks can be written to (rmtasks template upload)";
+  $("push").title = s.writable ? "Print web changes into the notebook's PDF" : "Only template notebooks can be written to";
   $("pull").disabled = busy;
   $("new").disabled = !nb;
-  $("addhint").textContent = nb
-    ? `New tasks go in the footer of page ${s.current_page}.` +
-      (s.auto && s.writable ? " Changes sync to the tablet automatically." : "")
-    : "";
-
+  $("addhint").textContent = nb ? `New tasks go in the footer of page ${s.current_page}.` +
+    (s.writable ? " Changes are written to the tablet automatically." : "") : "";
   const root = $("pages");
   root.replaceChildren();
-  if (!s.pages.length) {
-    root.append(el("div", { class: "empty" }, nb ? "No tasks found yet." : "Nothing here yet."));
-  }
+  if (!s.pages.length) root.append(el("div", { class: "empty" }, nb ? "No tasks found yet." : "Nothing here yet."));
   const version = nb ? encodeURIComponent([nb.last_pull_at, nb.web_changed_at, nb.last_push_at].join("|")) : "";
   for (const page of s.pages) {
-    const head = el("h2", {},
-      el("span", {}, `Page ${page.index}` + (page.date ? ` · ${page.date}` : "")),
-      el("a", { href: `/api/pages/${page.index}.svg`, target: "_blank",
-                title: "What was read: line bands, kinds and text" }, "what was read"));
+    const head = el("h2", {}, el("span", {}, `Page ${page.index}` + (page.date ? ` · ${page.date}` : "")),
+      el("a", { href: `/api/pages/${page.index}.svg`, target: "_blank", title: "Line bands, kinds and text" }, "what was read"));
     const list = el("ul");
     for (const t of page.tasks) list.append(taskRow(t));
-    const tasks = page.tasks.length ? list : el("div", { class: "no-tasks" }, "No tasks on this page.");
     const src = `/api/pages/${page.index}/preview.svg?v=${version}`;
     const preview = el("div", { class: "preview" },
       el("a", { href: src, target: "_blank", title: "Open full size" },
         el("img", { src, alt: `Page ${page.index} as the tablet shows it`, loading: "lazy" })),
-      el("div", { class: "cap" }, s.pending_push ? "After the next push" : "As on the tablet"));
-    root.append(el("section", { class: "page" }, head, el("div", { class: "page-body" }, tasks, preview)));
+      el("div", { class: "cap" }, s.pending_push ? "After the next write" : "As on the tablet"));
+    root.append(el("section", { class: "card" }, head,
+      el("div", { class: "page-body" }, page.tasks.length ? list : el("div", { class: "no-tasks" }, "No tasks on this page."), preview)));
   }
-
   const log = $("log");
   log.replaceChildren();
-  if (s.syncs && s.syncs.length) {
-    log.append(el("div", {}, "Recent syncs"));
-    const ul = el("ul");
-    for (const x of s.syncs) {
-      const d = x.detail ? JSON.parse(x.detail) : {};
-      const what = x.kind === "pull"
-        ? `${d.new ?? 0} new, ${(d.text_from_paper ?? 0) + (d.status_from_paper ?? 0)} changed on paper`
-        : `${d.strikes ?? 0} done, ${d.moved ?? 0} edited, ${d.footer ?? 0} in the footer`;
-      ul.append(el("li", {}, `${x.kind} · ${ago(x.at)} · ${what}`));
-    }
-    log.append(ul);
+  for (const x of s.syncs || []) {
+    const d = x.detail ? JSON.parse(x.detail) : {};
+    const what = x.kind === "pull" ? `${d.new ?? 0} new, ${(d.text_from_paper ?? 0) + (d.status_from_paper ?? 0)} changed on paper`
+      : `${d.strikes ?? 0} done, ${d.moved ?? 0} edited, ${d.footer ?? 0} in the footer`;
+    log.append(el("div", {}, `${x.kind} · ${ago(x.at)} · ${what}`));
   }
 }
 
 function taskRow(t) {
   const done = t.status === "done";
-  const li = el("li", { class: [done && "done", t.missing && "missing"].filter(Boolean).join(" ") });
-  const box = el("input", {
-    type: "checkbox", checked: done, "aria-label": "Done",
-    onchange: () => mutate(() => api("PATCH", `/api/tasks/${t.id}`, { status: box.checked ? "done" : "open" })),
-  });
-  const text = el("div", { class: "text", title: "Click to edit", tabindex: 0 }, t.text);
-  text.addEventListener("click", () => startEdit(t, text));
-  text.addEventListener("keydown", (e) => { if (e.key === "Enter") startEdit(t, text); });
-
-  const meta = el("div", { class: "meta" });
-  meta.append(el("span", { class: "chip " + t.origin }, t.origin === "web" ? "from web" : "handwritten"));
+  const li = el("li", { class: "item" + (done ? " done" : "") });
+  const box = el("input", { type: "checkbox", checked: done, "aria-label": "Done",
+    onchange: () => act(async () => { tasks = (await api("PATCH", `/api/tasks/${t.id}`, { status: box.checked ? "done" : "open" })).state; renderTasks(); }) });
+  const text = el("div", { class: "text", tabindex: 0, title: "Click to edit" }, t.text);
+  text.addEventListener("click", () => startEdit(t.text, text, async (v) => { tasks = (await api("PATCH", `/api/tasks/${t.id}`, { text: v })).state; renderTasks(); }));
+  const meta = el("div", { class: "meta" }, el("span", { class: "chip " + t.origin }, t.origin === "web" ? "from web" : "handwritten"));
   if (t.edited) meta.append(el("span", { class: "chip edited" }, "edited on web · new text in the footer"));
-  if (t.origin === "paper" && t.paper_status === "done") meta.append(el("span", { class: "chip" }, "ticked on paper"));
-  if (t.missing) meta.append(el("span", { class: "chip missing" }, "not on the page any more"));
-
   const body = el("div", { class: "body" }, text);
   if (t.edited) body.append(el("div", { class: "was" }, t.paper_text));
   body.append(meta);
   li.append(box, body);
-  if (t.origin === "web") {
-    li.append(el("button", {
-      class: "del", title: "Delete", "aria-label": "Delete",
-      onclick: () => mutate(() => api("DELETE", `/api/tasks/${t.id}`)),
-    }, "×"));
-  }
+  if (t.origin === "web") li.append(el("button", { class: "icon", title: "Delete", "aria-label": "Delete",
+    onclick: () => act(async () => { tasks = (await api("DELETE", `/api/tasks/${t.id}`)).state; renderTasks(); }) }, "×"));
   return li;
 }
 
-function startEdit(t, node) {
-  const input = el("input", { class: "edit", value: t.text, "aria-label": "Task text" });
-  node.replaceWith(input);
-  input.focus();
-  input.select();
-  let done = false;
-  const finish = (save) => {
-    if (done) return;
-    done = true;
-    const value = input.value.trim();
-    if (save && value && value !== t.text) mutate(() => api("PATCH", `/api/tasks/${t.id}`, { text: value }));
-    else render(state);
-  };
-  input.addEventListener("keydown", (e) => {
-    if (e.key === "Enter") finish(true);
-    if (e.key === "Escape") finish(false);
-  });
-  input.addEventListener("blur", () => finish(true));
-}
-
-async function mutate(fn) {
-  try { banner(""); await fn(); }
-  catch (e) { banner(e.message, "error"); }
-}
-
 async function syncAction(kind) {
-  const btn = $(kind);
-  const label = btn.textContent;
-  busy = true;
-  render(state);
-  btn.replaceChildren(el("span", { class: "spinner" }), kind === "pull" ? "Pulling…" : "Pushing…");
-  banner(kind === "pull"
-    ? "Downloading the notebook and reading new handwriting. This can take a minute."
-    : "Pulling first, then printing changes into the PDF and uploading it.");
+  const btn = $(kind), label = btn.textContent;
+  busy = true; btn.replaceChildren(el("span", { class: "spinner" }), kind === "pull" ? "Pulling…" : "Writing…");
   try {
     const r = await api("POST", `/api/${kind}`);
-    const s = r.summary || {};
-    const changes = (s.text_from_paper || 0) + (s.status_from_paper || 0);
-    banner(kind === "pull"
-      ? `Pulled: ${s.new || 0} new task(s), ${changes} change(s) from paper.`
-      : `Pushed: ${r.strikes} done, ${r.moved} edited, ${r.footer} in the footer. Let the tablet sync to see them.`);
-  } catch (e) {
-    banner(e.message, "error");
-  } finally {
-    busy = false;
-    btn.textContent = label;
-    render(state);
-  }
+    tasks = r.state; renderTasks();
+    banner(kind === "pull" ? `Pulled: ${r.summary.new} new task(s).` : `Written: ${r.strikes} done, ${r.moved} edited, ${r.footer} in the footer.`);
+  } catch (e) { banner(e.message, "error"); }
+  finally { busy = false; btn.textContent = label; refresh(); }
 }
 
+// ------------------------------------------------------------ Settings
+
+async function loadSettings() {
+  settings = await api("GET", "/api/settings");
+  $("threshold").value = settings.action_threshold;
+  $("threshold-v").textContent = Math.round(settings.action_threshold * 100) + "%";
+  $("poll-interval").value = String(settings.poll_interval_s);
+  $("todo-enabled").checked = settings.todo_enabled;
+  $("todo-others").checked = settings.tablet_include_others;
+  $("todo-name").value = settings.todo_name;
+  renderFolders();
+}
+
+function renderFolders() {
+  const box = $("folders");
+  const watch = new Set(settings.watch || []);
+  if (!library) {
+    box.replaceChildren(...(watch.size ? [...watch].map((w) => el("label", {},
+      el("input", { type: "checkbox", checked: true, "data-path": w }), w)) : [el("div", { class: "empty" }, "Load the folders to choose.")]));
+    return;
+  }
+  box.replaceChildren(...library.folders.map((f) => el("label", {},
+    el("input", { type: "checkbox", checked: watch.has(f.path), "data-path": f.path }), f.path,
+    el("span", { class: "count" }, `${f.documents} document(s)`))));
+  const sel = $("todo-folder");
+  sel.replaceChildren(el("option", { value: "/" }, "/ (top level)"), ...library.folders.map((f) => el("option", { value: f.path }, f.path)));
+  sel.value = settings.todo_folder || "/";
+}
+
+$("load-library").addEventListener("click", () => act(async () => {
+  $("library-status").textContent = "Listing your library…";
+  library = await api("GET", "/api/library");
+  $("library-status").textContent = `${library.folders.length} folder(s), ${library.documents.length} document(s)`;
+  renderFolders();
+}));
+$("threshold").addEventListener("input", () => { $("threshold-v").textContent = Math.round($("threshold").value * 100) + "%"; });
+$("save-settings").addEventListener("click", () => act(async () => {
+  const watch = [...$("folders").querySelectorAll("input[type=checkbox]")].filter((x) => x.checked).map((x) => x.dataset.path);
+  settings = await api("PUT", "/api/settings", {
+    watch, action_threshold: Number($("threshold").value), poll_interval_s: Number($("poll-interval").value),
+    todo_enabled: $("todo-enabled").checked, tablet_include_others: $("todo-others").checked,
+    todo_name: $("todo-name").value.trim(), todo_folder: library ? $("todo-folder").value : settings.todo_folder,
+  });
+  $("settings-status").textContent = "Saved. Checking the tablet now…";
+  renderFolders();
+}));
+
+// ------------------------------------------------------------ wiring
+
+function showTab(name) {
+  tab = name;
+  for (const b of document.querySelectorAll("nav.tabs button")) b.setAttribute("aria-selected", b.dataset.tab === name ? "true" : "false");
+  for (const s of ["todo", "tasks", "settings"]) $("tab-" + s).hidden = s !== name;
+  banner("");
+  if (name === "settings") act(loadSettings);
+  refresh();
+}
+document.querySelector("nav.tabs").addEventListener("click", (e) => { const b = e.target.closest("button"); if (b) showTab(b.dataset.tab); });
+bindSeg("f-status", "status");
+bindSeg("f-owner", "owner");
+$("f-folder").addEventListener("change", () => { filters.folder = $("f-folder").value; act(loadTodo); });
+$("poll").addEventListener("click", () => act(async () => { await api("POST", "/api/poll"); setTimeout(refresh, 500); }));
 $("pull").addEventListener("click", () => syncAction("pull"));
 $("push").addEventListener("click", () => syncAction("push"));
-$("add").addEventListener("submit", (e) => {
-  e.preventDefault();
-  const text = $("new").value.trim();
-  if (!text) return;
-  mutate(async () => { await api("POST", "/api/tasks", { text }); $("new").value = ""; });
-});
+$("viewer-close").addEventListener("click", () => $("viewer").close());
+$("viewer").addEventListener("click", (e) => { if (e.target === $("viewer")) $("viewer").close(); });
+async function addTask(input) {
+  const text = input.value.trim(); if (!text) return;
+  await act(async () => { await api("POST", "/api/tasks", { text }); input.value = ""; await refresh(); });
+}
+$("add").addEventListener("submit", (e) => { e.preventDefault(); addTask($("new")); });
+$("add-todo").addEventListener("submit", (e) => { e.preventDefault(); addTask($("new-todo")); });
 
 refresh();
 </script>

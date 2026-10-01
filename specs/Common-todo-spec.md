@@ -1,6 +1,6 @@
 # rM Tasks — Common to-do list spec
 
-Oct 1, 2026 · @Sam · draft
+Oct 1, 2026 · @Sam · stages 1–4 built; stage 5 partly (see Status)
 
 ## Purpose
 
@@ -139,3 +139,13 @@ Every stage keeps the current app working and adds tests that use fake adapters 
 
 - [ ] Should dismissed actions ("not an action") be fed back as examples in the Jev question? (A later tuning step.)
 - [ ] Should due dates in a line ("by Friday") be extracted and shown? Jev can select the date phrase from candidates found in code.
+
+## Status (Oct 1, 2026)
+
+| # | Stage | State |
+| --- | --- | --- |
+| 1 | Core, ports, reMarkable library adapter, change detection, `collect --dry-run` | Done. Live: a second run with no tablet changes read 0 documents and judged 0 lines |
+| 2 | Jev action and owner judge; combined list with line images and highlighted source pages | Done. Live on the old `/Tasks` notebook: 7 lines judged, 4 actions |
+| 3 | Settings in the web UI; one background scheduler | Done. Saving settings triggers a check immediately |
+| 4 | To-do document: fixed slots, publish, read ticks | Done. Published live with 11 items. Tick reading is tested with synthetic strokes; a pen test on the tablet is still to do |
+| 5 | Tasks notebook on the core | Partly. Tasks items are in the combined list and on the To-do document, and a tick there marks them done and reprints the Tasks notebook. One scheduler drives everything. Reading and printing the Tasks notebook still run through `sync.py` and `analysis.py` rather than a core port: its kind rules (checkbox, zones, footer) differ from the action judge and need their own port |

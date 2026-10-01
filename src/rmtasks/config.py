@@ -115,7 +115,6 @@ class ServerConfig:
     db: Path = Path("./data/rmtasks.db")
     auto_push: bool = True
     auto_push_delay_s: int = 5
-    auto_pull_interval_s: int = 60
 
 
 @dataclass(frozen=True)

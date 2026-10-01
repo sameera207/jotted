@@ -96,7 +96,8 @@ port = 8765
 db   = "./data/rmtasks.db"   # SQLite task store (gitignored)
 auto_push = true            # push to the tablet after every add, edit or tick (template notebooks only)
 auto_push_delay_s = 5       # wait this long after the last change, so quick edits go out as one push
-auto_pull_interval_s = 60   # check the cloud this often; pull only when the notebook changed. 0 = off
+# Watched folders, the action threshold, the poll interval and the To-do document
+# are set in the web app (Settings) and stored in the database.
 
 [output]
 formats   = ["table", "json", "svg"]

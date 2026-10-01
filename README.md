@@ -119,6 +119,19 @@ uv run rmtasks diff out/<first-run> out/<second-run>
 
 Every task that existed in the first run should keep identical checkbox IDs.
 
+## The common to-do list
+
+`rmtasks serve` runs a local web app at http://127.0.0.1:8765. It collects action items from the folders you choose and keeps them in one list. It also keeps that list on the tablet as a To-do document you can tick with the pen.
+
+1. Open **Settings**, load your folders, tick the ones to watch (for example `/Meeting Notes`), and save.
+2. In the background, the app checks the tablet every minute. Only documents whose cloud copy changed are downloaded; only pages whose content changed are parsed; only lines with new strokes are sent to Claude (as images) and Jev (as text). Jev decides whether each line is an action and who owns it.
+3. **To-do** shows everything: collected actions, with an image of the handwritten line and a link to its page, plus the Tasks notebook's tasks. Filter by open/done, mine/others and source. Mark "×" on a line that isn't an action.
+4. Turn on **To-do document on the tablet** in Settings. Each item gets a fixed slot with a printed checkbox. Tick a box with the pen and the item is marked done on the next check.
+
+From the command line: `rmtasks library`, `rmtasks watch add "/Meeting Notes"`, `rmtasks collect --dry-run` (what changed, nothing read), `rmtasks collect`, `rmtasks todo`.
+
+Code layout: `rmtasks/core` holds the model, ports and services and imports no adapter. `rmtasks/adapters` holds the reMarkable library, Jev, SQLite and To-do document implementations. `rmtasks/app.py` wires them together and runs the background scheduler. See `specs/Common-todo-spec.md`.
+
 ## Troubleshooting
 
 | Symptom | Fix |

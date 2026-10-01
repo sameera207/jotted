@@ -498,27 +498,35 @@ def test_template_draws_moved_marks_and_numbered_footer(tmp_path, cfg):
     assert pdf.read_bytes().startswith(b"%PDF")
 
 
-def test_auto_pusher_coalesces_bursts():
-    import threading
+def test_scheduler_coalesces_bursts_of_edits():
     import time as _time
 
-    from rmtasks.server import AutoPusher
+    from rmtasks.app import Scheduler
 
-    calls = []
-    done = threading.Event()
+    class FakeApp:
+        pushes = 0
 
-    def push():
-        calls.append(_time.monotonic())
-        done.set()
+        def tasks_push_if_pending(self):
+            FakeApp.pushes += 1
+            return True
 
-    auto = AutoPusher(0.2, push)
+        def sync_todo(self):
+            return {}
+
+    sched = Scheduler(FakeApp(), push_delay_s=0.2)
+    import threading
+
+    threading.Thread(target=sched._push_loop, daemon=True).start()
     for _ in range(5):
-        auto.schedule()
+        sched.push_soon()
         _time.sleep(0.05)
-    assert auto.status()["scheduled"]
-    assert done.wait(2)
+    assert sched.describe()["push"]["scheduled"]
+    for _ in range(40):
+        if FakeApp.pushes:
+            break
+        _time.sleep(0.05)
     _time.sleep(0.3)
-    assert len(calls) == 1 and not auto.status()["scheduled"] and auto.status()["last_error"] is None
+    assert FakeApp.pushes == 1 and not sched.describe()["push"]["scheduled"]
 
 
 def test_most_recent_change_wins(tmp_path, ai_cfg, monkeypatch):
@@ -595,11 +603,7 @@ def test_web_api(tmp_path, ai_cfg, monkeypatch):
     assert client.patch("/api/tasks/999", json={"status": "done"}).status_code == 404
     import time as _time
 
-    for _ in range(40):  # edits schedule an automatic push
-        if pushes:
-            break
-        _time.sleep(0.05)
-    assert pushes
+    assert client.get("/api/state").get_json()["background"]["push"]["scheduled"]  # edits schedule a write
 
 
 def test_bullets_are_stripped_from_task_text():

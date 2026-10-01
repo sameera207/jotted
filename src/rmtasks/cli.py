@@ -13,6 +13,7 @@ from pathlib import Path
 
 from rich.console import Console
 from rich.logging import RichHandler
+from rich.markup import escape
 from rich.table import Table
 
 from . import analysis, cloud, notebook, report, sync, template
@@ -224,6 +225,81 @@ def cmd_push(cfg: Config, args: argparse.Namespace) -> int:
     return 0
 
 
+def _app(cfg: Config):
+    from .app import App
+
+    return App.build(cfg, _store(cfg))
+
+
+def cmd_library(cfg: Config, args: argparse.Namespace) -> int:
+    from .core.model import DocInfo
+
+    app = _app(cfg)
+    with console.status("Listing the library…"):
+        docs = app.source.list_documents()
+        folders = app.source.folders()
+    watched = app.repo.settings()
+    table = Table(box=None, pad_edge=False, padding=(0, 2, 0, 0))
+    for col in ("folder", "documents", "watched"):
+        table.add_column(col)
+    for f in ["/"] + folders:
+        n = sum(1 for d in docs if d.folder == f)
+        table.add_row(f, str(n), "yes" if watched.watches(DocInfo("remarkable", "", "x", f, "")) else "")
+    console.print(table)
+    return 0
+
+
+def cmd_watch(cfg: Config, args: argparse.Namespace) -> int:
+    app = _app(cfg)
+    s = app.repo.settings()
+    if args.action == "add":
+        s.watch = sorted(set(s.watch) | {"/" + args.path.strip("/")})
+    elif args.action == "remove":
+        s.watch = [w for w in s.watch if w.strip("/") != args.path.strip("/")]
+    app.repo.save_settings(s)
+    console.print("Watching: " + (", ".join(s.watch) or "[dim]nothing[/dim]"))
+    return 0
+
+
+def cmd_collect(cfg: Config, args: argparse.Namespace) -> int:
+    from .core import service
+
+    app = _app(cfg)
+    if not app.repo.settings().watch:
+        console.print("Nothing is watched. Add a folder with `rmtasks watch add /Meeting notes` or in the web app.")
+        return 1
+    if args.dry_run:
+        with console.status("Checking what changed (downloads only, nothing is read)…"):
+            todo = service.pending(app.source, app.repo, exclude=app.own_doc_ids(), fetch=True)
+        if not todo:
+            console.print("Nothing changed since the last collection.")
+        for doc, pages in todo:
+            console.print(f"[bold]{doc.path}[/bold]: {len(pages)} changed page(s) "
+                          + (", ".join(str(p.index) for p in pages) if pages else ""))
+        return 0
+    with console.status("Collecting…") as status:
+        summary = app.collect(progress=lambda m: status.update(m))
+    console.print(summary.as_dict())
+    for i in app.repo.items(status="open"):
+        if i["kind"] == "action":
+            src = i["source"]
+            console.print(f"  [{'cyan' if i['owner'] == 'someone_else' else 'green'}]{i['owner']:<12}[/] "
+                          f"{escape(i['text'])}  [dim]{escape(src['folder'])} › {escape(src['name'])} · p{src['page']}[/dim]")
+    return 0 if not summary.errors else 1
+
+
+def cmd_todo(cfg: Config, args: argparse.Namespace) -> int:
+    app = _app(cfg)
+    s = app.repo.settings()
+    if not s.todo_enabled:
+        console.print("The To-do document is off. Turn it on in the web app's settings.")
+        return 1
+    with console.status("Reading ticks and publishing the To-do document…"):
+        result = app.sync_todo(force=args.force)
+    console.print(result)
+    return 0
+
+
 def cmd_serve(cfg: Config, args: argparse.Namespace) -> int:
     from .server import create_app
 
@@ -264,6 +340,17 @@ def build_parser() -> argparse.ArgumentParser:
     pu = sub.add_parser("push", help="print web changes into the template notebook's PDF")
     pu.add_argument("--dry-run", action="store_true", help="build the PDF locally; do not upload")
     pu.set_defaults(func=cmd_push)
+    sub.add_parser("library", help="list the library's folders and which are watched").set_defaults(func=cmd_library)
+    wa = sub.add_parser("watch", help="watch or stop watching a folder (also in the web app)")
+    wa.add_argument("action", choices=["add", "remove"])
+    wa.add_argument("path", help="folder or document path, e.g. '/Meeting notes'")
+    wa.set_defaults(func=cmd_watch)
+    co = sub.add_parser("collect", help="read what changed in watched folders and update the to-do list")
+    co.add_argument("--dry-run", action="store_true", help="only show which documents and pages changed")
+    co.set_defaults(func=cmd_collect)
+    td = sub.add_parser("todo", help="read ticks from, and republish, the To-do document")
+    td.add_argument("--force", action="store_true", help="republish even if nothing changed")
+    td.set_defaults(func=cmd_todo)
     sv = sub.add_parser("serve", help="run the local web app")
     sv.add_argument("--host", help="default: server.host")
     sv.add_argument("--port", type=int, help="default: server.port")

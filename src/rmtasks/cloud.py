@@ -107,20 +107,18 @@ def _parse_json_list(out: str) -> list[dict]:
         raise CloudError(f"could not parse rmapi JSON output: {e}") from e
 
 
-def find_notebook(cfg: Config) -> DocRef:
-    if not cfg.rmapi.token_file.exists():
-        raise CloudError(f"no rmapi token at {cfg.rmapi.token_file}; run `rmtasks auth` first")
-    nodes = _parse_json_list(_run(cfg, ["-ni", "-json", "find", cfg.notebook.folder]))
-    matches = [n for n in nodes if n.get("name") == cfg.notebook.name and n.get("type") == "DocumentType"]
-    if not matches:
-        raise CloudError(
-            f"Notebook not found: {cfg.notebook.name!r} under {cfg.notebook.folder!r}. "
-            "notebook.name must match the visible name exactly."
-        )
-    if len(matches) > 1:
-        ids = ", ".join(m["id"] for m in matches)
-        raise CloudError(f"{len(matches)} notebooks named {cfg.notebook.name!r} ({ids}); narrow notebook.folder")
-    n = matches[0]
+@dataclass(frozen=True)
+class LibraryEntry:
+    """A document in the library, with its folder path ("/" for the root)."""
+    doc: DocRef
+    folder: str
+
+    @property
+    def path(self) -> str:
+        return (self.folder.rstrip("/") + "/" + self.doc.name) if self.folder != "/" else "/" + self.doc.name
+
+
+def _ref(n: dict) -> DocRef:
     return DocRef(
         id=n["id"],
         name=n["name"],
@@ -128,6 +126,47 @@ def find_notebook(cfg: Config) -> DocRef:
         modified=n.get("modifiedClient", ""),
         parent=n.get("parent", ""),
     )
+
+
+def library(cfg: Config) -> tuple[list[LibraryEntry], list[str]]:
+    """Every document (with its folder path) and every folder path in the library. Trash excluded."""
+    if not cfg.rmapi.token_file.exists():
+        raise CloudError(f"no rmapi token at {cfg.rmapi.token_file}; run `rmtasks auth` first")
+    nodes = _parse_json_list(_run(cfg, ["-ni", "-json", "find", "/"]))
+    folders = {n["id"]: n for n in nodes
+               if n.get("type") == "CollectionType" and n.get("id") and n["id"] != "trash" and n.get("parent") != "trash"}
+
+    def folder_path(fid: str, depth: int = 0) -> str:
+        if not fid or fid not in folders or depth > 50:
+            return "/"
+        parent = folder_path(folders[fid].get("parent", ""), depth + 1)
+        return (parent.rstrip("/") + "/" + folders[fid]["name"]) if parent != "/" else "/" + folders[fid]["name"]
+
+    docs = [LibraryEntry(_ref(n), folder_path(n.get("parent", "")))
+            for n in nodes if n.get("type") == "DocumentType" and n.get("parent") != "trash"]
+    return docs, sorted(folder_path(fid) for fid in folders)
+
+
+def find_document(cfg: Config, name: str, folder: str = "/") -> DocRef | None:
+    """The document called `name` under `folder` (searched recursively); None if absent."""
+    nodes = _parse_json_list(_run(cfg, ["-ni", "-json", "find", folder]))
+    matches = [n for n in nodes if n.get("name") == name and n.get("type") == "DocumentType"]
+    if len(matches) > 1:
+        ids = ", ".join(m["id"] for m in matches)
+        raise CloudError(f"{len(matches)} documents named {name!r} ({ids}); narrow the folder")
+    return _ref(matches[0]) if matches else None
+
+
+def find_notebook(cfg: Config) -> DocRef:
+    if not cfg.rmapi.token_file.exists():
+        raise CloudError(f"no rmapi token at {cfg.rmapi.token_file}; run `rmtasks auth` first")
+    doc = find_document(cfg, cfg.notebook.name, cfg.notebook.folder)
+    if doc is None:
+        raise CloudError(
+            f"Notebook not found: {cfg.notebook.name!r} under {cfg.notebook.folder!r}. "
+            "notebook.name must match the visible name exactly."
+        )
+    return doc
 
 
 def download(cfg: Config, doc: DocRef) -> Path:
@@ -146,8 +185,8 @@ def download(cfg: Config, doc: DocRef) -> Path:
     return dest
 
 
-def upload_pdf(cfg: Config, pdf: Path, *, content_only: bool) -> None:
-    """Upload a PDF into `notebook.folder`; the document is named after the file.
+def upload_pdf(cfg: Config, pdf: Path, *, content_only: bool, folder: str | None = None) -> None:
+    """Upload a PDF into `folder` (default `notebook.folder`); the document is named after the file.
 
     content_only=True swaps only the PDF inside an existing document: its page list
     and handwriting (.rm files) are left as they are. Without it, a new document is
@@ -155,6 +194,6 @@ def upload_pdf(cfg: Config, pdf: Path, *, content_only: bool) -> None:
     """
     if not cfg.rmapi.token_file.exists():
         raise CloudError(f"no rmapi token at {cfg.rmapi.token_file}; run `rmtasks auth` first")
-    args = ["-ni", "put"] + (["--content-only"] if content_only else []) + [str(pdf), cfg.notebook.folder]
+    args = ["-ni", "put"] + (["--content-only"] if content_only else []) + [str(pdf), folder or cfg.notebook.folder]
     out = _run(cfg, args)
     log.debug("rmapi put: %s", out.strip())

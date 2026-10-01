@@ -196,7 +196,10 @@ def _xml(text: str) -> str:
     return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
 
-def render_svg(strokes, state: PageState, cfg: TemplateConfig, templated: bool = True) -> str:
+def render_svg(strokes, state: PageState, cfg: TemplateConfig, templated: bool = True,
+               highlight: list | None = None, crop: tuple | None = None) -> str:
+    """`highlight`: boxes (tablet units) to mark, e.g. the line an action came from.
+    `crop`: show only this box (tablet units), e.g. an image of one handwritten line."""
     s = cfg.scale
     u = UNITS_PER_PT * s  # tablet units per PDF point
 
@@ -207,9 +210,13 @@ def render_svg(strokes, state: PageState, cfg: TemplateConfig, templated: bool =
         return (PAGE_H - pt) * u
 
     w, h = RM_W * s, RM_H * s
-    out = [f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="{-w / 2:.0f} 0 {w:.0f} {h:.0f}" '
+    vx, vy, vw, vh = (-w / 2, 0, w, h) if crop is None else (crop[0], crop[1], crop[2] - crop[0], crop[3] - crop[1])
+    out = [f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="{vx:.0f} {vy:.0f} {vw:.0f} {vh:.0f}" '
            f'font-family="Helvetica, Arial, sans-serif">',
-           f'<rect x="{-w / 2:.0f}" y="0" width="{w:.0f}" height="{h:.0f}" fill="#fff"/>']
+           f'<rect x="{vx:.0f}" y="{vy:.0f}" width="{vw:.0f}" height="{vh:.0f}" fill="#fff"/>']
+    for b in highlight or []:
+        out.append(f'<rect x="{b[0] - 14:.0f}" y="{b[1] - 10:.0f}" width="{b[2] - b[0] + 28:.0f}" '
+                   f'height="{b[3] - b[1] + 20:.0f}" rx="10" fill="#ffe066" fill-opacity="0.55"/>')
     left, right = X(MARGIN), X(PAGE_W - MARGIN)
     if templated:
         z = zones(cfg)

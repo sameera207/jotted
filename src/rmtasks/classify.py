@@ -83,7 +83,7 @@ def _page_state(ordered: list[Transcript]) -> dict:
     return {"notebook": NOTEBOOK, "lines": [_state_line(t) for t in ordered]}
 
 
-def _ask(questions: dict, state: dict, cfg: ClassificationConfig):
+def ask(questions: dict, state: dict, cfg: ClassificationConfig):
     api_key = os.environ.get(cfg.api_key_env)
     if not api_key:
         raise ClassificationError(f"{cfg.api_key_env} is not set; export it or set classification.enabled = false")
@@ -203,7 +203,7 @@ def continuations(lines: list[Line], transcripts: dict[int, Transcript], cfg: Cl
             },
         )
     if questions:
-        resp = _ask(questions, _page_state(ordered), cfg)
+        resp = ask(questions, _page_state(ordered), cfg)
         for qid, (above, below, key) in keys.items():
             ans = resp.nouls.get(qid)
             if ans is None:
@@ -247,7 +247,7 @@ def classify(transcripts: dict[int, Transcript], cfg: ClassificationConfig, cach
     if not questions:
         return out
 
-    resp = _ask(questions, state, cfg)
+    resp = ask(questions, state, cfg)
     for qid, (n, key) in keys.items():
         ans = resp.choices.get(qid)
         if ans is None:
