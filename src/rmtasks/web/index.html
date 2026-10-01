@@ -127,7 +127,8 @@
     </div>
     <div class="actions">
       <button id="poll" title="Check the Tasks notebook, watched folders and the To-do document now">Check tablet now</button>
-      <form method="post" action="/logout" id="logout" hidden><button type="submit">Sign out</button></form>
+      <form method="post" action="/logout" id="logout" hidden class="row">
+        <span class="sub" id="whoami"></span><button type="submit">Sign out</button></form>
     </div>
   </header>
 
@@ -316,6 +317,7 @@ async function loadTodo() {
   const q = new URLSearchParams(Object.entries(filters).filter(([, v]) => v));
   todo = await api("GET", "/api/todo?" + q);
   $("logout").hidden = !todo.auth;
+  $("whoami").textContent = todo.user || "";
   settings = settings || todo.settings;
   if (tab === "todo") renderTodo();
   schedule(renderStatus(todo.background));

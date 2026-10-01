@@ -305,13 +305,22 @@ def cmd_serve(cfg: Config, args: argparse.Namespace) -> int:
 
     host = args.host or cfg.server.host
     port = args.port or int(os.environ.get("PORT") or cfg.server.port)
-    local = host in ("127.0.0.1", "localhost", "::1")
-    if not local and not os.environ.get("RMTASKS_PASSWORD"):
-        console.print(f"[red]Refusing to listen on {host}[/red] without a password: anyone who can reach it could "
-                      "read your notes and use your reMarkable token. Set RMTASKS_PASSWORD.")
+    from .auth import AuthConfig
+
+    auth_cfg = AuthConfig.from_env()
+    if auth_cfg.problems():
+        for p in auth_cfg.problems():
+            console.print(f"[red]Sign-in misconfigured:[/red] {p}")
         return 2
+    local = host in ("127.0.0.1", "localhost", "::1")
+    if not local and not auth_cfg.enabled:
+        console.print(f"[red]Refusing to listen on {host}[/red] without sign-in: anyone who can reach it could "
+                      "read your notes and use your reMarkable token. Set up Google sign-in "
+                      "(GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, RMTASKS_ALLOWED_EMAILS) or RMTASKS_PASSWORD.")
+        return 2
+    methods = [m for m, on in (("Google", auth_cfg.google), ("password", bool(auth_cfg.password))) if on]
     console.print(f"rmtasks for [bold]{cfg.notebook.name}[/bold] at http://{host}:{port}  (store: {cfg.server.db})"
-                  + ("  · login required" if os.environ.get("RMTASKS_PASSWORD") else ""))
+                  + (f"  · sign-in: {' + '.join(methods)}" if methods else ""))
     app = create_app(cfg)
     if args.dev:
         app.run(host=host, port=port, debug=False, threaded=True)

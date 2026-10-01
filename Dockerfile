@@ -26,6 +26,7 @@ RUN chmod 755 docker-entrypoint.sh
 ENV PATH="/app/.venv/bin:${PATH}" \
     RMTASKS_CONFIG=/app/config.railway.toml \
     RMTASKS_SECURE_COOKIES=1 \
+    RMTASKS_BEHIND_PROXY=1 \
     HOME=/data/home \
     PYTHONUNBUFFERED=1
 
