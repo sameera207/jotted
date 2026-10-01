@@ -79,9 +79,10 @@ class CheckboxConfig:
 @dataclass(frozen=True)
 class RecognitionConfig:
     enabled: bool = True
+    provider: str = "anthropic"  # which HandwritingReader adapter reads the lines
     model: str = "claude-opus-5"
     api_key_env: str = "ANTHROPIC_API_KEY"
-    effort: str = "low"
+    effort: str = "low"  # anthropic only
     timeout_s: int = 120
 
 
@@ -177,6 +178,7 @@ SECTIONS: dict[str, type] = {
 
 KNOWN_STYLES = {"bracket_pair", "single_box"}
 KNOWN_FORMATS = {"table", "json", "svg"}
+RECOGNITION_PROVIDERS = {"anthropic"}  # kept in step with recognise.PROVIDERS
 KNOWN_CHECKS = {
     "bracket_aspect", "height_ratio", "overlap", "gap", "clear_between",  # bracket_pair
     "box_aspect", "closure", "path_ratio", "clear_inside",  # single_box
@@ -277,7 +279,10 @@ def _validate(cfg: Config) -> None:
         raise ConfigError(f"output.formats: unknown format(s) {sorted(bad)}; known: {sorted(KNOWN_FORMATS)}")
     if cfg.logging.level.upper() not in ("DEBUG", "INFO", "WARNING", "ERROR"):
         raise ConfigError("logging.level must be DEBUG, INFO, WARNING or ERROR")
-    if cfg.recognition.effort not in ("low", "medium", "high", "xhigh", "max"):
+    if cfg.recognition.provider not in RECOGNITION_PROVIDERS:
+        raise ConfigError(f"recognition.provider: unknown {cfg.recognition.provider!r}; "
+                          f"known: {sorted(RECOGNITION_PROVIDERS)}")
+    if cfg.recognition.provider == "anthropic" and cfg.recognition.effort not in ("low", "medium", "high", "xhigh", "max"):
         raise ConfigError("recognition.effort must be low, medium, high, xhigh or max")
     if not 0 <= cfg.classification.todo_threshold <= 1:
         raise ConfigError("classification.todo_threshold must be between 0 and 1")

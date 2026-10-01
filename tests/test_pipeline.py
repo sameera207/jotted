@@ -51,6 +51,7 @@ def test_example_config_loads_and_resolves_paths(cfg, tmp_path):
         ('[notebook]\npages = "first"\n', "notebook.pages"),
         ("[checkbox]\nbox_aspect = [2, 1]\n", "greater than max"),
         ('[checkbox]\nstyles = ["circle"]\n', "unknown style"),
+        ('[recognition]\nprovider = "nope"\n', "recognition.provider"),
     ],
 )
 def test_config_rejects_bad_values(tmp_path, extra, message):
@@ -274,15 +275,66 @@ class _FakeAnthropic:
 
 
 def test_transcribe_sends_only_uncached_lines(tmp_path, cfg, monkeypatch):
-    monkeypatch.setattr(recognise.anthropic, "Anthropic", _FakeAnthropic)
+    from rmtasks.adapters import anthropic_reader
+
+    monkeypatch.setattr(anthropic_reader.anthropic, "Anthropic", _FakeAnthropic)
     monkeypatch.setenv(cfg.recognition.api_key_env, "test-key")
     _FakeAnthropic.calls = 0
     lines_, _ = cluster(to_strokes(synth.demo_page()[0]), cfg.lines)
     cache = AICache(tmp_path / "ai")
     got = recognise.transcribe(lines_, cfg.recognition, cache)
     assert _FakeAnthropic.calls == 1 and len(got) == len(lines_)
+    assert got[lines_[0].n].text == f"line {lines_[0].n}" and got[lines_[0].n].checkbox == "empty"
     again = recognise.transcribe(lines_, cfg.recognition, cache)
     assert _FakeAnthropic.calls == 1 and all(t.cached for t in again.values())
+
+
+class _FakeReader:
+    """Any provider: reads each line as its number, and skips line 2."""
+    model = "fake-model"
+
+    def __init__(self):
+        self.seen: list[list[int]] = []
+
+    def read(self, images):
+        self.seen.append([img.n for img in images])
+        assert all(img.png[:8] == b"\x89PNG\r\n\x1a\n" for img in images)
+        return {img.n: Transcript(img.n, "none", f" text {img.n} ") for img in images if img.n != 2}
+
+
+def test_any_reader_plugs_in_and_its_answers_are_cached(tmp_path, cfg):
+    lines_, _ = cluster(to_strokes(synth.demo_page()[0]), cfg.lines)
+    reader, cache = _FakeReader(), AICache(tmp_path / "ai")
+    got = recognise.transcribe(lines_, cfg.recognition, cache, reader=reader)
+    assert reader.seen == [[ln.n for ln in lines_]]
+    assert 2 not in got and got[1].text == "text 1"  # a skipped line is left out, text is trimmed
+    recognise.transcribe(lines_, cfg.recognition, cache, reader=reader)
+    assert reader.seen[1] == [2]  # only the line without an answer is asked again
+
+
+def test_a_cached_page_needs_no_reader_or_key(tmp_path, cfg, monkeypatch):
+    lines_, _ = cluster(to_strokes(synth.demo_page()[0]), cfg.lines)
+    cache = AICache(tmp_path / "ai")
+    recognise.transcribe(lines_, cfg.recognition, cache, reader=_FakeReader())
+    lines_ = [ln for ln in lines_ if ln.n != 2]
+    monkeypatch.delenv(cfg.recognition.api_key_env, raising=False)
+    monkeypatch.setattr(recognise, "reader_for", lambda c: pytest.fail("no reader should be made"))
+    assert all(t.cached for t in recognise.transcribe(lines_, cfg.recognition, cache).values())
+
+
+def test_providers_are_registered_and_checked(cfg, monkeypatch):
+    import dataclasses
+
+    from rmtasks.adapters.anthropic_reader import AnthropicReader
+
+    assert set(recognise.PROVIDERS) == config.RECOGNITION_PROVIDERS
+    monkeypatch.setenv(cfg.recognition.api_key_env, "test-key")
+    assert isinstance(recognise.reader_for(cfg.recognition), AnthropicReader)
+    monkeypatch.delenv(cfg.recognition.api_key_env)
+    with pytest.raises(recognise.RecognitionError, match="is not set"):
+        recognise.reader_for(cfg.recognition)
+    with pytest.raises(recognise.RecognitionError, match="unknown recognition provider"):
+        recognise.reader_for(dataclasses.replace(cfg.recognition, provider="nope"))
 
 
 def test_classify_builds_one_question_per_line_and_caches(tmp_path, cfg, monkeypatch):

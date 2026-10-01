@@ -1,19 +1,23 @@
-"""Handwriting recognition: render each line to a PNG and transcribe with Claude.
+"""Handwriting recognition: render each line to a PNG and have a model read it.
 
 One request per page carries every uncached line, each image labelled with its
-line number. Structured output returns {n, checkbox, text} per line.
+line number. Structured output returns {n, drawing, checkbox, text} per line.
+
+The model is behind a port, `HandwritingReader`, with an adapter per provider
+(`adapters/anthropic_reader.py`). The prompt, schema, rendering and cache live
+here, so they are shared. To add a provider: write an adapter with a `read()`
+that sends `SYSTEM`, the images and `SCHEMA`, then register it in `PROVIDERS`
+and `config.RECOGNITION_PROVIDERS`.
 """
 
 from __future__ import annotations
 
-import base64
+import importlib
 import io
-import json
 import logging
-import os
 from dataclasses import dataclass
+from typing import Protocol
 
-import anthropic
 from PIL import Image, ImageDraw
 
 from .aicache import AICache
@@ -79,6 +83,34 @@ class Transcript:
     cached: bool = False
 
 
+@dataclass(frozen=True)
+class LineImage:
+    n: int  # the line's number on the page, as the model must report it back
+    png: bytes
+
+
+class HandwritingReader(Protocol):
+    """A model that reads handwritten lines. Raises RecognitionError on failure."""
+
+    model: str
+
+    def read(self, images: list[LineImage]) -> dict[int, Transcript]:
+        """A transcript per line number; lines the model skipped are simply absent."""
+
+
+# provider name -> "module:class", imported only when used, so other providers'
+# SDKs need not be installed.
+PROVIDERS = {"anthropic": "rmtasks.adapters.anthropic_reader:AnthropicReader"}
+
+
+def reader_for(cfg: RecognitionConfig) -> HandwritingReader:
+    target = PROVIDERS.get(cfg.provider)
+    if target is None:
+        raise RecognitionError(f"unknown recognition provider {cfg.provider!r}; known: {sorted(PROVIDERS)}")
+    module, cls = target.split(":")
+    return getattr(importlib.import_module(module), cls)(cfg)
+
+
 def render_line(line: Line) -> bytes:
     """Scale so a typical stroke is STROKE_PX tall, whatever the line's size; a drawing
     spanning several lines keeps its labels legible instead of being squashed."""
@@ -99,10 +131,14 @@ def render_line(line: Line) -> bytes:
 
 
 def line_key(line: Line, cfg: RecognitionConfig) -> str:
+    # The model name tells providers apart, so the provider itself is left out (older keys stay valid).
     return AICache.key("transcript", PROMPT_VERSION, cfg.model, sorted(s.id for s in line.strokes))
 
 
-def transcribe(lines: list[Line], cfg: RecognitionConfig, cache: AICache) -> dict[int, Transcript]:
+def transcribe(lines: list[Line], cfg: RecognitionConfig, cache: AICache,
+               reader: HandwritingReader | None = None) -> dict[int, Transcript]:
+    """Transcripts for `lines`, from the cache where possible. Only uncached lines are sent,
+    and the reader is only created when there are some (so a cached page needs no API key)."""
     out: dict[int, Transcript] = {}
     todo: list[Line] = []
     for line in lines:
@@ -115,57 +151,14 @@ def transcribe(lines: list[Line], cfg: RecognitionConfig, cache: AICache) -> dic
     if not todo:
         return out
 
-    api_key = os.environ.get(cfg.api_key_env)
-    if not api_key:
-        raise RecognitionError(f"{cfg.api_key_env} is not set; export it or set recognition.enabled = false")
-
-    content: list[dict] = [{"type": "text", "text": f"Transcribe these {len(todo)} handwritten lines."}]
+    reader = reader or reader_for(cfg)
+    got = reader.read([LineImage(line.n, render_line(line)) for line in todo])
     for line in todo:
-        content.append({"type": "text", "text": f"Line {line.n}:"})
-        content.append({
-            "type": "image",
-            "source": {"type": "base64", "media_type": "image/png",
-                       "data": base64.standard_b64encode(render_line(line)).decode()},
-        })
-
-    client = anthropic.Anthropic(api_key=api_key, timeout=float(cfg.timeout_s))
-    try:
-        resp = client.beta.messages.create(
-            model=cfg.model,
-            max_tokens=16000,
-            betas=["server-side-fallback-2026-07-01"],
-            fallbacks="default",
-            system=SYSTEM,
-            output_config={"effort": cfg.effort, "format": {"type": "json_schema", "schema": SCHEMA}},
-            messages=[{"role": "user", "content": content}],
-        )
-    except anthropic.AuthenticationError as e:
-        raise RecognitionError(f"Anthropic rejected the key in {cfg.api_key_env}") from e
-    except anthropic.APIStatusError as e:
-        raise RecognitionError(f"Anthropic API error {e.status_code}: {e.message}") from e
-    except anthropic.APIConnectionError as e:
-        raise RecognitionError(f"could not reach the Anthropic API: {e}") from e
-
-    if resp.stop_reason == "refusal":
-        raise RecognitionError(f"transcription declined ({getattr(resp.stop_details, 'category', None)})")
-    if resp.stop_reason == "max_tokens":
-        raise RecognitionError("transcription was cut off (max_tokens)")
-    text = next((b.text for b in resp.content if b.type == "text"), "")
-    try:
-        got = {item["n"]: item for item in json.loads(text)["lines"]}
-    except (json.JSONDecodeError, KeyError, TypeError) as e:
-        raise RecognitionError(f"unexpected transcription output: {text[:200]!r}") from e
-    log.debug("transcribed %d line(s): %d in / %d out tokens (request %s)",
-              len(todo), resp.usage.input_tokens, resp.usage.output_tokens, resp._request_id)
-
-    for line in todo:
-        item = got.get(line.n)
-        if item is None:
+        t = got.get(line.n)
+        if t is None:
             log.warning("line %d missing from transcription", line.n)
             continue
-        t = Transcript(n=line.n, checkbox=item["checkbox"], text=item["text"].strip(), drawing=item["drawing"])
+        t = Transcript(n=line.n, checkbox=t.checkbox, text=t.text.strip(), drawing=t.drawing)
         cache.put("transcripts", line_key(line, cfg), {"checkbox": t.checkbox, "text": t.text, "drawing": t.drawing})
         out[line.n] = t
     return out
-
-

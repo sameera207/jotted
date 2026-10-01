@@ -57,14 +57,15 @@ required_checks = ["bracket_aspect", "gap", "closure"]
 require_text   = true  # report an empty checkbox separately
 min_confidence = 0.5
 
-# Handwriting to text: one Claude request per page, cached by stroke IDs.
-# Page images are sent to Anthropic. Set enabled = false to stay fully local
+# Handwriting to text: one request per page to the provider below, cached by stroke IDs.
+# Line images are sent to that provider. Set enabled = false to stay fully local
 # (lines are then judged by the geometric checkbox detector above).
 [recognition]
 enabled     = true
+provider    = "anthropic"           # the model provider that reads the lines
 model       = "claude-opus-5"
 api_key_env = "ANTHROPIC_API_KEY"   # name of the variable holding the key, never the key
-effort      = "low"
+effort      = "low"                 # anthropic only
 timeout_s   = 120
 
 # Line to todo / note / heading: one Jev (TypeSafe) request per page, cached.
