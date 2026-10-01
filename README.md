@@ -23,6 +23,18 @@ rmtasks start
 
 Run `rmtasks start` again whenever you want the app; finished steps are skipped. `rmtasks setup` goes through the steps again, to reconnect the tablet or change a key. Leave the terminal window open while you use the app.
 
+### Updates
+
+`rmtasks start` checks GitHub first. When `main` has moved on since you installed, it runs `uv tool upgrade rmtasks` and starts again in the new version. If GitHub can't be reached, or the upgrade fails, it carries on with the version you have.
+
+- An app that is already running keeps its old code: stop it with Ctrl+C, then `rmtasks start` again.
+- `rmtasks update` updates without starting the app.
+- `rmtasks start --no-update`, or `RMTASKS_NO_UPDATE=1`, skips the check.
+
+Only an install from GitHub updates itself. A checkout run with `uv run`, or an install pinned to a tag or commit (`git+…@v1`), never does.
+
+So shipping a fix is: commit it to `main` and push. Each install picks it up the next time it starts.
+
 ## Development setup
 
 To work on rmtasks itself. A `config.toml` in the folder you run from takes precedence over the app folder.

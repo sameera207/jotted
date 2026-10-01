@@ -16,7 +16,7 @@ from rich.logging import RichHandler
 from rich.markup import escape
 from rich.table import Table
 
-from . import analysis, cloud, keys, notebook, report, sync, template
+from . import analysis, cloud, keys, notebook, report, selfupdate, sync, template
 from .store import Store
 from .config import Config, ConfigError, load, resolve_path
 
@@ -354,6 +354,9 @@ def _serve(cfg: Config, host: str, port: int, *, background: bool = True, dev: b
     if busy:
         if _running_here(url):
             console.print(f"rmtasks is already running at [bold]{url}[/bold]")
+            if os.environ.get(selfupdate.DONE_VAR):
+                console.print("[yellow]That window still runs the old version:[/yellow] stop it with Ctrl+C, "
+                              "then run [bold]rmtasks start[/bold] again.")
             if open_path is not None:
                 webbrowser.open(url + open_path)
             return 0
@@ -392,8 +395,16 @@ def _onboard(redo: bool) -> Config | None:
     return None
 
 
+def _rerun() -> None:
+    """Start this command again in the copy just installed (once: DONE_VAR stops a second update)."""
+    os.environ[selfupdate.DONE_VAR] = "1"
+    os.execv(sys.argv[0], sys.argv)
+
+
 def cmd_start(args: argparse.Namespace) -> int:
-    """Set up whatever is missing, then run the web app and open it in the browser."""
+    """Update from GitHub, set up whatever is missing, then run the web app and open it in the browser."""
+    if not args.no_update and selfupdate.check(console):
+        _rerun()
     cfg = _onboard(redo=False)
     if cfg is None:
         return 1
@@ -404,6 +415,13 @@ def cmd_start(args: argparse.Namespace) -> int:
     console.print()
     return _serve(cfg, cfg.server.host, args.port or cfg.server.port,
                   open_path=None if args.no_browser else ("/#settings" if first_time else "/"))
+
+
+def cmd_update(args: argparse.Namespace) -> int:
+    """Update to the latest version on GitHub now."""
+    if selfupdate.check(console, force=True):
+        console.print("Run [bold]rmtasks start[/bold] to use it (stop a running app first with Ctrl+C).")
+    return 0
 
 
 def cmd_setup(args: argparse.Namespace) -> int:
@@ -458,7 +476,10 @@ def build_parser() -> argparse.ArgumentParser:
     st = sub.add_parser("start", help="set up anything missing, then open the app (start here)")
     st.add_argument("--port", type=int, help="default: server.port")
     st.add_argument("--no-browser", action="store_true", help="don't open the browser")
+    st.add_argument("--no-update", action="store_true", help="don't check GitHub for a newer version")
     st.set_defaults(func=cmd_start, no_config=True)
+    sub.add_parser("update", help="update rmtasks to the latest version on GitHub").set_defaults(
+        func=cmd_update, no_config=True)
     su = sub.add_parser("setup", help="go through setup again: reconnect the tablet, change API keys")
     su.set_defaults(func=cmd_setup, no_config=True)
     sv = sub.add_parser("serve", help="run the local web app")

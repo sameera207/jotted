@@ -13,7 +13,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parent))
 
-from rmtasks import cli, cloud, config, keys, onboarding, rmapi_install  # noqa: E402
+from rmtasks import cli, cloud, config, keys, onboarding, rmapi_install, selfupdate  # noqa: E402
 
 
 @pytest.fixture
@@ -240,3 +240,70 @@ def test_start_opens_settings_first_and_reuses_a_running_app(world, home, monkey
     cfg = config.load(home / "config.toml")
     assert real_serve(cfg, "127.0.0.1", 8765, open_path="/") == 0
     assert opened == ["http://127.0.0.1:8765/"]
+
+
+# ---------------------------------------------------------------- self-update
+
+GIT_INSTALL = json.dumps({"url": "https://github.com/someone/rmtasks",
+                          "vcs_info": {"vcs": "git", "commit_id": "a" * 40}})
+
+
+def test_only_an_unpinned_github_install_updates_itself():
+    assert selfupdate.installed(GIT_INSTALL) == selfupdate.Install(repo="someone/rmtasks", commit="a" * 40)
+    pinned = json.dumps({"url": "https://github.com/someone/rmtasks",
+                         "vcs_info": {"vcs": "git", "commit_id": "a" * 40, "requested_revision": "v1"}})
+    checkout = json.dumps({"url": "file:///src/rmtasks", "dir_info": {"editable": True}})
+    assert selfupdate.installed(pinned) is None
+    assert selfupdate.installed(checkout) is None
+
+
+@pytest.fixture
+def update_world(monkeypatch):
+    """An install at commit aaa…; GitHub's head and the upgrade are scripted."""
+    state = {"commit": "a" * 40, "head": "a" * 40, "upgrades": 0}
+    monkeypatch.delenv(selfupdate.SKIP_VAR, raising=False)
+    monkeypatch.delenv(selfupdate.DONE_VAR, raising=False)
+    monkeypatch.setattr(selfupdate, "installed", lambda: selfupdate.Install("someone/rmtasks", state["commit"]))
+    monkeypatch.setattr(selfupdate, "latest", lambda repo: state["head"])
+
+    def upgrade():
+        state["upgrades"] += 1
+        state["commit"] = state["head"]
+
+    monkeypatch.setattr(selfupdate, "upgrade", upgrade)
+    return state
+
+
+def test_start_updates_and_reruns_when_github_is_ahead(update_world, monkeypatch):
+    update_world["head"] = "b" * 40
+    reran = []
+    monkeypatch.setattr(cli, "_rerun", lambda: reran.append(True) or (_ for _ in ()).throw(SystemExit(0)))
+    with pytest.raises(SystemExit):
+        cli.main(["start"])
+    assert update_world["upgrades"] == 1 and reran == [True]
+
+
+def test_no_update_when_current_offline_skipped_or_already_rerun(update_world, monkeypatch):
+    console = cli.console
+    assert selfupdate.check(console) is False  # up to date
+    update_world["head"] = None  # offline
+    assert selfupdate.check(console) is False
+    update_world["head"] = "b" * 40
+    monkeypatch.setenv(selfupdate.DONE_VAR, "1")  # the re-run after an update
+    assert selfupdate.check(console) is False
+    monkeypatch.delenv(selfupdate.DONE_VAR)
+    monkeypatch.setenv(selfupdate.SKIP_VAR, "1")
+    assert selfupdate.check(console) is False
+    assert update_world["upgrades"] == 0
+    assert selfupdate.check(console, force=True) is True  # `rmtasks update` ignores both
+    assert update_world["upgrades"] == 1
+
+
+def test_a_failed_upgrade_carries_on(update_world, monkeypatch):
+    update_world["head"] = "b" * 40
+
+    def fail():
+        raise selfupdate.UpdateError("no network")
+
+    monkeypatch.setattr(selfupdate, "upgrade", fail)
+    assert selfupdate.check(cli.console) is False
