@@ -647,3 +647,16 @@ def test_a_document_with_another_page_count_is_rebuilt(repo):
     assert r["rebuilt"] and pub.deleted == 1 and [e.slot for e in pub.published[-1]] == [0, 1]
     pub.ticks = (set(), "m2")  # the new one, not yet opened on the tablet
     assert not service.sync_todo(repo, pub)["rebuilt"]
+
+
+def test_two_todo_documents_with_the_same_name_stop_with_advice(monkeypatch):
+    from jotted import cloud
+
+    docs = [cloud.DocRef(id=i, name="To-do", version=0, modified=m, parent="")
+            for i, m in (("a", "2026-10-01T14:54:55Z"), ("b", "2026-10-01T14:55:17Z"))]
+    monkeypatch.setattr(cloud, "find_documents", lambda cfg, name, folder: docs)
+    doc = todo_document.TodoDocument(None, "To-do", "/", cache=object())
+    with pytest.raises(cloud.CloudError, match="Delete the one you don't use"):
+        doc.find()
+    monkeypatch.setattr(cloud, "find_documents", lambda cfg, name, folder: docs[:1])
+    assert doc.find().id == "a"

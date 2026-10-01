@@ -166,11 +166,20 @@ class TodoDocument:
     def capacity(self) -> int:
         return PAGES * SLOTS_PER_PAGE
 
-    def _find(self) -> cloud.DocRef | None:
-        return cloud.find_document(self.cfg, self.name, self.folder)
+    def find(self) -> cloud.DocRef | None:
+        """The document, if it exists. rmapi addresses documents by name only, so with two of
+        the same name nothing can be updated safely: stop and say which to delete."""
+        docs = cloud.find_documents(self.cfg, self.name, self.folder)
+        if len(docs) > 1:
+            when = ", ".join(sorted(d.modified[:16].replace("T", " ") + " UTC" for d in docs))
+            raise cloud.CloudError(
+                f"There are {len(docs)} documents called {self.name!r} on your reMarkable (last changed {when}). "
+                f"Delete the one you don't use (an old one has 20 pages) and the To-do carries on. "
+                f"This happens when the tablet has the To-do open while Jotted replaces it.")
+        return docs[0] if docs else None
 
     def publish(self, entries: list[TodoEntry]) -> None:
-        existing = self._find()
+        existing = self.find()
         with tempfile.TemporaryDirectory() as tmp:
             pdf = build_pdf(Path(tmp) / f"{self.name}.pdf", entries, scale=self.cfg.template.scale)
             cloud.upload_pdf(self.cfg, pdf, content_only=existing is not None, folder=self.folder)
@@ -181,7 +190,7 @@ class TodoDocument:
         log.info("deleted %s to rebuild it", self.name)
 
     def read_paper(self, occupied: set[int]) -> PaperRead | None:
-        doc = self._find()
+        doc = self.find()
         if doc is None:
             return None
         path = self.cfg.paths.cache_dir / f"{doc.id}.rmdoc"

@@ -147,14 +147,19 @@ def library(cfg: Config) -> tuple[list[LibraryEntry], list[str]]:
     return docs, sorted(folder_path(fid) for fid in folders)
 
 
+def find_documents(cfg: Config, name: str, folder: str = "/") -> list[DocRef]:
+    """Every document called `name` under `folder` (searched recursively)."""
+    nodes = _parse_json_list(_run(cfg, ["-ni", "-json", "find", folder]))
+    return [_ref(n) for n in nodes if n.get("name") == name and n.get("type") == "DocumentType"]
+
+
 def find_document(cfg: Config, name: str, folder: str = "/") -> DocRef | None:
     """The document called `name` under `folder` (searched recursively); None if absent."""
-    nodes = _parse_json_list(_run(cfg, ["-ni", "-json", "find", folder]))
-    matches = [n for n in nodes if n.get("name") == name and n.get("type") == "DocumentType"]
+    matches = find_documents(cfg, name, folder)
     if len(matches) > 1:
-        ids = ", ".join(m["id"] for m in matches)
+        ids = ", ".join(m.id for m in matches)
         raise CloudError(f"{len(matches)} documents named {name!r} ({ids}); narrow the folder")
-    return _ref(matches[0]) if matches else None
+    return matches[0] if matches else None
 
 
 def find_notebook(cfg: Config) -> DocRef:

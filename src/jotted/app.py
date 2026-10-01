@@ -67,7 +67,7 @@ class App:
             return {"enabled": False}
         doc = self.todo_document()
         result = service.sync_todo(self.repo, doc, force=force)
-        found = cloud.find_document(self.cfg, doc.name, doc.folder)
+        found = doc.find()
         if found:
             with self.repo.db() as db:  # remember its id so the collector never reads it
                 db.execute("INSERT INTO todo_meta (key, value) VALUES ('doc_id', ?) "
@@ -144,7 +144,10 @@ class Scheduler:
                 collected = self.app.collect(progress=lambda m: setattr(self.status, "step", m))
                 summary["collect"] = collected.as_dict()
                 self.status.step = "Updating the To-do document"
-                summary["todo"] = self.app.sync_todo()
+                try:
+                    summary["todo"] = self.app.sync_todo()
+                except cloud.CloudError as e:  # keep what was collected above
+                    summary["todo"], summary["todo_error"] = {}, str(e)
             finally:
                 self.status.running = False
                 self.status.step = ""
@@ -157,7 +160,8 @@ class Scheduler:
             try:
                 self.status.last_summary = self.poll_once()
                 errors = self.status.last_summary.get("collect", {}).get("errors") or []
-                self.status.last_error = "; ".join(errors) or self.status.last_summary.get("tasks_error")
+                s = self.status.last_summary
+                self.status.last_error = "; ".join(errors + [e for e in (s.get("tasks_error"), s.get("todo_error")) if e]) or None
             except SYNC_ERRORS as e:
                 log.error("background poll failed: %s", e)
                 self.status.last_error = str(e)
