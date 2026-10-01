@@ -11,7 +11,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parent))
 import synth  # noqa: E402
 
-from rmtasks import cli, cloud, config, notebook, strokes  # noqa: E402
+from rmtasks import analysis, cli, cloud, config, notebook, strokes  # noqa: E402
 from rmtasks.checkbox import candidate, detect  # noqa: E402
 from rmtasks.lines import Line, cluster  # noqa: E402
 from rmtasks.strokes import make_stroke  # noqa: E402
@@ -242,7 +242,7 @@ def test_kind_policy(cfg, t, j, checkbox_is_task, expected):
     import dataclasses
 
     cfg = dataclasses.replace(cfg, classification=dataclasses.replace(cfg.classification, checkbox_is_task=checkbox_is_task))
-    assert cli.decide(_result(t, j, geo="task"), cfg) == expected
+    assert analysis.decide(_result(t, j, geo="task"), cfg) == expected
 
 
 def test_render_line_is_png(cfg):
@@ -343,8 +343,24 @@ def test_continuation_candidates_use_page_spacing(cfg):
     ys = {1: 100, 2: 200, 3: 300, 4: 345, 5: 390, 6: 500}  # 4 sits tight under 3; 5 is tight but bulleted
     lines_ = [_line(synth.text(0, ys[n], 2), n, 100 * n) for n in ts]
     got = classify_mod.continuation_candidates(lines_, ts, cfg.classification)
-    assert [(a, b) for a, b, _ in got] == [(3, 4)]
+    assert [(a, b) for a, b, _, _ in got] == [(3, 4)]
     assert got[0][2] < 0.75
+
+
+def test_indented_line_under_a_bullet_is_a_candidate_at_normal_spacing(cfg):
+    ts = {1: Transcript(1, "none", "- get the new items to prod"), 2: Transcript(2, "none", "- get connectors involved in"),
+          3: Transcript(3, "none", "testing"), 4: Transcript(4, "none", "- pay rent")}
+    lines_ = [_line(synth.text(0, 100, 3), 1, 100), _line(synth.text(0, 200, 3), 2, 200),
+              _line(synth.text(250, 300, 1), 3, 300), _line(synth.text(0, 400, 2), 4, 400)]
+    got = classify_mod.continuation_candidates(lines_, ts, cfg.classification)
+    assert [(a, b, ind) for a, b, _, ind in got] == [(2, 3, True)]
+
+
+def test_loose_descender_joins_its_row(cfg):
+    word = synth.text(0, 100, 3)
+    descender = [[(40, 92), (40, 145)]]  # the p of "prod": overlaps the row by ~45%, hangs below it
+    lines_, _ = cluster(to_strokes(word + descender + synth.text(0, 260, 2)), cfg.lines)
+    assert len(lines_) == 2
 
 
 def test_adjacent_drawings_pair_up(cfg):
@@ -360,7 +376,7 @@ def test_merge_continuations_keeps_first_line_and_anchor():
     a, b, c = _line(synth.text(0, 100, 1), 1, 100), _line(synth.text(0, 140, 1), 2, 200), _line(synth.text(0, 180, 1), 3, 300)
     ts = {1: Transcript(1, "empty", "email the landlord"), 2: Transcript(2, "none", "about the"),
           3: Transcript(3, "none", "broken heater")}
-    merged_lines, merged_ts, parts = cli.merge_continuations([a, b, c], ts, [(1, 2), (2, 3)])
+    merged_lines, merged_ts, parts = analysis.merge_continuations([a, b, c], ts, [(1, 2), (2, 3)])
     assert [ln.n for ln in merged_lines] == [1] and parts == {1: [1, 2, 3]}
     assert merged_ts[1].text == "email the landlord about the broken heater"
     assert merged_ts[1].checkbox == "empty"
@@ -368,7 +384,7 @@ def test_merge_continuations_keeps_first_line_and_anchor():
 
 
 def test_drawing_kind(cfg):
-    assert cli.decide(_result(Transcript(1, "none", "aws → CI", drawing=True), None), cfg) == "drawing"
+    assert analysis.decide(_result(Transcript(1, "none", "aws → CI", drawing=True), None), cfg) == "drawing"
 
 
 # ---------------------------------------------------------------- PDF template (write path)
@@ -404,24 +420,191 @@ def test_zoned_analysis_reads_only_body_as_tasks(tmp_path, cfg):
     body = synth.bracket_pair(-600, 700) + synth.text(-480, 700, 2)
     footer = synth.bracket_pair(-600, z.footer_top + 100) + synth.text(-480, z.footer_top + 100, 2)
     doc = synth.rmdoc(tmp_path / "t.rmdoc", [synth.rm_bytes(header + body + footer)], file_type="pdf")
-    run = cli.analyse_notebook(doc, cfg)
+    run = analysis.analyse_notebook(doc, cfg)
     kinds = [(r.zone, r.kind) for r in run.pages[0].lines]
     assert kinds == [("header", "header"), ("body", "task"), ("footer", "footer")]
     assert run.notebook["file_type"] == "pdf" and run.page_count == 1
 
 
-def test_page_states_strike_done_and_print_edits_and_adds(tmp_path, cfg):
-    body = synth.bracket_pair(-600, 700) + synth.text(-480, 700, 2)
-    other = synth.text(-600, 900, 2)
-    doc = synth.rmdoc(tmp_path / "t.rmdoc", [synth.rm_bytes(body + other)], file_type="pdf")
-    run = cli.analyse_notebook(doc, cfg)
-    first, second = [r for r in run.pages[0].lines]
-    state = {"done": [first.line.anchor_id, "9:999"], "edit": {second.line.anchor_id: "new wording"},
-             "add": {"1": ["from the web"]}}
-    pages, missing = cli.page_states(run, state)
+# ---------------------------------------------------------------- task store and web app
+
+from rmtasks.server import create_app  # noqa: E402
+from rmtasks.store import Store  # noqa: E402
+
+
+def _template_run(tmp_path, cfg, paths, ids=None, name="t"):
+    doc = synth.rmdoc(tmp_path / f"{name}.rmdoc", [synth.rm_bytes(paths, ids=ids)], file_type="pdf")
+    return analysis.analyse_notebook(doc, cfg)
+
+
+def _stub_ai(monkeypatch, texts):
+    """Transcripts by line order; every line with text is a todo."""
+    def transcribe(lines_, cfg_, cache):
+        return {ln.n: Transcript(ln.n, "none", texts.get(ln.n, f"task {ln.n}")) for ln in lines_}
+
+    def judge(ts, cfg_, cache):
+        return {n: Judgment(n, "todo", {"todo": 0.9, "note": 0.05, "heading": 0.05}, 0.9) for n in ts}
+
+    monkeypatch.setattr(recognise, "transcribe", transcribe)
+    monkeypatch.setattr(classify_mod, "classify", judge)
+    monkeypatch.setattr(classify_mod, "continuations", lambda *a: [])
+
+
+@pytest.fixture
+def ai_cfg(cfg):
+    import dataclasses
+
+    return dataclasses.replace(
+        cfg,
+        recognition=dataclasses.replace(cfg.recognition, enabled=True),
+        classification=dataclasses.replace(cfg.classification, enabled=True),
+    )
+
+
+BODY = synth.text(-600, 600, 2) + synth.text(-600, 800, 2)
+
+
+def test_store_pull_then_web_edits_become_print_instructions(tmp_path, ai_cfg, monkeypatch):
+    _stub_ai(monkeypatch, {})
+    store = Store(tmp_path / "db.sqlite")
+    run = _template_run(tmp_path, ai_cfg, BODY)
+    s = store.apply_run(run, "2026-09-29T10:00:00Z")
+    assert s.new == 2
+    nid = run.notebook["id"]
+    tasks = [t for p in store.state(nid)["pages"] for t in p["tasks"]]
+    first, second = tasks
+    store.edit_task(first["id"], status="done")
+    store.edit_task(second["id"], text="new wording")
+    store.add_web_task(nid, "from the web")
+    assert store.state(nid)["pending_push"]
+
+    pages, snapshot = store.page_states(nid)
     ps = pages[1]
-    assert missing == ["9:999"]
-    assert len(ps.strikes) == 2
-    x0, x1, y = ps.strikes[0]
-    assert x0 >= first.checkbox.bbox[2] and abs(y - 700) < 20  # starts after the checkbox, through the middle
-    assert ps.footer == ["from the web", "new wording"]
+    assert len(ps.strikes) == 1 and abs(ps.strikes[0][2] - 600) < 20  # done: struck through
+    assert len(ps.moved) == 1 and ps.moved[0][1] == 1  # edited: outlined and numbered, not struck
+    assert abs((ps.moved[0][0][0][1] + ps.moved[0][0][0][3]) / 2 - 800) < 20
+    assert ps.footer == [("new wording", False, 1), ("from the web", False)]
+
+    store.record_push(nid, run.run_id, {}, snapshot)
+    assert not store.state(nid)["pending_push"]
+    store.edit_task(first["id"], status="open")  # a change after the snapshot stays pending
+    assert store.state(nid)["pending_push"]
+
+
+def test_template_draws_moved_marks_and_numbered_footer(tmp_path, cfg):
+    ps = template.PageState(moved=[([(-600, 580, -200, 620), (-600, 640, -300, 680)], 1)],
+                            footer=[("new wording", False, 1), ("web task", True)])
+    pdf = template.build(tmp_path / "m.pdf", cfg.template, {1: ps}, page_count=1)
+    assert pdf.read_bytes().startswith(b"%PDF")
+
+
+def test_auto_pusher_coalesces_bursts():
+    import threading
+    import time as _time
+
+    from rmtasks.server import AutoPusher
+
+    calls = []
+    done = threading.Event()
+
+    def push():
+        calls.append(_time.monotonic())
+        done.set()
+
+    auto = AutoPusher(0.2, push)
+    for _ in range(5):
+        auto.schedule()
+        _time.sleep(0.05)
+    assert auto.status()["scheduled"]
+    assert done.wait(2)
+    _time.sleep(0.3)
+    assert len(calls) == 1 and not auto.status()["scheduled"] and auto.status()["last_error"] is None
+
+
+def test_most_recent_change_wins(tmp_path, ai_cfg, monkeypatch):
+    _stub_ai(monkeypatch, {1: "call Bob"})
+    store = Store(tmp_path / "db.sqlite")
+    run = _template_run(tmp_path, ai_cfg, BODY)
+    store.apply_run(run, "2026-09-29T10:00:00Z")
+    nid = run.notebook["id"]
+    task = next(t for p in store.state(nid)["pages"] for t in p["tasks"] if t["text"] == "call Bob")
+
+    store.edit_task(task["id"], text="call Bob about invoices")  # web edit, now
+
+    # The paper text changes, but in a notebook version older than the web edit: the web wins.
+    _stub_ai(monkeypatch, {1: "call Robert"})
+    store.apply_run(_template_run(tmp_path, ai_cfg, BODY, name="t2"), "2026-09-29T10:05:00Z")
+    t = store.task(task["id"])
+    assert t["text"] == "call Bob about invoices" and t["paper_text"] == "call Robert"
+
+    # A newer paper change wins over the web edit.
+    _stub_ai(monkeypatch, {1: "call Roberta"})
+    store.apply_run(_template_run(tmp_path, ai_cfg, BODY, name="t3"), "2999-01-01T00:00:00Z")
+    assert store.task(task["id"])["text"] == "call Roberta"
+
+
+def test_task_missing_from_page_is_flagged(tmp_path, ai_cfg, monkeypatch):
+    _stub_ai(monkeypatch, {})
+    store = Store(tmp_path / "db.sqlite")
+    ids = list(range(100, 100 + len(BODY)))
+    run = _template_run(tmp_path, ai_cfg, BODY, ids=ids)
+    store.apply_run(run, "2026-09-29T10:00:00Z")
+    first_line = synth.text(-600, 600, 2)
+    run2 = _template_run(tmp_path, ai_cfg, first_line, ids=ids[: len(first_line)], name="t2")
+    assert store.apply_run(run2, "2026-09-29T10:05:00Z").missing == 1
+
+
+def test_web_api(tmp_path, ai_cfg, monkeypatch):
+    _stub_ai(monkeypatch, {})
+    store = Store(tmp_path / "db.sqlite")
+    run = _template_run(tmp_path, ai_cfg, BODY)
+
+    from rmtasks import sync
+
+    def fake_pull(cfg_, store_, console=None):
+        summary = store_.apply_run(run, "2026-09-29T10:00:00Z")
+        return sync.PullResult(doc=None, run=run, summary=summary, rmdoc=None)
+
+    pushes = []
+    monkeypatch.setattr(sync, "pull", fake_pull)
+    monkeypatch.setattr(sync, "push", lambda cfg_, store_, **kw: pushes.append(1))
+    import dataclasses
+
+    app_cfg = dataclasses.replace(
+        ai_cfg,
+        notebook=dataclasses.replace(ai_cfg.notebook, name=run.notebook["name"]),
+        server=dataclasses.replace(ai_cfg.server, auto_push_delay_s=0),
+    )
+    client = create_app(app_cfg, store, background=False).test_client()
+
+    assert client.get("/").status_code == 200
+    assert client.get("/api/state").get_json()["notebook"] is None
+    assert client.post("/api/tasks", json={"text": "x"}).status_code == 400  # not pulled yet
+
+    r = client.post("/api/pull").get_json()
+    assert r["summary"]["new"] == 2 and r["state"]["writable"]
+    r = client.post("/api/tasks", json={"text": "Book the retro room"})
+    assert r.status_code == 201
+    web_id = r.get_json()["task"]["id"]
+    paper_id = r.get_json()["state"]["pages"][0]["tasks"][0]["id"]
+
+    t = client.patch(f"/api/tasks/{paper_id}", json={"status": "done"}).get_json()["task"]
+    assert t["status"] == "done"
+    assert client.delete(f"/api/tasks/{paper_id}").status_code == 400  # paper tasks can't be deleted
+    assert client.delete(f"/api/tasks/{web_id}").status_code == 200
+    assert client.patch("/api/tasks/999", json={"status": "done"}).status_code == 404
+    import time as _time
+
+    for _ in range(40):  # edits schedule an automatic push
+        if pushes:
+            break
+        _time.sleep(0.05)
+    assert pushes
+
+
+def test_bullets_are_stripped_from_task_text():
+    from rmtasks.store import clean_text
+
+    assert clean_text("- test prod") == "test prod"
+    assert clean_text("• call Bob") == "call Bob"
+    assert clean_text("buy milk") == "buy milk"

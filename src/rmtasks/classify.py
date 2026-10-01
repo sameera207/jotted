@@ -111,12 +111,15 @@ def line_pitch(lines: list[Line], transcripts: dict[int, Transcript]) -> float |
 
 
 def continuation_candidates(lines: list[Line], transcripts: dict[int, Transcript],
-                            cfg: ClassificationConfig) -> list[tuple[int, int, float]]:
-    """(above, below, spacing) where `below` might be `above` wrapped onto a new line.
+                            cfg: ClassificationConfig) -> list[tuple[int, int, float, bool]]:
+    """(above, below, spacing, indented) where `below` might be `above` wrapped onto a new line.
 
-    Geometry proposes: `below` sits closer under `above` than the page's usual line
-    spacing (`continuation_spacing` of it or less), is not outdented, and starts with
-    no checkbox or bullet. `spacing` is that distance as a share of the usual one.
+    `below` starts with no checkbox or bullet, is not outdented, and either:
+    - sits closer under `above` than the page's usual line spacing (`continuation_spacing`
+      of it or less), or
+    - is indented under an `above` that starts with a bullet or checkbox, at no more than
+      the usual spacing (a list item wrapped at normal spacing).
+    `spacing` is the distance as a share of the usual one.
     """
     pitch = line_pitch(lines, transcripts)
     if not pitch:
@@ -131,9 +134,12 @@ def continuation_candidates(lines: list[Line], transcripts: dict[int, Transcript
             continue
         spacing = (_centre(below) - _centre(above)) / pitch
         lh = max(above.median_height, below.median_height)
-        if spacing > cfg.continuation_spacing or below.bbox[0] < above.bbox[0] - 0.5 * lh:
+        if below.bbox[0] < above.bbox[0] - 0.5 * lh:
             continue
-        out.append((above.n, below.n, spacing))
+        marked = ta.checkbox != "none" or ta.text.startswith(BULLETS)
+        indented = marked and below.bbox[0] > above.bbox[0] + lh
+        if spacing <= cfg.continuation_spacing or (indented and spacing <= 1.2):
+            out.append((above.n, below.n, spacing, indented))
     return out
 
 
@@ -168,8 +174,8 @@ def continuations(lines: list[Line], transcripts: dict[int, Transcript], cfg: Cl
     ordered = _judgeable(transcripts)
     index = {t.n: i for i, t in enumerate(ordered)}
     confirmed, questions, keys = [], {}, {}
-    for above, below, spacing in pairs:
-        key = AICache.key("continuation", PROMPT_VERSION, cfg.model, round(spacing, 2),
+    for above, below, spacing, indented in pairs:
+        key = AICache.key("continuation", PROMPT_VERSION, cfg.model, round(spacing, 2), indented,
                           _state_line(transcripts[above]), _state_line(transcripts[below]))
         hit = cache.get("continuations", key)
         if hit is not None:
@@ -182,7 +188,9 @@ def continuations(lines: list[Line], transcripts: dict[int, Transcript], cfg: Cl
         questions[qid] = Noul(
             instructions={
                 "layout": f"`lines[{j}]` is written directly under `lines[{i}]`, with no bullet or checkbox of its "
-                          f"own. The spacing between them is {spacing:.0%} of the usual spacing between lines "
+                          f"own"
+                          + (", indented under the text of the list item above it" if indented else "")
+                          + f". The spacing between them is {spacing:.0%} of the usual spacing between lines "
                           f"on this page.",
                 "question": f"Does `lines[{j}]` continue `lines[{i}]`, the same item wrapped onto a second line, "
                             f"so they should be read as one item?",

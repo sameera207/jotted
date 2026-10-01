@@ -90,24 +90,29 @@ def make_stroke(sid: str, tool: str, points: list[Point]) -> Stroke:
 
 
 def load_strokes(rm_path: Path, cfg: StrokesConfig) -> list[Stroke]:
+    with open(rm_path, "rb") as f:
+        return load_strokes_from(f, rm_path.name, cfg)
+
+
+def load_strokes_from(f, name: str, cfg: StrokesConfig) -> list[Stroke]:
+    """Like load_strokes, from an open binary stream (e.g. a file inside the .rmdoc zip)."""
     ignore = set(cfg.ignore_tools)
     anchored_groups: set[str] = set()
     raw: list[tuple[str, str, si.Line]] = []  # (id, parent id, line)
     unreadable = 0
 
-    with open(rm_path, "rb") as f:
-        for block in rmscene.read_blocks(f):
-            if isinstance(block, rmscene.UnreadableBlock):
-                unreadable += 1
-                log.warning("%s: unreadable block (type %s): %s", rm_path.name, block.info.block_type, block.error)
-            elif isinstance(block, rmscene.TreeNodeBlock):
-                if block.group.anchor_id is not None:
-                    anchored_groups.add(crdt_str(block.group.node_id))
-            elif isinstance(block, rmscene.SceneLineItemBlock):
-                value = block.item.value
-                if value is None:  # deleted stroke
-                    continue
-                raw.append((crdt_str(block.item.item_id), crdt_str(block.parent_id), value))
+    for block in rmscene.read_blocks(f):
+        if isinstance(block, rmscene.UnreadableBlock):
+            unreadable += 1
+            log.warning("%s: unreadable block (type %s): %s", name, block.info.block_type, block.error)
+        elif isinstance(block, rmscene.TreeNodeBlock):
+            if block.group.anchor_id is not None:
+                anchored_groups.add(crdt_str(block.group.node_id))
+        elif isinstance(block, rmscene.SceneLineItemBlock):
+            value = block.item.value
+            if value is None:  # deleted stroke
+                continue
+            raw.append((crdt_str(block.item.item_id), crdt_str(block.parent_id), value))
 
     strokes: list[Stroke] = []
     grouped = dropped_tool = dropped_short = 0
@@ -126,12 +131,12 @@ def load_strokes(rm_path: Path, cfg: StrokesConfig) -> list[Stroke]:
     if grouped:
         log.warning(
             "%s: %d stroke(s) sit in text-anchored groups; their positions may be offset",
-            rm_path.name,
+            name,
             grouped,
         )
     log.debug(
         "%s: %d strokes kept, %d dropped by tool, %d too short, %d unreadable blocks",
-        rm_path.name,
+        name,
         len(strokes),
         dropped_tool,
         dropped_short,

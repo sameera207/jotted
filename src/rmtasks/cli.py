@@ -9,15 +9,14 @@ import logging
 import os
 import shutil
 import sys
-from datetime import datetime
 from pathlib import Path
 
 from rich.console import Console
 from rich.logging import RichHandler
 from rich.table import Table
 
-from . import checkbox, classify, cloud, lines, notebook, recognise, report, strokes, template
-from .aicache import AICache
+from . import analysis, cloud, notebook, report, sync, template
+from .store import Store
 from .config import Config, ConfigError, load, resolve_path
 
 log = logging.getLogger("rmtasks")
@@ -34,136 +33,6 @@ def _setup_logging(level: str) -> None:
     if level.upper() != "DEBUG":  # per-request lines from the HTTP clients are noise at INFO
         for name in ("httpx", "httpx2", "anthropic", "typesafe_sdk"):
             logging.getLogger(name).setLevel(logging.WARNING)
-
-
-# ---------------------------------------------------------------- analysis
-
-
-def geometric_kind(cb: checkbox.Checkbox | None, cfg: Config) -> str:
-    if cb is None or cb.confidence < cfg.checkbox.min_confidence:
-        return "note"
-    return "empty_checkbox" if cfg.checkbox.require_text and not cb.text else "task"
-
-
-def decide(r: report.LineResult, cfg: Config) -> str:
-    """Kind policy: code owns the rules, the models supply readings and judgments."""
-    t, j = r.transcript, r.judgment
-    if t is None:  # recognition off or failed: geometry only
-        return r.geometric_kind
-    if t.drawing:
-        return "drawing"
-    has_box = t.checkbox != "none"
-    if has_box and not t.text:
-        return "empty_checkbox"
-    if j is not None:
-        if j.p_todo >= cfg.classification.todo_threshold or (has_box and cfg.classification.checkbox_is_task):
-            return "done" if t.checkbox == "checked" else "task"
-        return "heading" if j.choice == "heading" else "note"
-    if has_box:  # classification off: the checkbox mark decides
-        return "done" if t.checkbox == "checked" else "task"
-    return "note"
-
-
-def merge_continuations(
-    page_lines: list[lines.Line], transcripts: dict[int, recognise.Transcript], pairs: list[tuple[int, int]]
-) -> tuple[list[lines.Line], dict[int, recognise.Transcript], dict[int, list[int]]]:
-    """Fold each confirmed continuation into the line it continues (chains allowed).
-    The merged line keeps the first line's number, so its anchor is the first line's."""
-    root: dict[int, int] = {}
-    for above, below in pairs:
-        root[below] = root.get(above, above)
-    by_n = {ln.n: ln for ln in page_lines}
-    parts: dict[int, list[int]] = {}
-    for ln in sorted(page_lines, key=lambda x: x.n):
-        parts.setdefault(root.get(ln.n, ln.n), []).append(ln.n)
-
-    merged_lines, merged_ts = [], {}
-    for first, ns in parts.items():
-        line = lines.Line(strokes=[s for n in ns for s in by_n[n].strokes], n=first)
-        line.strokes.sort(key=lambda s: s.x0)
-        merged_lines.append(line)
-        ts = [transcripts[n] for n in ns if n in transcripts]
-        if ts:
-            merged_ts[first] = recognise.Transcript(
-                n=first, checkbox=ts[0].checkbox, text=" ".join(t.text for t in ts if t.text),
-                drawing=ts[0].drawing, cached=all(t.cached for t in ts),
-            )
-    return merged_lines, merged_ts, {first: ns for first, ns in parts.items() if len(ns) > 1}
-
-
-def analyse_page(page: notebook.Page, cfg: Config, cache: AICache, zoned: bool = False) -> report.PageResult:
-    """zoned: a template page. Header lines give the date, footer lines (printed by us) are
-    skipped, and only body lines can be tasks."""
-    if page.rm_path is None:
-        return report.PageResult(index=page.index, id=page.id, strokes=[])
-    page_strokes = strokes.load_strokes(page.rm_path, cfg.strokes)
-    page_lines, unassigned = lines.cluster(page_strokes, cfg.lines)
-    result = report.PageResult(index=page.index, id=page.id, strokes=page_strokes, unassigned=unassigned)
-
-    zone_of: dict[int, str] = {}
-    if zoned:
-        z = template.zones(cfg.template)
-        zone_of = {ln.n: z.of((ln.bbox[1] + ln.bbox[3]) / 2) for ln in page_lines}
-    header = [ln for ln in page_lines if zone_of.get(ln.n) == "header"]
-    footer = [ln for ln in page_lines if zone_of.get(ln.n) == "footer"]
-    page_lines = [ln for ln in page_lines if zone_of.get(ln.n, "body") == "body"]
-    body_lines = list(page_lines)
-    header_ts: dict[int, recognise.Transcript] = {}
-
-    transcripts: dict[int, recognise.Transcript] = {}
-    judgments: dict[int, classify.Judgment] = {}
-    merged: dict[int, list[int]] = {}
-    if cfg.recognition.enabled and page_lines:
-        try:
-            with console.status(f"Reading page {page.index}…"):
-                transcripts = recognise.transcribe(page_lines + header, cfg.recognition, cache)
-                header_ts = {ln.n: transcripts.pop(ln.n) for ln in header if ln.n in transcripts}
-                result.date = " ".join(t.text for t in header_ts.values() if t.text) or None
-                if cfg.classification.enabled:
-                    pairs = sorted(
-                        classify.adjacent_drawings(page_lines, transcripts, cfg.classification)
-                        + classify.continuations(page_lines, transcripts, cfg.classification, cache)
-                    )
-                    page_lines, transcripts, merged = merge_continuations(page_lines, transcripts, pairs)
-                    judgments = classify.classify(transcripts, cfg.classification, cache)
-        except (recognise.RecognitionError, classify.ClassificationError) as e:
-            log.error("page %d: %s; falling back to geometric detection", page.index, e)
-            transcripts, judgments, merged = {}, {}, {}
-            page_lines = body_lines
-
-    for line in sorted(page_lines, key=lambda ln: ln.n):
-        cb = checkbox.candidate(line, cfg.checkbox)
-        r = report.LineResult(
-            line=line, kind="note", checkbox=cb, geometric_kind=geometric_kind(cb, cfg),
-            transcript=transcripts.get(line.n), judgment=judgments.get(line.n), merged=merged.get(line.n, [line.n]),
-        )
-        r.kind = decide(r, cfg)
-        result.lines.append(r)
-    for line in header + footer:
-        zone = zone_of[line.n]
-        result.lines.append(report.LineResult(line=line, kind=zone, checkbox=None, zone=zone, merged=[line.n],
-                                              transcript=header_ts.get(line.n)))
-    result.lines.sort(key=lambda r: r.line.n)
-    return result
-
-
-def analyse_notebook(path: Path, cfg: Config) -> report.Run:
-    nb = notebook.open_notebook(path, cfg.paths.cache_dir / "unpacked")
-    selected = notebook.select_pages(nb.pages, cfg.notebook.pages)
-    log.info("%s: %d page(s), analysing %d", nb.name, len(nb.pages), len(selected))
-    run_id = datetime.now().strftime("%Y%m%d-%H%M%S")
-    out_dir = cfg.paths.output_dir / run_id
-    suffix = 1
-    while out_dir.exists():  # two runs in the same second
-        suffix += 1
-        out_dir = cfg.paths.output_dir / f"{run_id}-{suffix}"
-    run = report.Run(run_id=out_dir.name, out_dir=out_dir, notebook=nb.meta(), source=str(path))
-    cache = AICache(cfg.paths.cache_dir / "ai")
-    zoned = nb.file_type == "pdf"
-    for page in selected:
-        run.pages.append(analyse_page(page, cfg, cache, zoned=zoned))
-    run.page_count = len(nb.pages)
-    return run
 
 
 # ---------------------------------------------------------------- commands
@@ -206,14 +75,12 @@ def cmd_config_check(cfg: Config, args: argparse.Namespace) -> int:
 
 
 def cmd_scan(cfg: Config, args: argparse.Namespace) -> int:
-    with console.status("Finding notebook…"):
-        doc = cloud.find_notebook(cfg)
-    console.print(f"Found [bold]{doc.name}[/bold] ({doc.id}, version {doc.version})")
-    with console.status("Downloading…"):
-        path = cloud.download(cfg, doc)
-    console.print(f"Cached at {path}")
-    run = analyse_notebook(path, cfg)
-    report.write(run, cfg, console)
+    with console.status("Pulling from the cloud…"):
+        result = sync.pull(cfg, _store(cfg), console=console)
+    s = result.summary
+    console.print(f"Cached at {result.rmdoc}")
+    console.print(f"Store: {s.new} new, {s.text_from_paper} text and {s.status_from_paper} status change(s) "
+                  f"from paper, {s.missing} missing")
     return 0
 
 
@@ -222,7 +89,7 @@ def cmd_analyse(cfg: Config, args: argparse.Namespace) -> int:
     if not path.exists():
         console.print(f"[red]No such file or folder:[/red] {path}")
         return 2
-    run = analyse_notebook(path, cfg)
+    run = analysis.analyse_notebook(path, cfg)
     report.write(run, cfg, console)
     return 0
 
@@ -337,71 +204,36 @@ def cmd_template_upload(cfg: Config, args: argparse.Namespace) -> int:
     return 0
 
 
-def load_webstate(path: Path) -> dict:
-    """Stand-in for the task database:
-    {"calibration": bool, "done": [anchor, ...], "edit": {anchor: new text}, "add": {"<page>": [text, ...]}}"""
-    if not path.is_file():
-        return {}
-    return json.loads(path.read_text())
-
-
-def page_states(run: report.Run, state: dict) -> tuple[dict[int, template.PageState], list[str]]:
-    """What to print on each page, from the latest scan plus the web state.
-    Returns the page states and the anchors that were not found on any page."""
-    done, edits = set(state.get("done", [])), dict(state.get("edit", {}))
-    pages: dict[int, template.PageState] = {}
-    seen: set[str] = set()
-    for page in run.pages:
-        ps = template.PageState(footer=list(state.get("add", {}).get(str(page.index), [])))
-        for r in page.lines:
-            anchor = r.line.anchor_id
-            if r.zone != "body" or (anchor not in done and anchor not in edits):
-                continue
-            seen.add(anchor)
-            x0, y0, x1, y1 = r.line.bbox
-            if r.box != "none" and r.checkbox is not None:
-                x0 = r.checkbox.bbox[2]  # start after the checkbox
-            ps.strikes.append((x0, x1, (y0 + y1) / 2))
-            if anchor in edits:
-                ps.footer.append(edits[anchor])
-        pages[page.index] = ps
-    if state.get("calibration"):
-        pages.setdefault(1, template.PageState()).calibration = True
-    return pages, sorted((done | set(edits)) - seen)
+def _store(cfg: Config) -> Store:
+    return Store(cfg.server.db)
 
 
 def cmd_push(cfg: Config, args: argparse.Namespace) -> int:
-    with console.status("Finding notebook…"):
-        doc = cloud.find_notebook(cfg)
-    with console.status("Downloading…"):
-        path = cloud.download(cfg, doc)
-    backups = cfg.paths.cache_dir / "backups"
-    backups.mkdir(parents=True, exist_ok=True)
-    backup = backups / f"{doc.id}-{datetime.now():%Y%m%d-%H%M%S}.rmdoc"
-    shutil.copy2(path, backup)
-
-    run = analyse_notebook(path, cfg)
-    if run.notebook.get("file_type") != "pdf":
-        console.print(f"[red]{doc.name!r} is not a template notebook[/red]; push only writes to PDFs made by "
-                      "`rmtasks template upload`. Your handwriting notebooks are never written to.")
-        return 1
-    report.write(run, cfg, console)
-
-    state = load_webstate(cfg.template.webstate)
-    pages, missing = page_states(run, state)
-    for anchor in missing:
-        log.warning("anchor %s from %s is not on any analysed page; skipped", anchor, cfg.template.webstate.name)
-    pdf = _pdf_path(cfg, run.out_dir)
-    template.build(pdf, cfg.template, pages, page_count=run.page_count)
-    strikes = sum(len(p.strikes) for p in pages.values())
-    footer = sum(len(p.footer) for p in pages.values())
-    console.print(f"PDF: {pdf}  ({run.page_count} pages, {strikes} strike(s), {footer} footer task(s))")
-    if args.dry_run:
+    with console.status("Pulling, then printing into the PDF…"):
+        try:
+            result = sync.push(cfg, _store(cfg), dry_run=args.dry_run, console=console)
+        except sync.SyncError as e:
+            console.print(f"[red]{e}[/red]")
+            return 1
+    console.print(f"PDF: {result.pdf}  ({result.pull.run.page_count} pages, {result.strikes} strike(s), "
+                  f"{result.footer} footer task(s))")
+    if not result.uploaded:
         console.print("[yellow]Dry run[/yellow]: nothing uploaded.")
         return 0
-    with console.status("Replacing the PDF (handwriting kept)…"):
-        cloud.upload_pdf(cfg, pdf, content_only=True)
-    console.print(f"[green]Pushed[/green]. Backup of the previous version: {backup}")
+    console.print(f"[green]Pushed[/green]. Backup of the previous version: {result.backup}")
+    return 0
+
+
+def cmd_serve(cfg: Config, args: argparse.Namespace) -> int:
+    from .server import create_app
+
+    host, port = args.host or cfg.server.host, args.port or cfg.server.port
+    if host not in ("127.0.0.1", "localhost", "::1"):
+        console.print(f"[yellow]Warning[/yellow]: listening on {host}; the app has no login, so anyone who can "
+                      "reach this address can read and change your tasks.")
+    console.print(f"rmtasks for [bold]{cfg.notebook.name}[/bold] at [link]http://{host}:{port}[/link]  "
+                  f"(store: {cfg.server.db})")
+    create_app(cfg).run(host=host, port=port, debug=False, threaded=True)
     return 0
 
 
@@ -432,6 +264,10 @@ def build_parser() -> argparse.ArgumentParser:
     pu = sub.add_parser("push", help="print web changes into the template notebook's PDF")
     pu.add_argument("--dry-run", action="store_true", help="build the PDF locally; do not upload")
     pu.set_defaults(func=cmd_push)
+    sv = sub.add_parser("serve", help="run the local web app")
+    sv.add_argument("--host", help="default: server.host")
+    sv.add_argument("--port", type=int, help="default: server.port")
+    sv.set_defaults(func=cmd_serve)
     df = sub.add_parser("diff", help="compare checkbox stroke IDs between two runs")
     df.add_argument("run_a")
     df.add_argument("run_b")
@@ -454,7 +290,7 @@ def main(argv: list[str] | None = None) -> int:
     _setup_logging(cfg.logging.level)
     try:
         return args.func(cfg, args)
-    except (cloud.CloudError, notebook.NotebookError, FileNotFoundError) as e:
+    except (cloud.CloudError, notebook.NotebookError, sync.SyncError, FileNotFoundError) as e:
         console.print(f"[red]Error:[/red] {e}")
         return 1
     except KeyboardInterrupt:

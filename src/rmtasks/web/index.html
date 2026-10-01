@@ -1,0 +1,334 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>rmtasks</title>
+<style>
+  :root {
+    --bg: #f6f5f1; --panel: #ffffff; --ink: #1d1d1b; --muted: #75736c; --line: #e4e2da;
+    --accent: #2f6f4f; --accent-ink: #ffffff; --warn: #a15c00; --danger: #b3261e; --chip: #eeece5;
+    --web: #2b5c9e; --focus: #2f6f4f55;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #161614; --panel: #1f1f1c; --ink: #ecebe6; --muted: #9c9a92; --line: #33322e;
+      --accent: #6fbf94; --accent-ink: #0f1f16; --warn: #e3a44d; --danger: #f08a82; --chip: #2a2a26;
+      --web: #8db4ea; --focus: #6fbf9455;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink);
+         font: 15px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; }
+  main { max-width: 1080px; margin: 0 auto; padding: 28px 16px 64px; }
+  header { display: flex; flex-wrap: wrap; gap: 12px; align-items: flex-end; justify-content: space-between; }
+  h1 { font-size: 22px; margin: 0; letter-spacing: -0.01em; }
+  .sub { color: var(--muted); font-size: 13px; margin-top: 2px; }
+  .actions { display: flex; gap: 8px; }
+  button { font: inherit; border: 1px solid var(--line); background: var(--panel); color: var(--ink);
+           border-radius: 8px; padding: 7px 12px; cursor: pointer; }
+  button:hover:not(:disabled) { border-color: var(--muted); }
+  button:disabled { opacity: .5; cursor: default; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+  button:focus-visible, input:focus-visible { outline: 3px solid var(--focus); outline-offset: 1px; }
+  .banner { margin: 16px 0 0; padding: 10px 12px; border-radius: 8px; background: var(--chip); font-size: 14px; }
+  .banner.error { color: var(--danger); }
+  .banner.warn { color: var(--warn); }
+  form.add { display: flex; gap: 8px; margin: 22px 0 8px; }
+  form.add input { flex: 1; min-width: 0; font: inherit; padding: 9px 12px; border-radius: 8px;
+                   border: 1px solid var(--line); background: var(--panel); color: var(--ink); }
+  .hint { color: var(--muted); font-size: 12px; margin-bottom: 18px; }
+  section.page { background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
+                 margin-top: 16px; overflow: hidden; }
+  section.page > h2 { display: flex; justify-content: space-between; align-items: baseline; margin: 0;
+                      padding: 12px 16px; font-size: 14px; border-bottom: 1px solid var(--line); }
+  section.page > h2 a { color: var(--muted); font-weight: normal; font-size: 12px; }
+  .page-body { display: grid; grid-template-columns: minmax(0, 1fr) 300px; }
+  .preview { border-left: 1px solid var(--line); padding: 14px; background: var(--bg); }
+  .preview a { display: block; }
+  .preview img { display: block; width: 100%; height: auto; aspect-ratio: 3 / 4; background: #fff;
+                 border-radius: 6px; box-shadow: 0 1px 3px rgba(0,0,0,.18); }
+  .preview .cap { color: var(--muted); font-size: 11px; margin-top: 8px; text-align: center; }
+  .no-tasks { color: var(--muted); padding: 14px 16px; font-size: 14px; }
+  @media (max-width: 760px) {
+    .page-body { grid-template-columns: 1fr; }
+    .preview { border-left: 0; border-top: 1px solid var(--line); }
+    .preview img { max-width: 360px; margin: 0 auto; }
+  }
+  ul { list-style: none; margin: 0; padding: 0; }
+  li { display: flex; gap: 12px; align-items: flex-start; padding: 10px 16px; border-top: 1px solid var(--line); }
+  li:first-child { border-top: 0; }
+  li input[type=checkbox] { width: 18px; height: 18px; margin: 2px 0 0; accent-color: var(--accent); flex: none; }
+  .body { flex: 1; min-width: 0; }
+  .text { cursor: text; overflow-wrap: anywhere; border-radius: 4px; }
+  .text:hover { background: var(--chip); }
+  li.done .text { text-decoration: line-through; color: var(--muted); }
+  li.missing { opacity: .55; }
+  .was { color: var(--muted); font-size: 12px; text-decoration: line-through; }
+  .meta { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
+  .chip { font-size: 11px; padding: 1px 7px; border-radius: 99px; background: var(--chip); color: var(--muted); }
+  .chip.web { color: var(--web); }
+  .chip.edited, .chip.missing { color: var(--warn); }
+  .edit { width: 100%; font: inherit; padding: 2px 6px; border-radius: 4px; border: 1px solid var(--muted);
+          background: var(--panel); color: var(--ink); }
+  .del { border: 0; background: none; color: var(--muted); padding: 0 4px; font-size: 18px; line-height: 1; }
+  .del:hover { color: var(--danger); }
+  .empty { color: var(--muted); padding: 32px 16px; text-align: center; }
+  .spinner { display: inline-block; width: 12px; height: 12px; border: 2px solid currentColor;
+             border-right-color: transparent; border-radius: 50%; animation: spin .8s linear infinite;
+             vertical-align: -1px; margin-right: 6px; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  footer { margin-top: 28px; color: var(--muted); font-size: 12px; }
+  footer li { border: 0; padding: 2px 0; display: block; }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <div>
+      <h1 id="title">rmtasks</h1>
+      <div class="sub" id="status">Loading…</div>
+    </div>
+    <div class="actions">
+      <button id="pull" title="Download the notebook and read new handwriting">Pull from tablet</button>
+      <button id="push" class="primary" title="Print web changes into the notebook's PDF">Push now</button>
+    </div>
+  </header>
+  <div id="banner" class="banner" hidden></div>
+
+  <form class="add" id="add">
+    <input id="new" placeholder="Add a task…" autocomplete="off" aria-label="New task">
+    <button type="submit">Add</button>
+  </form>
+  <div class="hint" id="addhint"></div>
+
+  <div id="pages"></div>
+  <footer id="log"></footer>
+</main>
+
+<script>
+const $ = (id) => document.getElementById(id);
+let state = null;
+let busy = false;
+let lastAutoError = null;
+let lastPullError = null;
+let pollTimer = null;
+
+// Poll quickly while an automatic sync is pending or running, slowly otherwise.
+function schedulePoll(active) {
+  clearTimeout(pollTimer);
+  pollTimer = setTimeout(refresh, active ? 1500 : 10000);  // 10s: pick up automatic pulls soon after they finish
+}
+
+async function refresh() {
+  if (busy) return schedulePoll(true);
+  try { render(await api("GET", "/api/state")); }
+  catch (e) { banner(e.message, "error"); schedulePoll(false); }
+}
+
+function el(tag, attrs = {}, ...children) {
+  const node = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs)) {
+    if (k === "class") node.className = v;
+    else if (k.startsWith("on")) node.addEventListener(k.slice(2), v);
+    else if (v !== false && v != null) node.setAttribute(k, v === true ? "" : v);
+  }
+  for (const c of children) if (c != null) node.append(c);
+  return node;
+}
+
+function ago(iso) {
+  if (!iso) return "never";
+  const s = (Date.now() - new Date(iso).getTime()) / 1000;
+  if (s < 60) return "just now";
+  if (s < 3600) return `${Math.round(s / 60)} min ago`;
+  if (s < 86400) return `${Math.round(s / 3600)} h ago`;
+  return new Date(iso).toLocaleString();
+}
+
+function banner(text, kind = "") {
+  const b = $("banner");
+  if (!text) { b.hidden = true; return; }
+  b.hidden = false;
+  b.className = "banner " + kind;
+  b.textContent = text;
+}
+
+async function api(method, path, body) {
+  const res = await fetch(path, {
+    method, headers: body ? { "Content-Type": "application/json" } : {},
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  const data = await res.json().catch(() => ({}));
+  if (data.state) render(data.state);
+  if (!res.ok) throw new Error(data.error || `${res.status} ${res.statusText}`);
+  return data;
+}
+
+function render(s) {
+  if (!s) return;
+  state = s;
+  const nb = s.notebook;
+  $("title").textContent = s.notebook_name;
+  const auto = s.auto || {};
+  const status = $("status");
+  status.replaceChildren();
+  if (auto.running) {
+    status.append(el("span", { class: "spinner" }), "Syncing to the tablet…");
+  } else if (auto.scheduled) {
+    status.append(`Syncing to the tablet in ${auto.in_s}s…`);
+  } else if (s.auto_pull && s.auto_pull.running) {
+    status.append(el("span", { class: "spinner" }), "Reading new handwriting from the tablet…");
+  } else {
+    status.append(nb
+      ? `Pulled ${ago(nb.last_pull_at)} · pushed ${ago(nb.last_push_at)}` +
+        (s.pending_push ? " · changes waiting to be pushed" : "")
+      : "Not pulled yet. Pull from the tablet to start.");
+  }
+  if (auto.last_error && auto.last_error !== lastAutoError) banner(`Automatic sync failed: ${auto.last_error}`, "error");
+  lastAutoError = auto.last_error;
+  if (s.auto_pull && s.auto_pull.last_error && s.auto_pull.last_error !== lastPullError)
+    banner(`Automatic pull failed: ${s.auto_pull.last_error}`, "error");
+  lastPullError = s.auto_pull && s.auto_pull.last_error;
+  schedulePoll(auto.running || auto.scheduled || (s.auto_pull && s.auto_pull.running));
+  $("push").disabled = busy || !s.writable;
+  $("push").title = s.writable ? "Print web changes into the notebook's PDF"
+    : "Only template notebooks can be written to (rmtasks template upload)";
+  $("pull").disabled = busy;
+  $("new").disabled = !nb;
+  $("addhint").textContent = nb
+    ? `New tasks go in the footer of page ${s.current_page}.` +
+      (s.auto && s.writable ? " Changes sync to the tablet automatically." : "")
+    : "";
+
+  const root = $("pages");
+  root.replaceChildren();
+  if (!s.pages.length) {
+    root.append(el("div", { class: "empty" }, nb ? "No tasks found yet." : "Nothing here yet."));
+  }
+  const version = nb ? encodeURIComponent([nb.last_pull_at, nb.web_changed_at, nb.last_push_at].join("|")) : "";
+  for (const page of s.pages) {
+    const head = el("h2", {},
+      el("span", {}, `Page ${page.index}` + (page.date ? ` · ${page.date}` : "")),
+      el("a", { href: `/api/pages/${page.index}.svg`, target: "_blank",
+                title: "What was read: line bands, kinds and text" }, "what was read"));
+    const list = el("ul");
+    for (const t of page.tasks) list.append(taskRow(t));
+    const tasks = page.tasks.length ? list : el("div", { class: "no-tasks" }, "No tasks on this page.");
+    const src = `/api/pages/${page.index}/preview.svg?v=${version}`;
+    const preview = el("div", { class: "preview" },
+      el("a", { href: src, target: "_blank", title: "Open full size" },
+        el("img", { src, alt: `Page ${page.index} as the tablet shows it`, loading: "lazy" })),
+      el("div", { class: "cap" }, s.pending_push ? "After the next push" : "As on the tablet"));
+    root.append(el("section", { class: "page" }, head, el("div", { class: "page-body" }, tasks, preview)));
+  }
+
+  const log = $("log");
+  log.replaceChildren();
+  if (s.syncs && s.syncs.length) {
+    log.append(el("div", {}, "Recent syncs"));
+    const ul = el("ul");
+    for (const x of s.syncs) {
+      const d = x.detail ? JSON.parse(x.detail) : {};
+      const what = x.kind === "pull"
+        ? `${d.new ?? 0} new, ${(d.text_from_paper ?? 0) + (d.status_from_paper ?? 0)} changed on paper`
+        : `${d.strikes ?? 0} done, ${d.moved ?? 0} edited, ${d.footer ?? 0} in the footer`;
+      ul.append(el("li", {}, `${x.kind} · ${ago(x.at)} · ${what}`));
+    }
+    log.append(ul);
+  }
+}
+
+function taskRow(t) {
+  const done = t.status === "done";
+  const li = el("li", { class: [done && "done", t.missing && "missing"].filter(Boolean).join(" ") });
+  const box = el("input", {
+    type: "checkbox", checked: done, "aria-label": "Done",
+    onchange: () => mutate(() => api("PATCH", `/api/tasks/${t.id}`, { status: box.checked ? "done" : "open" })),
+  });
+  const text = el("div", { class: "text", title: "Click to edit", tabindex: 0 }, t.text);
+  text.addEventListener("click", () => startEdit(t, text));
+  text.addEventListener("keydown", (e) => { if (e.key === "Enter") startEdit(t, text); });
+
+  const meta = el("div", { class: "meta" });
+  meta.append(el("span", { class: "chip " + t.origin }, t.origin === "web" ? "from web" : "handwritten"));
+  if (t.edited) meta.append(el("span", { class: "chip edited" }, "edited on web · new text in the footer"));
+  if (t.origin === "paper" && t.paper_status === "done") meta.append(el("span", { class: "chip" }, "ticked on paper"));
+  if (t.missing) meta.append(el("span", { class: "chip missing" }, "not on the page any more"));
+
+  const body = el("div", { class: "body" }, text);
+  if (t.edited) body.append(el("div", { class: "was" }, t.paper_text));
+  body.append(meta);
+  li.append(box, body);
+  if (t.origin === "web") {
+    li.append(el("button", {
+      class: "del", title: "Delete", "aria-label": "Delete",
+      onclick: () => mutate(() => api("DELETE", `/api/tasks/${t.id}`)),
+    }, "×"));
+  }
+  return li;
+}
+
+function startEdit(t, node) {
+  const input = el("input", { class: "edit", value: t.text, "aria-label": "Task text" });
+  node.replaceWith(input);
+  input.focus();
+  input.select();
+  let done = false;
+  const finish = (save) => {
+    if (done) return;
+    done = true;
+    const value = input.value.trim();
+    if (save && value && value !== t.text) mutate(() => api("PATCH", `/api/tasks/${t.id}`, { text: value }));
+    else render(state);
+  };
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") finish(true);
+    if (e.key === "Escape") finish(false);
+  });
+  input.addEventListener("blur", () => finish(true));
+}
+
+async function mutate(fn) {
+  try { banner(""); await fn(); }
+  catch (e) { banner(e.message, "error"); }
+}
+
+async function syncAction(kind) {
+  const btn = $(kind);
+  const label = btn.textContent;
+  busy = true;
+  render(state);
+  btn.replaceChildren(el("span", { class: "spinner" }), kind === "pull" ? "Pulling…" : "Pushing…");
+  banner(kind === "pull"
+    ? "Downloading the notebook and reading new handwriting. This can take a minute."
+    : "Pulling first, then printing changes into the PDF and uploading it.");
+  try {
+    const r = await api("POST", `/api/${kind}`);
+    const s = r.summary || {};
+    const changes = (s.text_from_paper || 0) + (s.status_from_paper || 0);
+    banner(kind === "pull"
+      ? `Pulled: ${s.new || 0} new task(s), ${changes} change(s) from paper.`
+      : `Pushed: ${r.strikes} done, ${r.moved} edited, ${r.footer} in the footer. Let the tablet sync to see them.`);
+  } catch (e) {
+    banner(e.message, "error");
+  } finally {
+    busy = false;
+    btn.textContent = label;
+    render(state);
+  }
+}
+
+$("pull").addEventListener("click", () => syncAction("pull"));
+$("push").addEventListener("click", () => syncAction("push"));
+$("add").addEventListener("submit", (e) => {
+  e.preventDefault();
+  const text = $("new").value.trim();
+  if (!text) return;
+  mutate(async () => { await api("POST", "/api/tasks", { text }); $("new").value = ""; });
+});
+
+refresh();
+</script>
+</body>
+</html>

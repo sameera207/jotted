@@ -68,7 +68,7 @@ def open_notebook(path: Path, unpack_dir: Path) -> Notebook:
     content = json.loads(content_path.read_text())
 
     rm_files = {p.stem: p for p in root.rglob("*.rm")}
-    page_ids = _page_order(content)
+    page_ids = page_order(content)
     if not page_ids:
         # Unknown layout: fall back to whatever .rm files exist.
         log.warning("no page list in %s; using .rm files in name order", content_path.name)
@@ -95,7 +95,8 @@ def open_notebook(path: Path, unpack_dir: Path) -> Notebook:
                     file_type=content.get("fileType") or "notebook")
 
 
-def _page_order(content: dict) -> list[str]:
+def page_order(content: dict) -> list[str]:
+    """Page ids in reading order, from a .content file."""
     cpages = (content.get("cPages") or {}).get("pages")
     if cpages:
         live = [p for p in cpages if "deleted" not in p]

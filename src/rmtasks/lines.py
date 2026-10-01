@@ -15,6 +15,12 @@ MIN_HEIGHT = 1.0  # floor for median heights, so dots and dashes can't make it z
 class Line:
     strokes: list[Stroke] = field(default_factory=list)  # sorted by left edge after clustering
     n: int = 0
+    rows: list[BBox] = field(default_factory=list)  # set when wrapped lines were merged into this one
+
+    @property
+    def row_boxes(self) -> list[BBox]:
+        """One box per written row: the original lines of a merged item, else the line itself."""
+        return self.rows or [self.bbox]
 
     @property
     def bbox(self) -> BBox:
@@ -93,6 +99,7 @@ def cluster(strokes: list[Stroke], cfg: LinesConfig) -> tuple[list[Line], list[S
         else:
             best.strokes.append(s)
 
+    lines = merge_same_row(lines, cfg.same_row_overlap)
     lines = merge_contained(lines, cfg.merge_containment, pad=0.25 * h)
     lines.sort(key=lambda ln: ln.bbox[1])
     for i, ln in enumerate(lines, start=1):
@@ -130,6 +137,42 @@ def merge_contained(lines: list[Line], threshold: float, pad: float = 0.0) -> li
                 inter = (max(ba[0], bb[0]), max(ba[1], bb[1]), min(ba[2], bb[2]), min(ba[3], bb[3]))
                 small = min(_area(ba), _area(bb))
                 if small > 0 and _area(inter) / small >= threshold:
+                    a.strokes.extend(b.strokes)
+                    del lines[j]
+                    merged = True
+                    break
+            if merged:
+                break
+    return lines
+
+
+def merge_same_row(lines: list[Line], threshold: float) -> list[Line]:
+    """Join lines that sit side by side on one row.
+
+    A letter with a long descender (the p of "prod") can have its centre far enough below
+    the rest of the row to start a new line in the sweep. Such a piece overlaps the row
+    vertically, and is either beside it (little horizontal overlap) or a loose letter of
+    one or two strokes within it. Two real lines do neither.
+    """
+    if threshold <= 0:
+        return lines
+    lines = list(lines)
+    merged = True
+    while merged:
+        merged = False
+        for i, a in enumerate(lines):
+            for j, b in enumerate(lines):
+                if i >= j:
+                    continue
+                (ax0, ay0, ax1, ay1), (bx0, by0, bx1, by1) = a.bbox, b.bbox
+                small_h = min(ay1 - ay0, by1 - by0)
+                small_w = min(ax1 - ax0, bx1 - bx0)
+                if small_h <= 0:
+                    continue
+                v = _overlap(ay0, ay1, by0, by1) / small_h
+                hz = _overlap(ax0, ax1, bx0, bx1) / small_w if small_w > 0 else 1.0
+                loose = min(len(a.strokes), len(b.strokes)) <= 2
+                if v >= threshold and (hz < 0.5 or loose):
                     a.strokes.extend(b.strokes)
                     del lines[j]
                     merged = True

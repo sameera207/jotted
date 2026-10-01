@@ -23,6 +23,7 @@ INK = Color(0.15, 0.15, 0.15)
 GUIDE = Color(0.55, 0.55, 0.55)
 RULE = Color(0.85, 0.85, 0.85)
 STRIKE = Color(0.1, 0.1, 0.1)
+MOVED = Color(0.35, 0.35, 0.35)
 MARGIN = 24.0  # pt
 
 # Calibration marks for test W2, in reMarkable units: short segments to trace over.
@@ -64,9 +65,21 @@ def zones(cfg: TemplateConfig) -> Zones:
 @dataclass
 class PageState:
     """What to print on one page, beyond the blank template."""
-    strikes: list[tuple[float, float, float]] = field(default_factory=list)  # (x0, x1, y) in rM units
-    footer: list[str] = field(default_factory=list)  # web tasks, one per row
+    strikes: list[tuple[float, float, float]] = field(default_factory=list)  # done: (x0, x1, y) in rM units
+    footer: list[str | tuple] = field(default_factory=list)  # text, (text, done) or (text, done, label)
+    moved: list[tuple[list[tuple[float, float, float, float]], int]] = field(default_factory=list)
+    # edited on the web: (row boxes in rM units, label); outlined and numbered, pointing to the footer
     calibration: bool = False
+
+
+def _badge(c: Canvas, cx: float, cy: float, label: int) -> None:
+    """A small circled number, linking a replaced line to its new version in the footer."""
+    c.setStrokeColor(MOVED)
+    c.setFillColor(MOVED)
+    c.setLineWidth(0.9)
+    c.circle(cx, cy, 6.5, stroke=1, fill=0)
+    c.setFont("Helvetica-Bold", 8)
+    c.drawCentredString(cx, cy - 2.8, str(label))
 
 
 def build(path: Path, cfg: TemplateConfig, pages: dict[int, PageState] | None = None, page_count: int | None = None) -> Path:
@@ -120,12 +133,42 @@ def _draw_page(c: Canvas, z: Zones, cfg: TemplateConfig, state: PageState) -> No
     c.setFillColor(INK)
     c.setFont("Helvetica", 12)
     row_y = footer_y - 34
-    for text in state.footer:
+    labelled = any(not isinstance(i, str) and len(i) > 2 and i[2] for i in state.footer)
+    for item in state.footer:
+        text, done, label = (item, False, None) if isinstance(item, str) else (*item, None)[:3]
         if row_y < MARGIN:
             break  # overflow is a deferred edge case
-        c.rect(MARGIN, row_y - 2, 9, 9, stroke=1, fill=0)
-        c.drawString(MARGIN + 16, row_y, text)
+        x = MARGIN
+        if labelled:  # keep every row aligned whether or not it carries a number
+            if label:
+                _badge(c, x + 6.5, row_y + 2.5, label)
+            x += 18
+        c.setStrokeColor(INK)
+        c.setFillColor(INK)
+        c.setFont("Helvetica", 12)
+        c.setLineWidth(0.8)
+        c.rect(x, row_y - 2, 9, 9, stroke=1, fill=0)
+        c.drawString(x + 16, row_y, text)
+        if done:
+            width = c.stringWidth(text, "Helvetica", 12)
+            c.setLineWidth(cfg.strike_width)
+            c.line(x + 14, row_y + 4, x + 18 + width, row_y + 4)
         row_y -= 20
+
+    # Edited on the web: the handwriting is outlined, not struck, with the number of its new version.
+    for rows, label in state.moved:
+        x0 = min(r[0] for r in rows)
+        pts = [to_pdf(r[0], r[1], cfg.scale) for r in rows] + [to_pdf(r[2], r[3], cfg.scale) for r in rows]
+        left, right = min(p[0] for p in pts) - 5, max(p[0] for p in pts) + 5
+        bottom, top = min(p[1] for p in pts) - 4, max(p[1] for p in pts) + 4
+        c.setStrokeColor(MOVED)
+        c.setLineWidth(0.8)
+        c.setDash(2, 2)
+        c.roundRect(left, bottom, right - left, top - bottom, 4, stroke=1, fill=0)
+        c.setDash()
+        first_y = (to_pdf(x0, rows[0][1], cfg.scale)[1] + to_pdf(x0, rows[0][3], cfg.scale)[1]) / 2
+        bx = left - 10 if left - 10 > 8 else right + 10  # the margin, or after the line if there is no room
+        _badge(c, bx, first_y, label)
 
     # Done: a line through the handwriting.
     c.setStrokeColor(STRIKE)
@@ -143,3 +186,89 @@ def _draw_page(c: Canvas, z: Zones, cfg: TemplateConfig, state: PageState) -> No
             (px0, py), (px1, _) = to_pdf(x, y), to_pdf(x + CAL_LEN, y)
             c.line(px0, py, px1, py)
             c.drawString(px0, py + 4, "trace this line")
+
+
+# ---------------------------------------------------------------- preview (SVG)
+# What the tablet shows: the template, your ink, and everything we print, in tablet
+# units. Used by the web app; mirrors _draw_page, so keep the two in step.
+
+def _xml(text: str) -> str:
+    return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
+def render_svg(strokes, state: PageState, cfg: TemplateConfig, templated: bool = True) -> str:
+    s = cfg.scale
+    u = UNITS_PER_PT * s  # tablet units per PDF point
+
+    def X(pt: float) -> float:  # PDF x (points) -> tablet x
+        return pt * u - RM_W / 2 * s
+
+    def Y(pt: float) -> float:  # PDF y (points, from the bottom) -> tablet y
+        return (PAGE_H - pt) * u
+
+    w, h = RM_W * s, RM_H * s
+    out = [f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="{-w / 2:.0f} 0 {w:.0f} {h:.0f}" '
+           f'font-family="Helvetica, Arial, sans-serif">',
+           f'<rect x="{-w / 2:.0f}" y="0" width="{w:.0f}" height="{h:.0f}" fill="#fff"/>']
+    left, right = X(MARGIN), X(PAGE_W - MARGIN)
+    if templated:
+        z = zones(cfg)
+        out.append(f'<text x="{left:.0f}" y="{z.header_bottom - 12 * u:.0f}" font-size="{10 * u:.0f}" '
+                   f'fill="#8c8c8c">Date:</text>')
+        if cfg.line_spacing > 0:
+            step = cfg.line_spacing * RM_H * s
+            y = z.header_bottom + step
+            while y < z.footer_top - step / 2:
+                out.append(f'<line x1="{left:.0f}" y1="{y:.0f}" x2="{right:.0f}" y2="{y:.0f}" '
+                           f'stroke="#d9d9d9" stroke-width="{0.4 * u:.1f}"/>')
+                y += step
+        for y in (z.header_bottom, z.footer_top):
+            out.append(f'<line x1="{left:.0f}" y1="{y:.0f}" x2="{right:.0f}" y2="{y:.0f}" '
+                       f'stroke="#8c8c8c" stroke-width="{0.8 * u:.1f}"/>')
+        footer_pt = PAGE_H - z.footer_top / u
+        out.append(f'<text x="{left:.0f}" y="{Y(footer_pt - 14):.0f}" font-size="{9 * u:.0f}" '
+                   f'fill="#8c8c8c">From web</text>')
+        labelled = any(not isinstance(i, str) and len(i) > 2 and i[2] for i in state.footer)
+        row = footer_pt - 34
+        for item in state.footer:
+            text, done, label = (item, False, None) if isinstance(item, str) else (*item, None)[:3]
+            if row < MARGIN:
+                break
+            x = MARGIN
+            if labelled:
+                if label:
+                    out.append(_svg_badge(X(x + 6.5), Y(row + 2.5), label, u))
+                x += 18
+            out.append(f'<rect x="{X(x):.0f}" y="{Y(row + 7):.0f}" width="{9 * u:.0f}" height="{9 * u:.0f}" '
+                       f'fill="none" stroke="#262626" stroke-width="{0.8 * u:.1f}"/>')
+            out.append(f'<text x="{X(x + 16):.0f}" y="{Y(row):.0f}" font-size="{12 * u:.0f}" fill="#262626"'
+                       + (' text-decoration="line-through"' if done else "") + f'>{_xml(text)}</text>')
+            row -= 20
+
+    for st in strokes:
+        pts = " ".join(f"{x:.1f},{y:.1f}" for x, y in st.points)
+        out.append(f'<polyline points="{pts}" fill="none" stroke="#1f3f8f" stroke-width="3" '
+                   f'stroke-linecap="round" stroke-linejoin="round"/>')
+
+    for x0, x1, y in state.strikes:
+        out.append(f'<line x1="{x0:.0f}" y1="{y:.0f}" x2="{x1:.0f}" y2="{y:.0f}" stroke="#1a1a1a" '
+                   f'stroke-width="{cfg.strike_width * u:.1f}"/>')
+    for rows, label in state.moved:
+        x0 = min(r[0] for r in rows) - 5 * u
+        x1 = max(r[2] for r in rows) + 5 * u
+        y0 = min(r[1] for r in rows) - 4 * u
+        y1 = max(r[3] for r in rows) + 4 * u
+        out.append(f'<rect x="{x0:.0f}" y="{y0:.0f}" width="{x1 - x0:.0f}" height="{y1 - y0:.0f}" rx="{4 * u:.0f}" '
+                   f'fill="none" stroke="#595959" stroke-width="{0.8 * u:.1f}" stroke-dasharray="{2 * u:.0f} {2 * u:.0f}"/>')
+        first_y = (rows[0][1] + rows[0][3]) / 2
+        bx = x0 - 10 * u if x0 - 10 * u > -w / 2 + 8 * u else x1 + 10 * u
+        out.append(_svg_badge(bx, first_y, label, u))
+    out.append("</svg>")
+    return "\n".join(out)
+
+
+def _svg_badge(cx: float, cy: float, label: int, u: float) -> str:
+    return (f'<circle cx="{cx:.0f}" cy="{cy:.0f}" r="{6.5 * u:.0f}" fill="none" stroke="#595959" '
+            f'stroke-width="{0.9 * u:.1f}"/>'
+            f'<text x="{cx:.0f}" y="{cy + 2.8 * u:.0f}" font-size="{8 * u:.0f}" font-weight="bold" '
+            f'text-anchor="middle" fill="#595959">{label}</text>')

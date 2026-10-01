@@ -29,6 +29,7 @@ band_tolerance       = 0.6  # centre within this x median height of the band joi
 min_vertical_overlap = 0.5  # or overlap of the band by this share of its own height
 tall_stroke_factor   = 3.0  # taller strokes are placed after the first pass
 merge_containment    = 0.6  # merge a line into another whose box holds this share of it (drawings); 0 = off
+same_row_overlap     = 0.35 # join side-by-side pieces overlapping vertically by this share (a tall letter); 0 = off
 
 [checkbox]
 styles    = ["bracket_pair", "single_box"]
@@ -87,7 +88,15 @@ footer_height = 0.22    # bottom share of the page: printed web content
 line_spacing  = 0.045   # faint ruling in the body, as a share of page height; 0 = none
 strike_width  = 1.2     # pt, the printed line through a task done on the web
 scale         = 1.0525  # tablet units per nominal unit (1 pt = 3); measured on an rM2 by tracing calibration marks
-webstate      = "./webstate.json"  # stands in for the task database in this spike
+
+# The local web app: `rmtasks serve`. It binds to this machine only by default.
+[server]
+host = "127.0.0.1"
+port = 8765
+db   = "./data/rmtasks.db"   # SQLite task store (gitignored)
+auto_push = true            # push to the tablet after every add, edit or tick (template notebooks only)
+auto_push_delay_s = 5       # wait this long after the last change, so quick edits go out as one push
+auto_pull_interval_s = 60   # check the cloud this often; pull only when the notebook changed. 0 = off
 
 [output]
 formats   = ["table", "json", "svg"]

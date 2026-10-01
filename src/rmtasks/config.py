@@ -55,6 +55,7 @@ class LinesConfig:
     min_vertical_overlap: float = 0.5
     tall_stroke_factor: float = 3.0
     merge_containment: float = 0.6
+    same_row_overlap: float = 0.35
 
 
 @dataclass(frozen=True)
@@ -105,7 +106,16 @@ class TemplateConfig:
     line_spacing: float = 0.045
     strike_width: float = 1.2
     scale: float = 1.0525
-    webstate: Path = Path("./webstate.json")
+
+
+@dataclass(frozen=True)
+class ServerConfig:
+    host: str = "127.0.0.1"
+    port: int = 8765
+    db: Path = Path("./data/rmtasks.db")
+    auto_push: bool = True
+    auto_push_delay_s: int = 5
+    auto_pull_interval_s: int = 60
 
 
 @dataclass(frozen=True)
@@ -131,6 +141,7 @@ class Config:
     recognition: RecognitionConfig
     classification: ClassificationConfig
     template: TemplateConfig
+    server: ServerConfig
     output: OutputConfig
     logging: LoggingConfig
 
@@ -159,6 +170,7 @@ SECTIONS: dict[str, type] = {
     "recognition": RecognitionConfig,
     "classification": ClassificationConfig,
     "template": TemplateConfig,
+    "server": ServerConfig,
     "output": OutputConfig,
     "logging": LoggingConfig,
 }
