@@ -17,7 +17,7 @@ from PIL import Image, ImageDraw
 
 from .aicache import AICache
 from .config import LLMConfig
-from .lines import Line
+from .ink.lines import Line
 from .llm import LLM, LineImage, Transcript, llm_for
 
 log = logging.getLogger(__name__)

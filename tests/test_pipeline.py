@@ -10,9 +10,10 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parent))
 import synth  # noqa: E402
 
-from jotted import cloud, config, notebook, strokes  # noqa: E402
-from jotted.lines import Line, cluster  # noqa: E402
-from jotted.strokes import make_stroke  # noqa: E402
+from jotted import config  # noqa: E402
+from jotted.ink.lines import Line, cluster  # noqa: E402
+from jotted.ink.strokes import make_stroke  # noqa: E402
+from jotted.plugins.remarkable import cloud, notebook, rmfile  # noqa: E402
 
 ROOT = Path(__file__).parent.parent
 
@@ -90,11 +91,11 @@ def test_load_strokes_drops_deleted_ignored_and_dots(tmp_path, cfg):
     (tmp_path / "a.rm").write_bytes(data)
     (tmp_path / "b.rm").write_bytes(hl)
 
-    got = strokes.load_strokes(tmp_path / "a.rm", cfg.strokes)
+    got = rmfile.load_strokes(tmp_path / "a.rm", cfg.strokes)
     assert [s.id for s in got] == ["1:100"]
     assert got[0].tool == "fineliner"
     assert got[0].bbox == (0, 0, 10, 10)
-    assert strokes.load_strokes(tmp_path / "b.rm", cfg.strokes) == []
+    assert rmfile.load_strokes(tmp_path / "b.rm", cfg.strokes) == []
 
 
 # ---------------------------------------------------------------- lines
@@ -423,6 +424,7 @@ def test_scheduler_coalesces_bursts_of_edits():
 
     class FakeApp:
         pushes = 0
+        lock = threading.Lock()
 
         def sync_todo(self):
             FakeApp.pushes += 1

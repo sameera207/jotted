@@ -3,6 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="jotted-token" content="{{JOTTED_TOKEN}}">
 <title>Jotted</title>
 <style>
   /* Paper: each section is a sheet on a desk. The To-do sheet is ruled, one item per line. */
@@ -301,7 +302,7 @@
         <div class="row" style="margin-bottom:8px">
           <input type="text" id="library-filter" placeholder="Filter by name…" aria-label="Filter folders and documents"
                  style="max-width:240px">
-          <button id="load-library" title="Read the folder list from the tablet again">Refresh list</button>
+          <button id="load-library" title="Read the folder list again">Refresh list</button>
           <span class="sub" id="library-status"></span>
         </div>
         <div class="folders" id="folders"><div class="empty">Loading your library…</div></div>
@@ -343,17 +344,17 @@
         </div>
       </div>
       <div class="field">
-        <label for="poll-interval">Check the tablet every</label>
+        <label for="poll-interval">Check <span class="device">your device</span> every</label>
         <select id="poll-interval">
           <option value="30">30 seconds</option><option value="60">minute</option>
           <option value="300">5 minutes</option><option value="900">15 minutes</option>
         </select>
       </div>
       <div class="field">
-        <div class="label">To-do document on the tablet</div>
+        <div class="label">To-do document on <span class="device">your device</span></div>
         <div class="help">A generated document listing every open item with a checkbox. Tick a box with the pen
           and the item is marked done here on the next check. Items keep their place, so ticks never move.</div>
-        <label class="row" style="font-weight:normal"><input type="checkbox" id="todo-enabled"> Keep a To-do document on the tablet</label>
+        <label class="row" style="font-weight:normal"><input type="checkbox" id="todo-enabled"> Keep a To-do document on <span class="device">your device</span></label>
         <label class="row" style="font-weight:normal;margin-top:6px"><input type="checkbox" id="todo-others"> Include actions for other people</label>
         <div class="row" style="margin-top:10px">
           <input type="text" id="todo-name" aria-label="Document name" style="max-width:220px">
@@ -377,6 +378,14 @@
 const $ = (id) => document.getElementById(id);
 let tab = "todo";
 let todo = null, settings = null, library = null, ai = null;
+let source = null;  // the source plugin: {name, label, mark, device, connected, detail}
+
+function device() { return (source && source.device) || "your device"; }
+
+function applySource(src) {
+  source = src;
+  for (const n of document.querySelectorAll(".device")) n.textContent = device();
+}
 let filters = { status: "open", owner: "", folder: "" };
 let pollTimer = null, lastError = null;
 
@@ -407,9 +416,11 @@ function banner(text, kind = "") {
   b.hidden = false; b.className = "banner " + kind; b.textContent = text;
 }
 
+const TOKEN = document.querySelector('meta[name="jotted-token"]').content;
+
 async function api(method, path, body) {
-  const res = await fetch(path, { method, headers: body ? { "Content-Type": "application/json" } : {},
-                                  body: body ? JSON.stringify(body) : undefined });
+  const headers = { "X-Jotted-Token": TOKEN, ...(body ? { "Content-Type": "application/json" } : {}) };
+  const res = await fetch(path, { method, headers, body: body ? JSON.stringify(body) : undefined });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(data.error || `${res.status} ${res.statusText}`);
   return data;
@@ -425,9 +436,9 @@ function renderStatus(bg) {
   const s = $("status");
   s.replaceChildren();
   const poll = (bg && bg.poll) || {}, push = (bg && bg.push) || {};
-  if (push.running) s.append(el("span", { class: "spinner" }), "Writing to the tablet…");
-  else if (push.scheduled) s.append(el("span", { class: "dot busy" }), `Writing to the tablet in ${push.in_s}s…`);
-  else if (poll.running) s.append(el("span", { class: "spinner" }), poll.step || "Checking the tablet…");
+  if (push.running) s.append(el("span", { class: "spinner" }), `Writing to ${device()}…`);
+  else if (push.scheduled) s.append(el("span", { class: "dot busy" }), `Writing to ${device()} in ${push.in_s}s…`);
+  else if (poll.running) s.append(el("span", { class: "spinner" }), poll.step || `Checking ${device()}…`);
   else s.append(el("span", { class: "dot" }), `Checked ${ago(poll.last_run_at)}`);
   const err = poll.last_error || push.last_error;
   if (err && err !== lastError) banner(err, "error");
@@ -452,6 +463,7 @@ async function refresh() {
 async function loadTodo() {
   const q = new URLSearchParams(Object.entries(filters).filter(([, v]) => v));
   todo = await api("GET", "/api/todo?" + q);
+  if (todo.source) applySource(todo.source);
   settings = settings || todo.settings;
   if (tab === "todo") renderTodo();
   schedule(renderStatus(todo.background));
@@ -467,7 +479,8 @@ function sourceLabel(item) {
 // Where an item came from, as a mark and a label. New sources (Google Tasks…) add a mark here.
 function sourceMark(item) {
   if (item.origin === "web") return { cls: "web", mark: "+", title: "Added here" };
-  return { cls: "rm", mark: "rM", title: "reMarkable" };
+  const src = source || { mark: "", label: "" };
+  return { cls: "rm", mark: src.mark || (item.origin || "?").slice(0, 2), title: src.label || item.origin };
 }
 
 // One ruled line: checkbox, text (click to edit), tags, and where it came from.
@@ -502,8 +515,8 @@ function renderTodo() {
   const watched = todo.settings.watch || [];
   $("todo-hint").textContent = (watched.length ? `Collecting from ${watched.join(", ")}.` :
       "No folders watched yet: choose some in Settings.") +
-    (todo.settings.todo_enabled ? ` Everything open is also on the tablet as “${todo.settings.todo_name}”, including what you add here.`
-                                : " Turn on the To-do document in Settings to tick items on the tablet.");
+    (todo.settings.todo_enabled ? ` Everything open is also on ${device()} as “${todo.settings.todo_name}”, including what you add here.`
+                                : ` Turn on the To-do document in Settings to tick items on ${device()}.`);
 
   const mine = (i) => i.owner === "me";
   const groups = [
@@ -580,11 +593,12 @@ function bindSeg(id, key) {
 
 async function loadSettings() {
   settings = await api("GET", "/api/settings");
+  if (!source) applySource((await api("GET", "/api/status")).source);
   $("threshold").value = settings.action_threshold;
   $("threshold-v").textContent = Math.round(settings.action_threshold * 100) + "%";
   $("poll-interval").value = String(settings.poll_interval_s);
   $("todo-enabled").checked = settings.todo_enabled;
-  $("todo-others").checked = settings.tablet_include_others;
+  $("todo-others").checked = settings.include_others;
   $("todo-name").value = settings.todo_name;
   const sel = $("todo-folder");
   if (!library) { sel.replaceChildren(el("option", { value: settings.todo_folder }, settings.todo_folder)); sel.value = settings.todo_folder; }
@@ -692,10 +706,10 @@ function saveSoon(delay = 0) {
     settings = await api("PUT", "/api/settings", {
       watch: settings.watch || [], from_now: settings.from_now || [], action_threshold: Number($("threshold").value),
       poll_interval_s: Number($("poll-interval").value), todo_enabled: $("todo-enabled").checked,
-      tablet_include_others: $("todo-others").checked, todo_name: $("todo-name").value.trim() || "To-do",
+      include_others: $("todo-others").checked, todo_name: $("todo-name").value.trim() || "To-do",
       todo_folder: $("todo-folder").value || settings.todo_folder || "/",
     });
-    $("settings-status").textContent = "Saved ✓ The tablet is being checked now.";
+    $("settings-status").textContent = `Saved ✓ Checking ${device()} now.`;
     renderFolders();
   }), delay);
 }

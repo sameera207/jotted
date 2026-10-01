@@ -1,6 +1,7 @@
-"""reMarkable library as a DocumentSource: rmapi for listing and download, rmscene for
-pages, line clustering and Claude for reading. Pages are read straight from the
-downloaded .rmdoc (a zip), so nothing is unpacked."""
+"""The reMarkable library as a DocumentSource: rmapi for listing and download, rmscene for
+pages. Strokes are handed to Jotted's ink reader (`plugins.Host.ink`), which clusters and
+reads them. Pages are read straight from the downloaded .rmdoc (a zip), so nothing is
+unpacked."""
 
 from __future__ import annotations
 
@@ -11,11 +12,12 @@ import time
 import zipfile
 from pathlib import Path
 
-from .. import classify, cloud, lines as lines_mod, recognise, strokes
-from ..aicache import AICache
-from ..config import Config
-from ..core.model import DocInfo, PageInfo, SourceLine
-from ..notebook import page_order
+from ...config import Config
+from ...core.model import DocInfo, PageInfo, SourceLine
+from ...ink.reader import InkReader
+from ...ink.strokes import Stroke
+from . import cloud, rmfile
+from .notebook import page_order
 
 log = logging.getLogger("jotted.remarkable")
 
@@ -25,9 +27,8 @@ EMPTY = "empty"  # hash of a page with nothing drawn on it
 class RemarkableLibrary:
     name = "remarkable"
 
-    def __init__(self, cfg: Config, cache: AICache | None = None, listing_ttl_s: float = 20):
-        self.cfg = cfg
-        self.cache = cache or AICache(cfg.paths.cache_dir / "ai")
+    def __init__(self, cfg: Config, ink: InkReader, listing_ttl_s: float = 20):
+        self.cfg, self.ink = cfg, ink
         self._listing: tuple[float, list, list] | None = None
         self._ttl = listing_ttl_s
 
@@ -71,7 +72,7 @@ class RemarkableLibrary:
                 out.append(PageInfo(doc_id=doc.id, id=pid, index=i, content_hash=digest))
         return out
 
-    def page_strokes(self, doc_id: str, page_id: str) -> list:
+    def page_strokes(self, doc_id: str, page_id: str) -> list[Stroke]:
         path = self.cfg.paths.cache_dir / f"{doc_id}.rmdoc"
         if not path.is_file():
             return []
@@ -80,9 +81,9 @@ class RemarkableLibrary:
             if member is None:
                 return []
             with z.open(member) as f:
-                return strokes.load_strokes_from(f, member, self.cfg.strokes)
+                return rmfile.load_strokes_from(f, member, self.cfg.strokes)
 
-    def stroke_ids(self, doc: DocInfo, page: PageInfo) -> set[str]:
+    def mark_ids(self, doc: DocInfo, page: PageInfo) -> set[str]:
         if page.content_hash == EMPTY:
             return set()
         return {s.id for s in self.page_strokes(doc.id, page.id)}
@@ -90,26 +91,4 @@ class RemarkableLibrary:
     def read_page(self, doc: DocInfo, page: PageInfo) -> list[SourceLine]:
         if page.content_hash == EMPTY:
             return []
-        page_strokes = self.page_strokes(doc.id, page.id)
-        page_lines, _ = lines_mod.cluster(page_strokes, self.cfg.lines)
-        if not page_lines:
-            return []
-        transcripts = recognise.transcribe(page_lines, self.cfg.llm, self.cache)
-        pairs = sorted(classify.adjacent_drawings(page_lines, transcripts, self.cfg.judging)
-                       + classify.continuations(page_lines, transcripts, self.cfg, self.cache))
-        page_lines, transcripts, _ = classify.merge_continuations(page_lines, transcripts, pairs)
-        out = []
-        for ln in sorted(page_lines, key=lambda x: x.n):
-            t = transcripts.get(ln.n)
-            ids = sorted(s.id for s in ln.strokes)
-            out.append(SourceLine(
-                anchor=ln.anchor_id,
-                key=hashlib.sha256(",".join(ids).encode()).hexdigest()[:24],
-                text=t.text if t else "",
-                bbox=ln.bbox,
-                rows=list(ln.row_boxes),
-                drawing=bool(t and t.drawing),
-                checkbox=t.checkbox if t else "none",
-                strokes=tuple(ids),
-            ))
-        return out
+        return self.ink.lines(self.page_strokes(doc.id, page.id))

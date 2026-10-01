@@ -14,7 +14,7 @@ import statistics
 
 from .aicache import AICache
 from .config import Config, JudgingConfig
-from .lines import Line
+from .ink.lines import Line
 from .llm import Continuation, LineJudge, Transcript, llm_for
 
 log = logging.getLogger(__name__)

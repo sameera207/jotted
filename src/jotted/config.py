@@ -34,20 +34,6 @@ class PathsConfig:
 
 
 @dataclass(frozen=True)
-class RmapiConfig:
-    binary: str = "rmapi"
-    token_file: Path = Path("./.secrets/rmapi.conf")
-    timeout_s: int = 120
-    trace: bool = False
-
-
-@dataclass(frozen=True)
-class StrokesConfig:
-    ignore_tools: list[str] = field(default_factory=lambda: ["highlighter", "eraser", "eraser_area"])
-    min_points: int = 2
-
-
-@dataclass(frozen=True)
 class LinesConfig:
     band_tolerance: float = 0.6
     min_vertical_overlap: float = 0.5
@@ -83,17 +69,17 @@ class JevConfig:
 
 
 @dataclass(frozen=True)
-class TemplateConfig:
-    scale: float = 1.0525
-
-
-@dataclass(frozen=True)
 class ServerConfig:
     host: str = "127.0.0.1"
     port: int = 8765
     db: Path = Path("./data/jotted.db")
     auto_push: bool = True
     auto_push_delay_s: int = 5
+
+
+@dataclass(frozen=True)
+class PluginsConfig:
+    source: str = "remarkable"  # where handwriting comes from: a source plugin (jotted.plugins)
 
 
 @dataclass(frozen=True)
@@ -105,15 +91,27 @@ class LoggingConfig:
 class Config:
     source: Path
     paths: PathsConfig
-    rmapi: RmapiConfig
-    strokes: StrokesConfig
     lines: LinesConfig
     llm: LLMConfig
     judging: JudgingConfig
     jev: JevConfig
-    template: TemplateConfig
     server: ServerConfig
+    plugins: PluginsConfig
     logging: LoggingConfig
+    extra: dict[str, Any] = field(default_factory=dict)  # sections owned by plugins, e.g. [rmapi]
+
+    def section(self, name: str) -> Any:
+        """A plugin's config section."""
+        try:
+            return self.extra[name]
+        except KeyError:
+            raise AttributeError(f"no config section [{name}]") from None
+
+    def __getattr__(self, name: str) -> Any:
+        # Plugin sections read like core ones (cfg.rmapi); only called for names that aren't fields.
+        if name == "extra":
+            raise AttributeError(name)
+        return self.section(name)
 
     def as_dict(self) -> dict[str, Any]:
         def conv(v: Any) -> Any:
@@ -123,23 +121,19 @@ class Config:
                 return [conv(x) for x in v]
             return v
 
-        return {
-            f.name: {k: conv(v) for k, v in dataclasses.asdict(getattr(self, f.name)).items()}
-            for f in fields(self)
-            if f.name != "source"
-        }
+        sections = {f.name: getattr(self, f.name) for f in fields(self) if f.name not in ("source", "extra")}
+        return {name: {k: conv(v) for k, v in dataclasses.asdict(value).items()}
+                for name, value in (sections | self.extra).items()}
 
 
 SECTIONS: dict[str, type] = {
     "paths": PathsConfig,
-    "rmapi": RmapiConfig,
-    "strokes": StrokesConfig,
     "lines": LinesConfig,
     "llm": LLMConfig,
     "judging": JudgingConfig,
     "jev": JevConfig,
-    "template": TemplateConfig,
     "server": ServerConfig,
+    "plugins": PluginsConfig,
     "logging": LoggingConfig,
 }
 
@@ -255,15 +249,21 @@ def load(path: Path | None = None) -> Config:
     except tomllib.TOMLDecodeError as e:
         raise ConfigError(f"{path}: {e}") from e
 
+    from . import plugins  # plugins import this module for their section types
+
     raw = _upgrade(raw)
-    unknown = set(raw) - set(SECTIONS) - RETIRED_SECTIONS
+    owned = plugins.sections()  # section name -> (plugin class, section type), for installed plugins
+    unknown = set(raw) - set(SECTIONS) - set(owned) - RETIRED_SECTIONS
     if unknown:
         raise ConfigError(f"{path}: unknown section(s): {', '.join(sorted(unknown))}")
 
     base = path.resolve().parent
     sections = {name: _section(name, cls, raw.get(name, {}), base) for name, cls in SECTIONS.items()}
-    cfg = Config(source=path.resolve(), **sections)
+    extra = {name: _section(name, cls, raw.get(name, {}), base) for name, (_, cls) in owned.items()}
+    cfg = Config(source=path.resolve(), **sections, extra=extra)
     _validate(cfg)
+    for plugin in {p for p, _ in owned.values()}:
+        plugin.validate(cfg)
     return cfg
 
 
@@ -310,6 +310,12 @@ def _section(name: str, cls: type, values: dict[str, Any], base: Path) -> Any:
     return cls(**kwargs)
 
 
+def plugins_available() -> set[str]:
+    from . import plugins
+
+    return set(plugins.available())
+
+
 def _validate(cfg: Config) -> None:
     if cfg.logging.level.upper() not in ("DEBUG", "INFO", "WARNING", "ERROR"):
         raise ConfigError("logging.level must be DEBUG, INFO, WARNING or ERROR")
@@ -321,7 +327,6 @@ def _validate(cfg: Config) -> None:
         raise ConfigError("judging.continuation_threshold must be between 0 and 1")
     if cfg.judging.context_lines < 0:
         raise ConfigError("judging.context_lines must be 0 or more")
-    if not 0.5 < cfg.template.scale < 2:
-        raise ConfigError("template.scale must be between 0.5 and 2")
-    if cfg.rmapi.timeout_s <= 0:
-        raise ConfigError("rmapi.timeout_s must be positive")
+    if cfg.plugins.source not in plugins_available():
+        raise ConfigError(f"plugins.source: no source plugin {cfg.plugins.source!r}; "
+                          f"installed: {sorted(plugins_available())}")

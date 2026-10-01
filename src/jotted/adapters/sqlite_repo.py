@@ -219,6 +219,8 @@ class SqliteRepository:
     def settings(self) -> Settings:
         with self.db() as db:
             stored = {r["key"]: json.loads(r["value"]) for r in db.execute("SELECT * FROM settings")}
+        if "tablet_include_others" in stored:  # its name before sources became plugins
+            stored.setdefault("include_others", stored.pop("tablet_include_others"))
         known = {f.name for f in fields(Settings)}
         return Settings(**{k: v for k, v in stored.items() if k in known})
 
@@ -252,7 +254,7 @@ class SqliteRepository:
                              (doc_id, page_id)).fetchone()
         return row["hash"] if row else None
 
-    def save_baseline(self, doc: DocInfo, page: PageInfo, strokes: set[str]) -> None:
+    def save_baseline(self, doc: DocInfo, page: PageInfo, marks: set[str]) -> None:
         with self.db() as db:
             db.execute(
                 """INSERT INTO source_pages (doc_id, page_id, idx, hash) VALUES (?, ?, ?, ?)
@@ -260,9 +262,9 @@ class SqliteRepository:
                 (doc.id, page.id, page.index, page.content_hash),
             )
             db.execute("INSERT OR REPLACE INTO source_baseline (doc_id, page_id, strokes) VALUES (?, ?, ?)",
-                       (doc.id, page.id, json.dumps(sorted(strokes))))
+                       (doc.id, page.id, json.dumps(sorted(marks))))
 
-    def baseline_strokes(self, doc_id: str, page_id: str) -> set[str] | None:
+    def baseline_marks(self, doc_id: str, page_id: str) -> set[str] | None:
         with self.db() as db:
             row = db.execute("SELECT strokes FROM source_baseline WHERE doc_id = ? AND page_id = ?",
                              (doc_id, page_id)).fetchone()

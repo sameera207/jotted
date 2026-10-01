@@ -11,7 +11,6 @@ Ticks are read with the calibrated mapping from the tablet's page size
 
 from __future__ import annotations
 
-import hashlib
 import json
 import logging
 import tempfile
@@ -23,11 +22,12 @@ from reportlab.pdfgen.canvas import Canvas
 
 
 
-from .. import cloud, lines as lines_mod, page, recognise, strokes
-from ..aicache import AICache
-from ..config import Config
-from ..core.model import PaperRead, TodoEntry, WrittenItem
-from ..notebook import page_order
+from ...config import Config
+from ...core.model import PaperRead, TodoEntry, WrittenItem
+from ...ink import lines as lines_mod
+from ...ink.reader import InkReader
+from . import cloud, page, rmfile
+from .notebook import page_order
 
 log = logging.getLogger("jotted.todo")
 
@@ -159,9 +159,8 @@ def written_rows(page_strokes: list, scale: float, lines_cfg) -> dict[int, list]
 class TodoDocument:
     """TodoPublisher for the reMarkable cloud."""
 
-    def __init__(self, cfg: Config, name: str, folder: str, cache: AICache | None = None):
-        self.cfg, self.name, self.folder = cfg, name, folder
-        self.cache = cache or AICache(cfg.paths.cache_dir / "ai")
+    def __init__(self, cfg: Config, name: str, folder: str, ink: InkReader):
+        self.cfg, self.name, self.folder, self.ink = cfg, name, folder, ink
 
     def capacity(self) -> int:
         return PAGES * SLOTS_PER_PAGE
@@ -177,6 +176,10 @@ class TodoDocument:
                 f"Delete the one you don't use (an old one has 20 pages) and the To-do carries on. "
                 f"This happens when the tablet has the To-do open while Jotted replaces it.")
         return docs[0] if docs else None
+
+    def document_id(self) -> str | None:
+        found = self.find()
+        return found.id if found else None
 
     def publish(self, entries: list[TodoEntry]) -> None:
         existing = self.find()
@@ -209,7 +212,7 @@ class TodoDocument:
                 if member is None:
                     continue
                 with z.open(member) as f:
-                    page_strokes = strokes.load_strokes_from(f, member, self.cfg.strokes)
+                    page_strokes = rmfile.load_strokes_from(f, member, self.cfg.strokes)
                 ticks = ticked_rows(page_strokes, scale)
                 read.ticks |= {p * SLOTS_PER_PAGE + r for r in ticks}
                 rows = written_rows(page_strokes, scale, self.cfg.lines)
@@ -225,11 +228,8 @@ class TodoDocument:
 
     def _read_row(self, row_strokes: list, slot: int, page_id: str, page_index: int,
                   box_inked: bool) -> WrittenItem | None:
-        line = lines_mod.Line(strokes=sorted(row_strokes, key=lambda s: s.x0), n=1)
-        transcript = recognise.transcribe([line], self.cfg.llm, self.cache).get(1)
-        if transcript is None or transcript.drawing or not transcript.text.strip():
+        line = self.ink.line(row_strokes)
+        if line is None:
             return None
-        ids = ",".join(sorted(s.id for s in row_strokes))
-        return WrittenItem(slot=slot, page_id=page_id, page_index=page_index, text=transcript.text,
-                           anchor=line.anchor_id, key=hashlib.sha256(ids.encode()).hexdigest()[:24],
-                           bbox=line.bbox, box_inked=box_inked)
+        return WrittenItem(slot=slot, page_id=page_id, page_index=page_index, text=line.text,
+                           anchor=line.anchor, key=line.key, bbox=line.bbox, box_inked=box_inked)

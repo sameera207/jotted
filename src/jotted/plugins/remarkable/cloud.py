@@ -2,7 +2,8 @@
 
 rmapi is driven entirely from config.toml: each call gets RMAPI_CONFIG (the
 token file) and, when enabled, RMAPI_TRACE. rmapi never reads ~/.rmapi.
-Callers hold `LOCK` around cloud work: two rmapi processes at once block each other.
+Jotted holds its source lock around cloud work (`app.App.lock`): two rmapi processes
+at once block each other.
 """
 
 from __future__ import annotations
@@ -13,19 +14,16 @@ import os
 import shutil
 import subprocess
 import tempfile
-import threading
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
-from .config import Config
+from ...config import Config
+from ...core.ports import SourceError
 
 log = logging.getLogger(__name__)
 
-# One cloud job at a time: the web server may ask for the library while the scheduler runs.
-LOCK = threading.Lock()
 
-
-class CloudError(Exception):
+class CloudError(SourceError):
     pass
 
 

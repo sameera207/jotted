@@ -5,7 +5,7 @@ from __future__ import annotations
 import statistics
 from dataclasses import dataclass, field
 
-from .config import LinesConfig
+from ..config import LinesConfig
 from .strokes import BBox, Stroke
 
 MIN_HEIGHT = 1.0  # floor for median heights, so dots and dashes can't make it zero

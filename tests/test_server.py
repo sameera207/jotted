@@ -23,16 +23,43 @@ def cfg(tmp_path, monkeypatch):
     return config.load()
 
 
-def client(cfg):
+def client(cfg, token=True):
     from jotted.server import create_app
 
-    return create_app(cfg, background=False).test_client()
+    flask = create_app(cfg, background=False)
+    c = flask.test_client()
+    if token:
+        c.environ_base["HTTP_X_JOTTED_TOKEN"] = flask.config["token"]
+    return c
 
 
 def test_open_locally_without_login(cfg):
     c = client(cfg)
     assert c.get("/api/todo").status_code == 200
     assert c.get("/").status_code == 200
+
+
+def test_changes_need_the_token_and_reads_need_this_computer(cfg):
+    import stat
+
+    from jotted.server import TOKEN_FILE
+
+    anyone = client(cfg, token=False)
+    r = anyone.post("/api/items", json={"text": "from another site"})
+    assert r.status_code == 403 and "X-Jotted-Token" in r.get_json()["error"]
+    assert anyone.put("/api/settings", json={"todo_enabled": True}, headers={"X-Jotted-Token": "guess"}).status_code == 403
+    assert anyone.get("/api/todo").status_code == 200  # reading needs no token...
+    rebound = anyone.get("/api/todo", headers={"Host": "evil.example:8765"})
+    assert rebound.status_code == 403  # ...but must come to this computer's own address (no DNS rebinding)
+    assert anyone.get("/api/todo", headers={"Host": "[::1]:8765"}).status_code == 200
+
+    token_file = cfg.paths.secrets_dir / TOKEN_FILE
+    assert stat.S_IMODE(token_file.stat().st_mode) == 0o600  # other local apps read it from here
+    page = anyone.get("/").get_data(as_text=True)
+    assert token_file.read_text() in page and "{{JOTTED_TOKEN}}" not in page  # the page gets it embedded
+    r = anyone.post("/api/items", json={"text": "mine"}, headers={"X-Jotted-Token": token_file.read_text()})
+    assert r.status_code == 201
+    assert client(cfg, token=False).application.config["token"] == token_file.read_text()  # stable across starts
 
 
 def test_security_headers(cfg):

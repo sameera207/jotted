@@ -13,7 +13,8 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parent))
 
-from jotted import cli, cloud, config, keys, onboarding, rmapi_install, selfupdate  # noqa: E402
+from jotted import cli, config, keys, onboarding, selfupdate  # noqa: E402
+from jotted.plugins.remarkable import cloud, rmapi_install, setup as rm_setup  # noqa: E402
 
 
 @pytest.fixture
@@ -160,7 +161,7 @@ def world(home, monkeypatch, tmp_path):
     from jotted.llm import ModelError
 
     monkeypatch.setattr(rmapi_install, "install", install)
-    monkeypatch.setattr(onboarding.shutil, "which", lambda b: b if os.path.isabs(b) and os.path.exists(b) else None)
+    monkeypatch.setattr(rm_setup.shutil, "which", lambda b: b if os.path.isabs(b) and os.path.exists(b) else None)
     monkeypatch.setattr(cloud, "register", register)
     monkeypatch.setattr(cloud, "library", lambda cfg: (["a", "b", "c"], []))
     for name in ("ANTHROPIC_API_KEY", "TYPESAFE_API_KEY"):

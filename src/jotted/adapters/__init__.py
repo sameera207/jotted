@@ -1,1 +1,2 @@
-"""Adapters: implementations of the core's ports (reMarkable, Jev, SQLite, the To-do PDF)."""
+"""Adapters: implementations of the core's ports that aren't a source plugin: SQLite, and the
+AI providers (the LLM, the Jev plugin)."""

@@ -5,39 +5,26 @@ change a key, say). Every step checks first and is skipped when already done, so
 second start asks nothing. Input and output go through `UI`, so a Mac app can drive
 the same steps with its own windows.
 
-Steps: a home for settings and data, rmapi, the reMarkable connection, the LLM's API
-key, and the optional Jev plugin (offered on first setup and when run again on purpose).
+Steps: a home for settings and data, the source plugin's own steps (for reMarkable: rmapi
+and the cloud connection), the LLM's API key, and the optional Jev plugin (offered on
+first setup and when run again on purpose).
 """
 
 from __future__ import annotations
 
 import getpass
 import os
-import shutil
-from typing import Protocol
 
 from rich.console import Console
 from rich.markup import escape
 
-from . import cloud, config, keys, llm, rmapi_install
+from . import config, keys, llm, plugins
 from .config import Config
+from .ui import UI, SetupError
 
-CONNECT_URL = "https://my.remarkable.com/device/desktop/connect"
+__all__ = ["ConsoleUI", "SetupError", "UI", "run"]
+
 TRIES = 3
-
-
-class SetupError(Exception):
-    """Setup can't go on; the message says what the person should do."""
-
-
-class UI(Protocol):
-    def step(self, title: str) -> None: ...
-    def done(self, text: str) -> None: ...
-    def info(self, text: str) -> None: ...
-    def warn(self, text: str) -> None: ...
-    def ask(self, prompt: str) -> str: ...
-    def secret(self, prompt: str) -> str: ...
-    def confirm(self, prompt: str, default: bool = True) -> bool: ...
 
 
 class ConsoleUI:
@@ -78,74 +65,12 @@ def run(ui: UI, redo: bool = False) -> Config:
         ui.done(f"Settings, data and keys will live in {path.parent}")
     cfg = config.load(path)
     keys.load_into_env(cfg)
-    cfg = _rmapi(ui, cfg)
-    _connect(ui, cfg, redo)
+    plugin = plugins.plugin_class(cfg.plugins.source)(cfg, plugins.Host(ink=None))  # setup reads no ink
+    if plugin.setup(ui, redo):
+        cfg = config.load(path)
     _llm_key(ui, cfg, redo)
     _jev(ui, cfg, ask=fresh or redo)
     return cfg
-
-
-# ---------------------------------------------------------------- rmapi
-
-
-def _rmapi(ui: UI, cfg: Config) -> Config:
-    found = shutil.which(cfg.rmapi.binary)
-    if found:
-        ui.done(f"rmapi: {found}")
-        return cfg
-    ui.step("rmapi")
-    ui.info("Jotted reaches your reMarkable cloud through rmapi, a free open-source tool "
-            "(github.com/ddvk/rmapi). It isn't installed yet.")
-    if not ui.confirm(f"Download rmapi {rmapi_install.VERSION} for this computer?"):
-        raise SetupError("Jotted needs rmapi. Install it from https://github.com/ddvk/rmapi/releases, "
-                         "then run `jotted start` again")
-    try:
-        binary = rmapi_install.install(cfg.source.parent / "bin")
-    except rmapi_install.InstallError as e:
-        raise SetupError(str(e)) from e
-    config.set_value(cfg.source, "rmapi", "binary", str(binary))
-    ui.done(f"rmapi installed: {binary}")
-    return config.load(cfg.source)
-
-
-# ---------------------------------------------------------------- reMarkable
-
-
-def _connect(ui: UI, cfg: Config, redo: bool) -> None:
-    token = cfg.rmapi.token_file
-    if token.exists():
-        if not redo:
-            ui.done("reMarkable connected")
-            return
-        ui.step("Your reMarkable")
-        if not ui.confirm("Connect your reMarkable again?", default=False):
-            ui.done("Keeping the current connection")
-            return
-    else:
-        ui.step("Connect your reMarkable")
-    ui.info(f"1. Open {CONNECT_URL} and sign in.")
-    ui.info("2. Copy the one-time code it shows (8 characters).")
-    backup = token.with_suffix(".previous")
-    if token.exists():
-        token.replace(backup)  # rmapi only registers when there is no token
-    for _ in range(TRIES):
-        code = ui.ask("One-time code").strip()
-        if not code:
-            continue
-        try:
-            cloud.register(cfg, code)
-            docs, _ = cloud.library(cfg)
-        except cloud.CloudError as e:
-            token.unlink(missing_ok=True)
-            ui.warn(f"That didn't work: {str(e).splitlines()[0]}. Codes expire after a few minutes; get a new one.")
-            continue
-        backup.unlink(missing_ok=True)
-        ui.done(f"Connected: {len(docs)} document(s) in your library")
-        return
-    if backup.exists():
-        backup.replace(token)
-        raise SetupError("Couldn't connect your reMarkable; the previous connection is kept")
-    raise SetupError(f"Couldn't connect your reMarkable. Get a new code at {CONNECT_URL} and run `jotted start` again")
 
 
 # ---------------------------------------------------------------- API keys

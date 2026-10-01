@@ -1,7 +1,8 @@
-"""Composition root: builds the adapters and runs the background scheduler.
+"""Composition root: builds the configured source plugin, the repository and the judge,
+and runs the background scheduler.
 
-Everything that talks to the cloud goes through `cloud.LOCK`: two rmapi processes at
-once block each other.
+Everything that talks to the source holds `App.lock`, across processes too: `jotted
+serve` and a CLI command never reach the device at the same time.
 """
 
 from __future__ import annotations
@@ -11,37 +12,41 @@ import threading
 import time
 from dataclasses import dataclass, field
 
-from . import cloud
+from . import plugins
 from .adapters.action_judge import ModelActionJudge
-from .adapters.remarkable_library import RemarkableLibrary
 from .adapters.sqlite_repo import SqliteRepository
-from .adapters.todo_document import TodoDocument
 from .aicache import AICache
 from .config import Config
 from .core import service
+from .core.ports import DocumentSource, SourceError, TodoPublisher
+from .ink.reader import InkReader
 from .llm import ModelError
+from .locking import Busy, SourceLock
 
 log = logging.getLogger("jotted")
 
-SYNC_ERRORS = (cloud.CloudError, ModelError)
+SYNC_ERRORS = (SourceError, ModelError, Busy)
 
 
 @dataclass
 class App:
     cfg: Config
     repo: SqliteRepository  # items, settings, the To-do document
-    source: RemarkableLibrary
+    plugin: plugins.SourcePlugin
+    source: DocumentSource
     judge: ModelActionJudge
+    lock: SourceLock
 
     @classmethod
     def build(cls, cfg: Config) -> "App":
         cache = AICache(cfg.paths.cache_dir / "ai")
-        return cls(cfg=cfg, repo=SqliteRepository(cfg.server.db),
-                   source=RemarkableLibrary(cfg, cache), judge=ModelActionJudge(cfg, cache))
+        plugin = plugins.plugin_class(cfg.plugins.source)(cfg, plugins.Host(ink=InkReader(cfg, cache)))
+        return cls(cfg=cfg, repo=SqliteRepository(cfg.server.db), plugin=plugin, source=plugin.source(),
+                   judge=ModelActionJudge(cfg, cache), lock=lock_for(cfg))
 
-    def todo_document(self) -> TodoDocument:
+    def todo_document(self) -> TodoPublisher | None:
         s = self.repo.settings()
-        return TodoDocument(self.cfg, s.todo_name, s.todo_folder, self.source.cache)
+        return self.plugin.publisher(s.todo_name, s.todo_folder)
 
     def own_doc_ids(self) -> set[str]:
         """Documents we write ourselves (the To-do list): never collected."""
@@ -55,13 +60,18 @@ class App:
         if not self.repo.settings().todo_enabled:
             return {"enabled": False}
         doc = self.todo_document()
+        if doc is None:
+            return {"enabled": False, "unsupported": True}
         result = service.sync_todo(self.repo, doc, force=force)
-        found = doc.find()
-        if found:
-            with self.repo.db() as db:  # remember its id so the collector never reads it
-                db.execute("INSERT INTO todo_meta (key, value) VALUES ('doc_id', ?) "
-                           "ON CONFLICT (key) DO UPDATE SET value = excluded.value", (found.id,))
+        doc_id = doc.document_id()
+        if doc_id:  # remember it so the collector never reads it
+            self.repo.set_todo_doc_id(doc_id)
         return result
+
+
+def lock_for(cfg: Config) -> SourceLock:
+    """Shared by every Jotted process using this database."""
+    return SourceLock(cfg.server.db.parent / f".{cfg.plugins.source}.lock")
 
 
 @dataclass
@@ -101,7 +111,7 @@ class Scheduler:
 
     def poll_once(self) -> dict:
         summary: dict = {}
-        with cloud.LOCK:
+        with self.app.lock:
             self.status.running = True
             try:
                 self.status.step = "Checking watched folders"
@@ -110,7 +120,7 @@ class Scheduler:
                 self.status.step = "Updating the To-do document"
                 try:
                     summary["todo"] = self.app.sync_todo()
-                except cloud.CloudError as e:  # keep what was collected above
+                except SourceError as e:  # keep what was collected above
                     summary["todo"], summary["todo_error"] = {}, str(e)
             finally:
                 self.status.running = False
@@ -144,7 +154,7 @@ class Scheduler:
             self._cond.notify_all()
 
     def push_once(self) -> dict:
-        with cloud.LOCK:
+        with self.app.lock:
             self.push_status.running = True
             try:
                 return {"todo": self.app.sync_todo()}

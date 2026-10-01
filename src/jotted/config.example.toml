@@ -1,23 +1,19 @@
 # jotted configuration: the single source of settings.
 # Copy to config.toml (gitignored). Override the path with JOTTED_CONFIG.
 # Relative paths resolve against this file's folder.
-# Detection thresholds are ratios of the median stroke height and are
-# starting points for tuning, not measured values.
+# Line-clustering thresholds are ratios of the median stroke height and are starting
+# points for tuning, not measured values.
 
 [paths]
-cache_dir   = "./cache"      # downloaded .rmdoc files and unpacked pages
-secrets_dir = "./.secrets"   # created with 0700 permissions
+cache_dir   = "./cache"      # downloaded documents and cached AI answers
+secrets_dir = "./.secrets"   # API keys, tokens; created with 0700 permissions
 
-[rmapi]
-binary     = "rmapi"                 # name on PATH, or an absolute path
-token_file = "./.secrets/rmapi.conf" # passed to rmapi as RMAPI_CONFIG
-timeout_s  = 120
-trace      = false                   # true sets RMAPI_TRACE=1
+# Where notes come from: a source plugin. Built in: "remarkable". Others are installed as
+# Python packages (entry point group "jotted.sources") and add their own sections below.
+[plugins]
+source = "remarkable"
 
-[strokes]
-ignore_tools = ["highlighter", "eraser", "eraser_area"]
-min_points   = 2   # drop taps and dots
-
+# Clustering handwriting into lines, for every handwriting plugin.
 [lines]
 band_tolerance       = 0.6  # centre within this x median height of the band joins it
 min_vertical_overlap = 0.5  # or overlap of the band by this share of its own height
@@ -48,11 +44,7 @@ model       = "jev-latest"
 api_key_env = "TYPESAFE_API_KEY"
 timeout_s   = 30
 
-# Printed documents (the To-do document): how the tablet maps a PDF page to ink.
-[template]
-scale = 1.0525  # tablet units per nominal unit (1 pt = 3); measured on an rM2 by tracing calibration marks
-
-# The local web app: `jotted serve`. It binds to this machine only by default.
+# The local web app and JSON API: `jotted serve`. It binds to this machine only by default.
 [server]
 host = "127.0.0.1"
 port = 8765
@@ -64,3 +56,21 @@ auto_push_delay_s = 5       # wait this long after the last change, so quick edi
 
 [logging]
 level = "INFO"
+
+
+# ---------------------------------------------------------------- the reMarkable plugin
+
+[rmapi]
+binary     = "rmapi"                 # name on PATH, or an absolute path
+token_file = "./.secrets/rmapi.conf" # passed to rmapi as RMAPI_CONFIG
+timeout_s  = 120
+trace      = false                   # true sets RMAPI_TRACE=1
+
+# Pen strokes read from .rm pages.
+[strokes]
+ignore_tools = ["highlighter", "eraser", "eraser_area"]
+min_points   = 2   # drop taps and dots
+
+# How the tablet maps a printed PDF page (the To-do document) to ink.
+[template]
+scale = 1.0525  # tablet units per nominal unit (1 pt = 3); measured on an rM2 by tracing calibration marks

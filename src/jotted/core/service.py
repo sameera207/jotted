@@ -68,15 +68,15 @@ def _collect_doc(source: DocumentSource, judge: ActionJudge, repo: Repository, d
             continue
         if first and stored is None and doc.id in repo.settings().from_now:
             progress(f"Recording existing writing in {doc.path} (page {page.index} of {len(pages)})")
-            repo.save_baseline(doc, page, source.stroke_ids(doc, page))
+            repo.save_baseline(doc, page, source.mark_ids(doc, page))
             summary.pages_baselined += 1
             continue
         progress(f"Reading {doc.path} (page {page.index} of {len(pages)})")
         lines = source.read_page(doc, page)
         known = repo.line_keys(doc.id, page.id)
-        baseline = repo.baseline_strokes(doc.id, page.id)
+        baseline = repo.baseline_marks(doc.id, page.id)
         new = [ln for ln in lines if known.get(ln.anchor) != ln.key and ln.text and not ln.drawing
-               and (baseline is None or not set(ln.strokes) <= baseline)]
+               and (baseline is None or not set(ln.marks) <= baseline)]
         judgments = judge.judge(doc, page, lines, new) if new else {}
         added, updated, missing = repo.save_page(doc, page, lines, judgments, threshold)
         summary.pages_read += 1
@@ -96,9 +96,9 @@ def sync_todo(repo: Repository, publisher: TodoPublisher, force: bool = False) -
     2. ticks mark items done;
     3. open items without a row get the first free rows with no ink (permanent), and the list is printed.
 
-    Ink on the tablet is never erased, so a row with ink is never reused. When the rows run out,
+    Ink on the device is never erased, so a row with ink is never reused. When the rows run out,
     or the document has a different number of pages, it is deleted and rebuilt: a fresh document
-    with the open items only. A document deleted on the tablet, or replaced by another one, is
+    with the open items only. A document deleted on the device, or replaced by another one, is
     started afresh the same way.
     """
     ticked = written = 0
@@ -113,7 +113,7 @@ def sync_todo(repo: Repository, publisher: TodoPublisher, force: bool = False) -
         repo.set_todo_doc_id(read.doc_id)
         written = repo.add_written(read.doc_id, read.written)
         ticked = repo.apply_ticks(read.ticks, read.marker)
-    include_others = repo.settings().tablet_include_others
+    include_others = repo.settings().include_others
     capacity = publisher.capacity()
     rebuilt = read is not None and read.capacity is not None and read.capacity != capacity
     if not rebuilt:

@@ -10,14 +10,15 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parent))
 import synth  # noqa: E402
 
-from jotted import config, page  # noqa: E402
-from jotted.adapters import todo_document  # noqa: E402
+from jotted import config  # noqa: E402
+from jotted.plugins.remarkable import page, todo_document  # noqa: E402
+from jotted.plugins.remarkable.settings import TemplateConfig  # noqa: E402
 from jotted.adapters.sqlite_repo import SqliteRepository  # noqa: E402
 from jotted.core import service  # noqa: E402
 from jotted.core.model import (  # noqa: E402
     DocInfo, Judgment, PageInfo, PaperRead, Settings, SourceLine, TodoEntry, WrittenItem,
 )
-from jotted.strokes import make_stroke  # noqa: E402
+from jotted.ink.strokes import make_stroke  # noqa: E402
 
 ROOT = Path(__file__).parent.parent
 
@@ -42,7 +43,7 @@ class FakeSource:
             digest = str(hash(tuple(lines)))
             self.pages_[doc_id].append(PageInfo(doc_id, pid, i, digest))
             self.lines_[(doc_id, pid)] = [
-                SourceLine(anchor=a, key=k, text=t, bbox=(0, 100 * n, 500, 100 * n + 40), strokes=tuple(k.split("+")))
+                SourceLine(anchor=a, key=k, text=t, bbox=(0, 100 * n, 500, 100 * n + 40), marks=tuple(k.split("+")))
                 for n, (a, k, t) in enumerate(lines)
             ]
 
@@ -59,8 +60,8 @@ class FakeSource:
         self.reads.append((doc.id, page.id))
         return self.lines_[(doc.id, page.id)]
 
-    def stroke_ids(self, doc, page):
-        return {s for ln in self.lines_[(doc.id, page.id)] for s in ln.strokes}
+    def mark_ids(self, doc, page):
+        return {s for ln in self.lines_[(doc.id, page.id)] for s in ln.marks}
 
 
 class FakeJudge:
@@ -109,6 +110,33 @@ class FakePublisher:
                          written=[w for w in self.written if w.slot not in occupied],
                          inked=set(slots) | {w.slot for w in self.written} | self.ink,
                          capacity=self.pages_capacity)
+
+
+class FakePlugin:
+    """A source plugin with no device behind it: the core needs nothing more."""
+    NAME, LABEL, MARK, DEVICE, SECTIONS = "fake", "Fake notes", "F", "the fake device", {}
+
+    def __init__(self, source, publisher=None, strokes=()):
+        self._source, self._publisher, self.strokes = source, publisher, list(strokes)
+
+    def source(self):
+        return self._source
+
+    def publisher(self, name, folder):
+        return self._publisher
+
+    def render_page(self, doc_id, page_id, highlight=None, crop=None):
+        return page.render_svg(self.strokes, 1.0, highlight=highlight, crop=crop)
+
+    def describe(self):
+        return {"connected": True, "detail": "always"}
+
+
+def fake_app(cfg, repo, source, judge, publisher=None, strokes=()):
+    from jotted.app import App, lock_for
+
+    plugin = FakePlugin(source, publisher, strokes)
+    return App(cfg=cfg, repo=repo, plugin=plugin, source=source, judge=judge, lock=lock_for(cfg))
 
 
 @pytest.fixture
@@ -381,7 +409,7 @@ def test_include_others_setting(repo):
     notes(source)
     service.collect(source, judge, repo)
     s = repo.settings()
-    s.tablet_include_others = False
+    s.include_others = False
     repo.save_settings(s)
     service.sync_todo(repo, pub)
     assert [e.text for e in pub.published[-1]] == ["TODO book the retro room"]
@@ -458,7 +486,7 @@ def test_todo_pdf_has_fixed_page_count(tmp_path):
 
 
 def test_tick_on_a_checkbox_is_read_back():
-    scale = config.TemplateConfig().scale
+    scale = TemplateConfig().scale
     x0, y0, x1, y1 = todo_document.slot_box(3)
     cx, cy = (x0 + x1) / 2, (y0 + y1) / 2  # pt from the top-left
 
@@ -481,7 +509,6 @@ def test_todo_endpoints(tmp_path, monkeypatch):
     monkeypatch.setenv(config.ENV_VAR, str(path))
     cfg = config.load()
 
-    from jotted.app import App
     from jotted.server import create_app
 
     repo = SqliteRepository(cfg.server.db)
@@ -490,14 +517,12 @@ def test_todo_endpoints(tmp_path, monkeypatch):
     notes(source)
     service.collect(source, judge, repo)
 
-    class PageSource(FakeSource):
-        def page_strokes(self, doc_id, page_id):
-            return [make_stroke("1:20", "fineliner", [(0, 100), (400, 140)])]
-
     with repo.db() as db:  # line boxes for the source images
         db.execute("UPDATE source_lines SET bbox = '[0, 100, 400, 140]'")
-    app = App(cfg=cfg, repo=repo, source=PageSource(), judge=judge)
-    client = create_app(cfg, app_=app, background=False).test_client()
+    app = fake_app(cfg, repo, source, judge, strokes=[make_stroke("1:20", "fineliner", [(0, 100), (400, 140)])])
+    flask = create_app(cfg, app_=app, background=False)
+    client = flask.test_client()
+    client.environ_base["HTTP_X_JOTTED_TOKEN"] = flask.config["token"]
 
     data = client.get("/api/todo").get_json()
     assert {i["text"] for i in data["items"]} == {"TODO book the retro room", "@Simon TODO send the deck"}
@@ -591,7 +616,7 @@ def test_done_and_edited_handwritten_items(tmp_path, repo):
 
 
 def test_written_rows_groups_handwriting_by_row():
-    scale = config.TemplateConfig().scale
+    scale = TemplateConfig().scale
     lines_cfg = config.LinesConfig()
 
     def tablet(x_pt, y_pt):
@@ -702,12 +727,12 @@ def test_a_document_with_another_page_count_is_rebuilt(repo):
 
 
 def test_two_todo_documents_with_the_same_name_stop_with_advice(monkeypatch):
-    from jotted import cloud
+    from jotted.plugins.remarkable import cloud
 
     docs = [cloud.DocRef(id=i, name="To-do", version=0, modified=m, parent="")
             for i, m in (("a", "2026-10-01T14:54:55Z"), ("b", "2026-10-01T14:55:17Z"))]
     monkeypatch.setattr(cloud, "find_documents", lambda cfg, name, folder: docs)
-    doc = todo_document.TodoDocument(None, "To-do", "/", cache=object())
+    doc = todo_document.TodoDocument(None, "To-do", "/", ink=None)
     with pytest.raises(cloud.CloudError, match="Delete the one you don't use"):
         doc.find()
     monkeypatch.setattr(cloud, "find_documents", lambda cfg, name, folder: docs[:1])

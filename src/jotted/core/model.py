@@ -12,11 +12,11 @@ OWNERS = ("me", "someone_else", "unclear")
 @dataclass(frozen=True)
 class DocInfo:
     """A document in a source, with a marker that changes whenever its content does."""
-    source: str  # adapter name, e.g. "remarkable"
+    source: str  # the source plugin's name, e.g. "remarkable"
     id: str
     name: str
     folder: str  # "/Meeting notes"
-    modified: str  # opaque change marker (a timestamp for reMarkable)
+    modified: str  # opaque change marker (the source's own, e.g. a cloud timestamp)
 
     @property
     def path(self) -> str:
@@ -42,7 +42,7 @@ class SourceLine:
     rows: list[BBox] = field(default_factory=list)
     drawing: bool = False
     checkbox: str = "none"
-    strokes: tuple[str, ...] = ()  # IDs of the marks the line is made of
+    marks: tuple[str, ...] = ()  # IDs of the marks (pen strokes, say) the line is made of
 
 
 @dataclass
@@ -58,8 +58,8 @@ class Settings:
     watch: list[str] = field(default_factory=list)  # folder paths (recursive) or document paths
     action_threshold: float = 0.7
     poll_interval_s: int = 60
-    tablet_include_others: bool = True
-    todo_enabled: bool = False  # create and keep the To-do document on the tablet
+    include_others: bool = True  # the To-do document lists other people's actions too
+    todo_enabled: bool = False  # create and keep the To-do document on the device
     todo_name: str = "To-do"
     todo_folder: str = "/"
     # Document IDs where only writing added from now on is read: what is already on their
@@ -125,4 +125,4 @@ class PaperRead:
     ticks: set[int] = field(default_factory=set)
     written: list[WrittenItem] = field(default_factory=list)
     inked: set[int] = field(default_factory=set)  # slots with any ink: never given to a new item
-    capacity: int | None = None  # slots the document has; None until the tablet has laid out its pages
+    capacity: int | None = None  # slots the document has; None until the device has laid out its pages

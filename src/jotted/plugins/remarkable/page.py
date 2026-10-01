@@ -1,4 +1,4 @@
-"""Page geometry, and pages drawn as SVG for the web app.
+"""reMarkable page geometry, and pages drawn as SVG for the web app.
 
 Page geometry: 468 x 624 pt, the rM2 screen's 3:4 ratio, so one PDF point is
 3 reMarkable units. Ink coordinates run x -702..702 (centred) and y 0 down from the

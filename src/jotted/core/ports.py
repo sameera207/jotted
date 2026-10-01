@@ -8,7 +8,7 @@ from .model import CollectSummary, DocInfo, Judgment, PageInfo, PaperRead, Setti
 
 
 class DocumentSource(Protocol):
-    """Where handwriting or text comes from (the reMarkable library first)."""
+    """Where handwriting or text comes from: implemented by a source plugin (jotted.plugins)."""
 
     name: str
 
@@ -24,7 +24,7 @@ class DocumentSource(Protocol):
     def read_page(self, doc: DocInfo, page: PageInfo) -> list[SourceLine]:
         """The page as lines. May call recognition; unchanged lines should come from a cache."""
 
-    def stroke_ids(self, doc: DocInfo, page: PageInfo) -> set[str]:
+    def mark_ids(self, doc: DocInfo, page: PageInfo) -> set[str]:
         """IDs of every mark on the page. Cheap: no recognition."""
 
 
@@ -45,10 +45,10 @@ class Repository(Protocol):
 
     def page_hash(self, doc_id: str, page_id: str) -> str | None: ...
 
-    def save_baseline(self, doc: DocInfo, page: PageInfo, strokes: set[str]) -> None:
+    def save_baseline(self, doc: DocInfo, page: PageInfo, marks: set[str]) -> None:
         """Record a page's existing marks without reading it; they are never judged."""
 
-    def baseline_strokes(self, doc_id: str, page_id: str) -> set[str] | None:
+    def baseline_marks(self, doc_id: str, page_id: str) -> set[str] | None:
         """The marks recorded as the page's baseline; None if it has none."""
 
     def baselined_docs(self) -> set[str]:
@@ -98,11 +98,14 @@ class Repository(Protocol):
 
 
 class TodoPublisher(Protocol):
-    """The list where you can tick it: a document on the tablet."""
+    """The list where you can tick it: a document on the device, from the source plugin."""
 
     def capacity(self) -> int: ...
 
     def publish(self, entries: list[TodoEntry]) -> None: ...
+
+    def document_id(self) -> str | None:
+        """The document's ID where it lives now; None if it doesn't exist."""
 
     def delete(self) -> None:
         """Remove the document, ink and all, so the next publish creates a fresh one."""
@@ -112,8 +115,13 @@ class TodoPublisher(Protocol):
         document doesn't exist yet."""
 
 
+class SourceError(Exception):
+    """A source or publisher could not do its job (the service is unreachable, a document is
+    ambiguous...). Plugins raise subclasses; the message is shown to the person."""
+
+
 class Progress(Protocol):
     def __call__(self, message: str) -> None: ...
 
 
-__all__ = ["ActionJudge", "CollectSummary", "DocumentSource", "Progress", "Repository", "TodoPublisher"]
+__all__ = ["ActionJudge", "CollectSummary", "DocumentSource", "Progress", "Repository", "SourceError", "TodoPublisher"]

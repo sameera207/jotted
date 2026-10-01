@@ -1,26 +1,59 @@
-"""Local web app (a driving adapter): the to-do list and settings.
+"""Local web app (a driving adapter): the to-do list and settings, over `api.Jotted`.
 
-Runs on this machine only (127.0.0.1 by default) and has no login. Reading from and
-writing to the tablet run in the background (`app.Scheduler`); one at a time.
+Each route parses its input, calls one operation and returns its result as JSON; no
+product logic lives here. Runs on this machine only (127.0.0.1 by default). Reading
+from and writing to the source run in the background (`app.Scheduler`).
+
+Other front ends (a desktop app) can use the same JSON API. Two guards keep other web
+pages out:
+- the Host header must name this machine, so a site can't reach the API through DNS
+  rebinding;
+- every request that changes something carries the install's token in `X-Jotted-Token`.
+  The page gets it embedded when it loads; other local apps read it from
+  `<secrets_dir>/server-token` (readable by this user only).
 """
 
 from __future__ import annotations
 
+import hmac
 import logging
 import os
-from dataclasses import asdict, fields, replace
+import secrets
 from importlib import resources
+from pathlib import Path
+from typing import Callable
 
-from flask import Flask, Response, abort, jsonify, request
+from flask import Flask, Response, jsonify, request
 
-from . import classify, cloud, keys, llm
-from .page import render_svg
-from .app import SYNC_ERRORS, App, Scheduler
+from .api import ApiError, Jotted
+from .app import App, Scheduler
 from .config import Config
-from .core import service
-from .core.model import Settings
 
 log = logging.getLogger("jotted")
+
+LOCAL_HOSTS = {"127.0.0.1", "localhost", "::1"}
+TOKEN_FILE = "server-token"
+SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
+
+
+def server_token(cfg: Config) -> str:
+    """This install's token for changing things through the API, made on first use."""
+    path = Path(cfg.paths.secrets_dir) / TOKEN_FILE
+    if path.is_file() and path.read_text().strip():
+        return path.read_text().strip()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    os.chmod(path.parent, 0o700)
+    token = secrets.token_urlsafe(32)
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w") as f:
+        f.write(token)
+    return token
+
+
+def _host_name(header: str) -> str:
+    if header.startswith("["):  # [::1]:8765
+        return header[1:].split("]", 1)[0]
+    return header.rsplit(":", 1)[0] if header.count(":") == 1 else header
 
 
 def create_app(cfg: Config, background: bool = True, app_: App | None = None) -> Flask:
@@ -38,225 +71,122 @@ def create_app(cfg: Config, background: bool = True, app_: App | None = None) ->
         )
         return resp
 
+    token = server_token(cfg)
+    flask.config["token"] = token
+    allowed_hosts = LOCAL_HOSTS | {cfg.server.host}
+    open_to_network = cfg.server.host not in LOCAL_HOSTS  # chosen on purpose; `jotted serve` warns
+
+    @flask.before_request
+    def guard():
+        if not open_to_network and _host_name(request.host or "") not in allowed_hosts:
+            return jsonify(error="This app only answers on this computer's own address"), 403
+        if request.method not in SAFE_METHODS and request.path.startswith("/api/"):
+            sent = request.headers.get("X-Jotted-Token", "")
+            if not hmac.compare_digest(sent, token):
+                return jsonify(error="Missing or wrong X-Jotted-Token"), 403
+        return None
+
+    @flask.errorhandler(ApiError)
+    def api_error(e: ApiError):
+        return jsonify(error=str(e)), e.status
+
     core = app_ or App.build(cfg)
     scheduler = Scheduler(core, cfg.server.auto_push_delay_s)
     if background:
         scheduler.start()
     flask.config["scheduler"] = scheduler
+    jotted = Jotted(core, scheduler=scheduler, on_change=scheduler.push_soon if cfg.server.auto_push else None)
+    flask.config["jotted"] = jotted
 
-    def changed():
-        """After a web edit: update the To-do document a few seconds later (debounced)."""
-        if cfg.server.auto_push:
-            scheduler.push_soon()
+    def route(method: str, rule: str, op: str) -> Callable:
+        """Register a route that calls the operation `op` (checked against api.OPERATIONS)."""
+        def register(fn: Callable) -> Callable:
+            fn.operation = op
+            return flask.route(rule, methods=[method], endpoint=fn.__name__)(fn)
+        return register
+
+    def body() -> dict:
+        data = request.get_json(silent=True)
+        return data if isinstance(data, dict) else {}
+
+    def filters() -> dict:
+        return {k: request.args.get(k) or None for k in ("status", "owner", "folder")}
 
     @flask.get("/")
     def index():
         html = resources.files("jotted").joinpath("web/index.html").read_text()
-        return Response(html, mimetype="text/html")
+        return Response(html.replace("{{JOTTED_TOKEN}}", token), mimetype="text/html",
+                        headers={"Cache-Control": "no-store"})
 
-    # ------------------------------------------------------------ the common to-do list
+    # ------------------------------------------------------------ the to-do list
 
-    def todo_state() -> dict:
-        args = request.args
-        items = core.repo.items(status=args.get("status") or None, owner=args.get("owner") or None,
-                                folder=args.get("folder") or None)
-        return {"items": items, "settings": asdict(core.repo.settings()), "background": scheduler.describe(),
-                "todo": core.repo.todo_meta(), "sources": core.repo.source_docs()}
-
-    @flask.get("/api/todo")
+    @route("GET", "/api/todo", "items.list")
     def get_todo():
-        return jsonify(todo_state())
+        return jsonify(jotted.overview(**filters()))
 
-    @flask.post("/api/items")
+    @route("POST", "/api/items", "items.add")
     def add_item():
-        text = (request.get_json(silent=True) or {}).get("text")
-        try:
-            item_id = core.repo.add_item(text if isinstance(text, str) else "")
-        except ValueError as e:
-            return jsonify(error=str(e)), 400
-        changed()
-        return jsonify(item=core.repo.item(item_id), **todo_state()), 201
+        item = jotted.add_item(body().get("text"))
+        return jsonify(item=item, **jotted.overview(**filters())), 201
 
-    @flask.patch("/api/items/<int:item_id>")
+    @route("PATCH", "/api/items/<int:item_id>", "items.edit")
     def edit_item(item_id: int):
-        body = request.get_json(silent=True) or {}
-        try:
-            core.repo.edit_action(item_id, text=body.get("text"), status=body.get("status"),
-                                  dismissed=body.get("dismissed"))
-        except KeyError:
-            abort(404)
-        except ValueError as e:
-            return jsonify(error=str(e)), 400
-        changed()
-        return jsonify(todo_state())
+        b = body()
+        jotted.edit_item(item_id, text=b.get("text"), status=b.get("status"), dismissed=b.get("dismissed"))
+        return jsonify(jotted.overview(**filters()))
 
-    @flask.post("/api/poll")
+    @route("POST", "/api/poll", "check")
     def post_poll():
-        """Check the tablet now (watched folders, the To-do document) in the background."""
-        scheduler.poll_now()
-        return jsonify(background=scheduler.describe()), 202
+        return jsonify(jotted.check()), 202
 
-    @flask.get("/api/settings")
+    @route("GET", "/api/status", "status")
+    def get_status():
+        return jsonify(jotted.status())
+
+    # ------------------------------------------------------------ settings and the library
+
+    @route("GET", "/api/settings", "settings.get")
     def get_settings():
-        return jsonify(asdict(core.repo.settings()))
+        return jsonify(jotted.settings())
 
-    @flask.put("/api/settings")
+    @route("PUT", "/api/settings", "settings.update")
     def put_settings():
-        body = request.get_json(silent=True) or {}
-        current = asdict(core.repo.settings())
-        names = {f.name: f for f in fields(Settings)}
-        for k, v in body.items():
-            if k not in names:
-                return jsonify(error=f"unknown setting {k!r}"), 400
-            current[k] = v
-        try:
-            s = Settings(**current)
-            s.action_threshold = float(s.action_threshold)
-            s.poll_interval_s = int(s.poll_interval_s)
-            if not 0 <= s.action_threshold <= 1:
-                raise ValueError("action_threshold must be between 0 and 1")
-            if s.poll_interval_s < 15:
-                raise ValueError("poll_interval_s must be at least 15 seconds")
-            s.watch = sorted({"/" + w.strip("/") if w.strip("/") else "/" for w in s.watch})
-            if not isinstance(s.from_now, list) or not all(isinstance(d, str) for d in s.from_now):
-                raise ValueError("from_now must be a list of document IDs")
-            s.from_now = sorted(set(s.from_now))
-            if not s.todo_name.strip():
-                raise ValueError("todo_name is empty")
-        except (TypeError, ValueError) as e:
-            return jsonify(error=str(e)), 400
-        core.repo.save_settings(s)
-        scheduler.poll_now()  # pick up new folders without waiting for the next round
-        return jsonify(asdict(s))
+        return jsonify(jotted.update_settings(body()))
+
+    @route("GET", "/api/library", "library")
+    def get_library():
+        return jsonify(jotted.library())
+
+    @route("GET", "/api/library/pending", "pending")
+    def get_pending():
+        return jsonify(documents=[d["path"] for d in jotted.pending()])
 
     # ------------------------------------------------------------ AI: the LLM and the Jev plugin
 
-    def jev_class() -> type:
-        from .adapters.typesafe_judge import TypeSafeJudge
-
-        return TypeSafeJudge
-
-    def ai_state() -> dict:
-        cls, jev = llm.llm_class(cfg.llm), jev_class()
-        return {
-            "llm": {"provider": cfg.llm.provider, "label": cls.LABEL, "family": cls.MODEL_FAMILY,
-                    "model": cfg.llm.model, "key_url": cls.KEY_URL, "key": keys.describe(cfg, cfg.llm.api_key_env),
-                    "providers": [{"id": p, "label": llm.llm_class(replace(cfg.llm, provider=p)).LABEL}
-                                  for p in sorted(llm.PROVIDERS)]},
-            "jev": {"name": jev.NAME, "by": jev.LABEL, "model": cfg.jev.model, "key_url": jev.KEY_URL,
-                    "key": keys.describe(cfg, cfg.jev.api_key_env), "enabled": classify.jev_enabled(cfg)},
-            "judge": "jev" if classify.jev_enabled(cfg) else "llm",
-        }
-
-    def ai_parts(which: str):
-        if which == "llm":
-            cls = llm.llm_class(cfg.llm)
-            return cfg.llm.api_key_env, cls, lambda: cls(cfg.llm)
-        if which == "jev":
-            cls = jev_class()
-            return cfg.jev.api_key_env, cls, lambda: cls(cfg.jev)
-        abort(404)
-
-    @flask.get("/api/ai")
+    @route("GET", "/api/ai", "ai.get")
     def get_ai():
-        return jsonify(ai_state())
+        return jsonify(jotted.ai())
 
-    @flask.put("/api/ai/<which>/key")
+    @route("PUT", "/api/ai/<which>/key", "ai.set_key")
     def put_ai_key(which: str):
-        """Check a key with its provider, then save it. Turning Jev on is adding its key."""
-        name, cls, make = ai_parts(which)
-        value = (request.get_json(silent=True) or {}).get("key")
-        value = value.strip() if isinstance(value, str) else ""
-        if not value:
-            return jsonify(error="Paste a key first"), 400
-        previous = os.environ.get(name)
-        os.environ[name] = value
-        try:
-            make().verify()
-        except llm.ModelError as e:
-            if previous is None:
-                os.environ.pop(name, None)
-            else:
-                os.environ[name] = previous
-            rejected = "rejected" in str(e)
-            return jsonify(error=f"{e}. Check it was copied in full." if rejected else f"{e}. The key wasn't saved."), \
-                400 if rejected else 502
-        keys.save(cfg, name, value)
-        log.info("%s key saved from the web app", cls.LABEL)
-        return jsonify(ai_state())
+        return jsonify(jotted.set_key(which, body().get("key")))
 
-    @flask.delete("/api/ai/<which>/key")
+    @route("DELETE", "/api/ai/<which>/key", "ai.remove_key")
     def delete_ai_key(which: str):
-        """Turn the Jev plugin off. The LLM's key can be replaced but not removed: nothing works without it."""
-        name, cls, _ = ai_parts(which)
-        if which == "llm":
-            return jsonify(error=f"Jotted needs a {cls.LABEL} key to read handwriting; replace it instead"), 400
-        if keys.describe(cfg, name)["source"] == "environment":
-            return jsonify(error=f"{name} is exported in the shell that started Jotted. Remove it there, "
-                                 "then start Jotted again."), 409
-        keys.remove(cfg, name)
-        return jsonify(ai_state())
+        return jsonify(jotted.remove_key(which))
 
-    @flask.get("/api/library")
-    def get_library():
-        """Folders and documents for the settings picker, with what each watch would cover."""
-        if not cloud.LOCK.acquire(timeout=60):
-            return jsonify(error="The tablet is busy syncing; try again in a moment"), 409
-        try:
-            docs = core.source.list_documents()
-            folders = core.source.folders()
-        except SYNC_ERRORS as e:
-            return jsonify(error=str(e)), 502
-        finally:
-            cloud.LOCK.release()
-        own = core.own_doc_ids()
-        counts = {f: sum(1 for d in docs if (d.folder + "/").startswith(f.rstrip("/") + "/")) for f in folders}
-        read = {d["id"] for d in core.repo.source_docs() if d["marker"]}  # fully collected at least once
-        baseline = core.repo.baseline_pages()
-        return jsonify(
-            folders=[{"path": f, "documents": counts[f]} for f in folders],
-            documents=[{"path": d.path, "folder": d.folder, "id": d.id, "own": d.id in own,
-                        "read": d.id in read, "baseline_pages": baseline.get(d.id, 0)} for d in docs],
-        )
+    # ------------------------------------------------------------ where an item came from
 
-    @flask.get("/api/library/pending")
-    def get_pending():
-        """What the next collection would read (documents only; nothing is downloaded)."""
-        if not cloud.LOCK.acquire(timeout=60):
-            return jsonify(error="The tablet is busy syncing; try again in a moment"), 409
-        try:
-            docs = service.pending(core.source, core.repo, exclude=core.own_doc_ids())
-        except SYNC_ERRORS as e:
-            return jsonify(error=str(e)), 502
-        finally:
-            cloud.LOCK.release()
-        return jsonify(documents=[d.path for d, _ in docs])
-
-    @flask.get("/api/sources/<doc_id>/<int:page>/preview.svg")
+    @route("GET", "/api/sources/<doc_id>/<int:page>/preview.svg", "page.image")
     def source_page(doc_id: str, page: int):
-        """A source page with the action's line highlighted (?anchor=…)."""
-        page_id = core.repo.page_id(doc_id, page)
-        if not page_id:
-            abort(404)
-        line = core.repo.source_line(doc_id, request.args.get("anchor", "")) if request.args.get("anchor") else None
-        svg = render_svg(core.source.page_strokes(doc_id, page_id), cfg.template.scale,
-                         highlight=line["rows"] if line else None)
-        return _svg(svg)
+        return _svg(jotted.page_image(doc_id, page, request.args.get("anchor") or None))
 
-    @flask.get("/api/sources/<doc_id>/line/<anchor>.svg")
+    @route("GET", "/api/sources/<doc_id>/line/<anchor>.svg", "line.image")
     def source_line(doc_id: str, anchor: str):
-        """An image of one handwritten line."""
-        line = core.repo.source_line(doc_id, anchor)
-        if not line:
-            abort(404)
-        x0, y0, x1, y1 = line["bbox"]
-        svg = render_svg(core.source.page_strokes(doc_id, line["page_id"]), cfg.template.scale,
-                         crop=(x0 - 16, y0 - 12, x1 + 16, y1 + 12))
-        return _svg(svg)
+        return _svg(jotted.line_image(doc_id, anchor))
 
     return flask
 
 
 def _svg(text: str) -> Response:
     return Response(text, mimetype="image/svg+xml", headers={"Cache-Control": "no-store"})
-

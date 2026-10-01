@@ -1,4 +1,9 @@
-"""Jotted command line: start, setup, collect, the To-do document, and debugging commands."""
+"""Jotted command line: the whole product from a terminal, over `api.Jotted`.
+
+Every operation the web app offers is a command here too (a test keeps it so), and every
+command takes --json to print the operation's result for scripts and other front ends.
+Commands only parse arguments and show results; the work happens in `jotted.api`.
+"""
 
 from __future__ import annotations
 
@@ -7,15 +12,15 @@ import getpass
 import json
 import logging
 import os
-import shutil
 import sys
+from pathlib import Path
 
 from rich.console import Console
 from rich.logging import RichHandler
 from rich.markup import escape
 from rich.table import Table
 
-from . import cloud, keys, selfupdate
+from . import keys, plugins, selfupdate
 from .config import Config, ConfigError, load, resolve_path
 
 log = logging.getLogger("jotted")
@@ -36,25 +41,56 @@ def _setup_logging(level: str) -> None:
         logging.getLogger("rmscene").setLevel(logging.ERROR)
 
 
-# ---------------------------------------------------------------- commands
+# ---------------------------------------------------------------- output
+
+def uses(*ops: str):
+    """Mark a command with the api operations it offers (checked by the parity test)."""
+    def mark(fn):
+        fn.operations = ops
+        return fn
+    return mark
 
 
-def cmd_auth(cfg: Config, args: argparse.Namespace) -> int:
-    token = cfg.rmapi.token_file
-    if token.exists():
-        answer = input(f"A token already exists at {token}. Replace it? [y/N] ").strip().lower()
-        if answer != "y":
-            console.print("Keeping the existing token.")
-            return 0
-        token.unlink()
-    console.print(
-        "Get a one-time code at [bold]https://my.remarkable.com/device/desktop/connect[/bold] "
-        "(sign in, then connect a desktop app)."
-    )
-    code = getpass.getpass("One-time code: ")
-    cloud.register(cfg, code)
-    console.print(f"[green]Registered.[/green] Token saved to {token} (keep it secret).")
+def _jotted(cfg: Config):
+    from .api import Jotted
+
+    return Jotted.open(cfg)
+
+
+def _emit(args: argparse.Namespace, data, render) -> int:
+    """--json prints the operation's result as it is; otherwise `render` shows it to a person."""
+    if args.json:
+        print(json.dumps(data, indent=2, ensure_ascii=False, default=str))
+    else:
+        render()
     return 0
+
+
+def _label(item: dict) -> str:
+    src = item["source"]
+    if item["origin"] == "web":
+        return "added here"
+    if item["written"]:
+        return f"{src['name']} · p{src['page']}"
+    return f"{(src['folder'] or '/').strip('/') or 'Library'} › {src['name']} · p{src['page']}"
+
+
+def _items_table(items: list[dict]) -> None:
+    if not items:
+        console.print("[dim]Nothing here.[/dim]")
+        return
+    table = Table(box=None, pad_edge=False, padding=(0, 2, 0, 0))
+    for col in ("id", "", "owner", "item", "from"):
+        table.add_column(col)
+    colours = {"me": "green", "someone_else": "cyan", "unclear": "yellow"}
+    for i in items:
+        table.add_row(str(i["id"]), "✓" if i["status"] == "done" else "·",
+                      f"[{colours.get(i['owner'], 'white')}]{i['owner']}[/]", escape(i["text"]),
+                      f"[dim]{escape(_label(i))}[/dim]")
+    console.print(table)
+
+
+# ---------------------------------------------------------------- commands
 
 
 def cmd_config_check(cfg: Config, args: argparse.Namespace) -> int:
@@ -64,109 +100,189 @@ def cmd_config_check(cfg: Config, args: argparse.Namespace) -> int:
         width = max(len(k) for k in values)
         for k, v in values.items():
             console.print(f"  {k:<{width}} = {json.dumps(v)}", highlight=False)
-    rmapi = shutil.which(cfg.rmapi.binary)
     console.print()
-    console.print(f"rmapi binary: {rmapi or '[red]not found[/red]'}")
-    console.print(f"rmapi token:  {'present' if cfg.rmapi.token_file.exists() else '[yellow]missing (run jotted auth)[/yellow]'}")
-    llm_key = bool(os.environ.get(cfg.llm.api_key_env))
-    console.print(f"LLM ({cfg.llm.provider}, {cfg.llm.model}): {cfg.llm.api_key_env} "
-                  f"{'set' if llm_key else '[yellow]not set (run jotted setup)[/yellow]'}")
-    jev = bool(os.environ.get(cfg.jev.api_key_env))
-    console.print(f"Jev plugin: {'on' if jev else 'off'} ({cfg.jev.api_key_env} {'set' if jev else 'not set'})")
+    jotted = _jotted(cfg)
+    src = jotted.source()
+    console.print(f"Source: {src['label']} ({src['detail']})")
+    ai = jotted.ai()
+    console.print(f"LLM: {ai['llm']['label']} {ai['llm']['model']}, key "
+                  + ("set" if ai["llm"]["key"]["set"] else "[yellow]not set (run jotted setup)[/yellow]"))
+    console.print(f"Jev plugin: {'on' if ai['jev']['enabled'] else 'off'}")
     return 0
 
 
-def _app(cfg: Config):
-    from .app import App
-
-    return App.build(cfg)
-
-
-def cmd_library(cfg: Config, args: argparse.Namespace) -> int:
-    from .core.model import DocInfo
-
-    app = _app(cfg)
-    with console.status("Listing the library…"):
-        docs = app.source.list_documents()
-        folders = app.source.folders()
-    watched = app.repo.settings()
-    table = Table(box=None, pad_edge=False, padding=(0, 2, 0, 0))
-    for col in ("folder", "documents", "watched"):
-        table.add_column(col)
-    for f in ["/"] + folders:
-        n = sum(1 for d in docs if d.folder == f)
-        table.add_row(f, str(n), "yes" if watched.watches(DocInfo("remarkable", "", "x", f, "")) else "")
-    console.print(table)
-    return 0
+@uses("items.list", "items.add", "items.edit")
+def cmd_items(cfg: Config, args: argparse.Namespace) -> int:
+    jotted = _jotted(cfg)
+    action = args.items_command or "list"
+    if action == "list":
+        status = None if args.status == "all" else args.status
+        items = jotted.items(status=status, owner=args.owner, folder=args.folder)
+        return _emit(args, items, lambda: _items_table(items))
+    if action == "add":
+        item = jotted.add_item(" ".join(args.text))
+        return _emit(args, item, lambda: console.print(
+            f"Added #{item['id']}: {escape(item['text'])}. [dim]It reaches the To-do document on the next "
+            "check (`jotted todo` now).[/dim]"))
+    changes = {"edit": {"text": " ".join(getattr(args, "text", []) or [])}, "done": {"status": "done"},
+               "reopen": {"status": "open"}, "dismiss": {"dismissed": True}}[action]
+    item = jotted.edit_item(args.id, **changes)
+    return _emit(args, item, lambda: console.print(
+        f"#{args.id} removed from the list." if action == "dismiss" else
+        f"#{item['id']} {'✓ ' if item['status'] == 'done' else ''}{escape(item['text'])}"))
 
 
+def _value(text: str):
+    """A setting's value as typed: JSON when it parses (true, 0.8, ["/A"]), else the text itself."""
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        return text
+
+
+@uses("settings.get", "settings.update")
+def cmd_settings(cfg: Config, args: argparse.Namespace) -> int:
+    jotted = _jotted(cfg)
+    if args.settings_command == "set":
+        settings = jotted.update_settings({args.key: _value(args.value)})
+    else:
+        settings = jotted.settings()
+
+    def show():
+        width = max(len(k) for k in settings)
+        for k, v in settings.items():
+            console.print(f"{k:<{width}}  {json.dumps(v)}", highlight=False)
+    return _emit(args, settings, show)
+
+
+@uses("watch.add", "watch.remove", "watch.from_now")
 def cmd_watch(cfg: Config, args: argparse.Namespace) -> int:
-    app = _app(cfg)
-    s = app.repo.settings()
-    if args.action == "add":
-        s.watch = sorted(set(s.watch) | {"/" + args.path.strip("/")})
-    elif args.action == "remove":
-        s.watch = [w for w in s.watch if w.strip("/") != args.path.strip("/")]
-    else:  # from-now / read-all: the document at PATH, or every document in that folder now
-        target = "/" + args.path.strip("/") if args.path.strip("/") else "/"
-        with console.status("Listing the library…"):
-            docs = [d for d in app.source.list_documents()
-                    if target == "/" or d.path == target or d.path.startswith(target + "/")]
-        if not docs:
-            console.print(f"No documents at {target}")
-            return 1
-        ids = {d.id for d in docs}
-        read = {d["id"] for d in app.repo.source_docs() if d["marker"]}
-        if args.action == "from-now":
-            late = [d.path for d in docs if d.id in read and d.id not in app.repo.baselined_docs()]
-            s.from_now = sorted(set(s.from_now) | ids)
-            if late:
-                console.print(f"[dim]Already read in full, so nothing is skipped: {', '.join(late)}[/dim]")
-        else:
-            s.from_now = sorted(set(s.from_now) - ids)
+    jotted = _jotted(cfg)
+    if args.action in ("add", "remove"):
+        settings = (jotted.watch if args.action == "add" else jotted.unwatch)(args.path)
+        return _emit(args, settings, lambda: console.print(
+            "Watching: " + (", ".join(settings["watch"]) or "[dim]nothing[/dim]")))
+    with console.status("Listing the library…"):
+        result = jotted.from_now(args.path, on=args.action == "from-now")
+
+    def show():
+        if result["already_read"]:
+            console.print(f"[dim]Already read in full, so nothing is skipped: {', '.join(result['already_read'])}[/dim]")
         console.print(f"{'New writing only' if args.action == 'from-now' else 'Everything is read'} in "
-                      f"{len(docs)} document(s) at {target}")
-    app.repo.save_settings(s)
-    console.print("Watching: " + (", ".join(s.watch) or "[dim]nothing[/dim]"))
-    return 0
+                      f"{len(result['documents'])} document(s)")
+    return _emit(args, result, show)
 
 
+@uses("library")
+def cmd_library(cfg: Config, args: argparse.Namespace) -> int:
+    with console.status("Listing the library…"):
+        lib = _jotted(cfg).library()
+
+    def show():
+        table = Table(box=None, pad_edge=False, padding=(0, 2, 0, 0))
+        for col in ("folder", "documents", "watched"):
+            table.add_column(col)
+        top = [d for d in lib["documents"] if d["folder"] == "/"]
+        table.add_row("/", str(len(top)), "")
+        for f in lib["folders"]:
+            table.add_row(f["path"], str(f["documents"]), "yes" if f["watched"] else "")
+        console.print(table)
+    return _emit(args, lib, show)
+
+
+@uses("collect", "pending")
 def cmd_collect(cfg: Config, args: argparse.Namespace) -> int:
-    from .core import service
-
-    app = _app(cfg)
-    if not app.repo.settings().watch:
-        console.print("Nothing is watched. Add a folder with `jotted watch add /Meeting notes` or in the web app.")
-        return 1
+    jotted = _jotted(cfg)
     if args.dry_run:
         with console.status("Checking what changed (downloads only, nothing is read)…"):
-            todo = service.pending(app.source, app.repo, exclude=app.own_doc_ids(), fetch=True)
-        if not todo:
-            console.print("Nothing changed since the last collection.")
-        for doc, pages in todo:
-            console.print(f"[bold]{doc.path}[/bold]: {len(pages)} changed page(s) "
-                          + (", ".join(str(p.index) for p in pages) if pages else ""))
-        return 0
+            pending = jotted.pending(fetch=True)
+
+        def show():
+            if not pending:
+                console.print("Nothing changed since the last collection.")
+            for d in pending:
+                console.print(f"[bold]{escape(d['path'])}[/bold]: {len(d['pages'])} changed page(s) "
+                              + ", ".join(str(p) for p in d["pages"]))
+        return _emit(args, pending, show)
     with console.status("Collecting…") as status:
-        summary = app.collect(progress=lambda m: status.update(m))
-    console.print(summary.as_dict())
-    for i in app.repo.items(status="open"):
-        if i["origin"] != "web":
-            src = i["source"]
-            console.print(f"  [{'cyan' if i['owner'] == 'someone_else' else 'green'}]{i['owner']:<12}[/] "
-                          f"{escape(i['text'])}  [dim]{escape(src['folder'])} › {escape(src['name'])} · p{src['page']}[/dim]")
-    return 0 if not summary.errors else 1
+        summary = jotted.collect(progress=lambda m: status.update(m))
+
+    def show():
+        console.print(f"{summary['docs_changed']} changed document(s), {summary['pages_read']} page(s) read, "
+                      f"{summary['lines_judged']} new line(s) judged, {summary['actions_new']} new action(s).")
+        for e in summary["errors"]:
+            console.print(f"[red]{escape(e)}[/red]")
+    _emit(args, summary, show)
+    return 0 if not summary["errors"] else 1
 
 
+@uses("todo.sync")
 def cmd_todo(cfg: Config, args: argparse.Namespace) -> int:
-    app = _app(cfg)
-    s = app.repo.settings()
-    if not s.todo_enabled:
-        console.print("The To-do document is off. Turn it on in the web app's settings.")
-        return 1
     with console.status("Reading ticks and publishing the To-do document…"):
-        result = app.sync_todo(force=args.force)
-    console.print(result)
+        result = _jotted(cfg).sync_todo(force=args.force)
+    return _emit(args, result, lambda: console.print(
+        f"{result.get('ticked', 0)} ticked, {result.get('written', 0)} written on paper; "
+        + ("published" if result.get("published") else "unchanged")
+        + (f"; [yellow]{result['overflow']} item(s) didn't fit[/yellow]" if result.get("overflow") else "")))
+
+
+@uses("check")
+def cmd_check(cfg: Config, args: argparse.Namespace) -> int:
+    with console.status("Checking…"):
+        result = _jotted(cfg).check()
+    return _emit(args, result, lambda: console.print(
+        "Nothing to check: no folders watched and the To-do document is off." if not result else
+        "; ".join(f"{k}: {v}" for k, v in result.items())))
+
+
+@uses("status", "source")
+def cmd_status(cfg: Config, args: argparse.Namespace) -> int:
+    status = _jotted(cfg).status()
+
+    def show():
+        src = status["source"]
+        console.print(f"Source:   {src['label']} ({src['detail']})")
+        console.print(f"Judge:    {'Jev' if status['judge'] == 'jev' else 'the LLM'}")
+        console.print(f"Watching: {', '.join(status['watch']) or '[dim]nothing[/dim]'}")
+        console.print(f"Read:     {status['documents_read']} document(s), last at {status['last_collected_at'] or 'never'}")
+        console.print(f"Items:    {status['items']['open']} open, {status['items']['done']} done")
+        t = status["todo"]
+        console.print(f"To-do:    {'on' if t['enabled'] else 'off'}"
+                      + (f", “{t['name']}” in {t['folder']}, published {t['published_at'] or 'never'}" if t["enabled"] else ""))
+    return _emit(args, status, show)
+
+
+@uses("ai.get", "ai.set_key", "ai.remove_key")
+def cmd_ai(cfg: Config, args: argparse.Namespace) -> int:
+    jotted = _jotted(cfg)
+    if args.ai_command == "key":
+        value = sys.stdin.readline() if args.stdin else getpass.getpass(f"Paste the {args.which} key, it stays hidden: ")
+        with console.status("Checking the key…"):
+            ai = jotted.set_key(args.which, value)
+    elif args.ai_command == "remove":
+        ai = jotted.remove_key(args.which)
+    else:
+        ai = jotted.ai()
+
+    def show():
+        m, j = ai["llm"], ai["jev"]
+        key = m["key"]
+        console.print(f"LLM:  {m['family']} by {m['label']} ({m['model']}), adapter “{m['provider']}”; key "
+                      + (f"{key['hint']} ({key['source']})" if key["set"] else "[yellow]not set[/yellow]"))
+        console.print(f"Jev:  {'on (' + j['model'] + '), judging actions and owners' if j['enabled'] else 'off'}")
+        console.print(f"Judging actions: {'Jev' if ai['judge'] == 'jev' else m['family']}")
+    return _emit(args, ai, show)
+
+
+@uses("page.image", "line.image")
+def cmd_image(cfg: Config, args: argparse.Namespace) -> int:
+    jotted = _jotted(cfg)
+    svg = (jotted.page_image(args.doc_id, args.page, args.anchor) if args.image_command == "page"
+           else jotted.line_image(args.doc_id, args.anchor))
+    if args.out:
+        Path(args.out).write_text(svg)
+        return _emit(args, {"path": args.out}, lambda: console.print(f"Written to {args.out}"))
+    sys.stdout.write(svg)
     return 0
 
 
@@ -287,40 +403,95 @@ def cmd_setup(args: argparse.Namespace) -> int:
 
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="jotted", description="Turn handwritten notes into a to-do list.")
+    p.add_argument("--json", action="store_true", help="print results as JSON (for scripts and other apps)")
     sub = p.add_subparsers(dest="command", required=True)
-    sub.add_parser("auth", help="register rmapi with a one-time code").set_defaults(func=cmd_auth)
-    cfg_p = sub.add_parser("config", help="configuration commands")
-    cfg_sub = cfg_p.add_subparsers(dest="config_command", required=True)
-    cfg_sub.add_parser("check", help="validate config.toml and print resolved values").set_defaults(func=cmd_config_check)
-    sub.add_parser("library", help="list the library's folders and which are watched").set_defaults(func=cmd_library)
-    wa = sub.add_parser("watch", help="watch or stop watching a folder (also in the web app)",
-                        description="from-now: skip what is already written in the documents at PATH (a "
-                                    "folder means the documents in it now); read-all undoes it.")
-    wa.add_argument("action", choices=["add", "remove", "from-now", "read-all"])
-    wa.add_argument("path", help="folder or document path, e.g. '/Meeting notes'")
-    wa.set_defaults(func=cmd_watch)
-    co = sub.add_parser("collect", help="read what changed in watched folders and update the to-do list")
-    co.add_argument("--dry-run", action="store_true", help="only show which documents and pages changed")
-    co.set_defaults(func=cmd_collect)
-    td = sub.add_parser("todo", help="read ticks from, and republish, the To-do document")
-    td.add_argument("--force", action="store_true", help="republish even if nothing changed")
-    td.set_defaults(func=cmd_todo)
-    st = sub.add_parser("start", help="set up anything missing, then open the app (start here)")
+
+    def command(name: str, func, help: str, **kw) -> argparse.ArgumentParser:
+        c = sub.add_parser(name, help=help, **kw)
+        c.set_defaults(func=func)
+        return c
+
+    # setting up and running
+    st = command("start", cmd_start, "set up anything missing, then open the app (start here)")
     st.add_argument("--port", type=int, help="default: server.port")
     st.add_argument("--no-browser", action="store_true", help="don't open the browser")
     st.add_argument("--no-update", action="store_true", help="don't check GitHub for a newer version")
-    st.set_defaults(func=cmd_start, no_config=True)
-    sub.add_parser("update", help="update Jotted to the latest version on GitHub").set_defaults(
-        func=cmd_update, no_config=True)
-    su = sub.add_parser("setup", help="go through setup again: reconnect the tablet, change API keys")
-    su.set_defaults(func=cmd_setup, no_config=True)
-    sv = sub.add_parser("serve", help="run the local web app")
+    st.set_defaults(no_config=True)
+    command("setup", cmd_setup, "go through setup again: reconnect your device, change API keys").set_defaults(
+        no_config=True)
+    command("update", cmd_update, "update Jotted to the latest version on GitHub").set_defaults(no_config=True)
+    sv = command("serve", cmd_serve, "run the local web app (and check your device in the background)")
     sv.add_argument("--host", help="default: server.host")
     sv.add_argument("--port", type=int, help="default: server.port")
     sv.add_argument("--dev", action="store_true", help="use Flask's development server")
-    sv.add_argument("--no-background", action="store_true",
-                    help="don't check or write to the tablet in the background (debugging)")
-    sv.set_defaults(func=cmd_serve)
+    sv.add_argument("--no-background", action="store_true", help="don't check or write to the device in the background")
+    cfg_p = sub.add_parser("config", help="configuration commands")
+    cfg_sub = cfg_p.add_subparsers(dest="config_command", required=True)
+    cfg_sub.add_parser("check", help="validate config.toml and print resolved values").set_defaults(func=cmd_config_check)
+
+    # the to-do list
+    it = command("items", cmd_items, "the to-do list: list, add, edit, tick, dismiss")
+    it_sub = it.add_subparsers(dest="items_command")
+    for c in (it, it_sub.add_parser("list", help="list items (the default)")):
+        c.add_argument("--status", choices=["open", "done", "all"], default="open")
+        c.add_argument("--owner", choices=["mine", "others"])
+        c.add_argument("--folder", help="only items from documents in this folder")
+    it_sub.add_parser("add", help="add an item of yours").add_argument("text", nargs="+")
+    ed = it_sub.add_parser("edit", help="change an item's text")
+    ed.add_argument("id", type=int)
+    ed.add_argument("text", nargs="+")
+    for name, help in (("done", "mark an item done"), ("reopen", "mark an item open again"),
+                       ("dismiss", "not an action: take it off the list (deletes one added here)")):
+        it_sub.add_parser(name, help=help).add_argument("id", type=int)
+
+    # what is read
+    se = command("settings", cmd_settings, "show or change settings (also in the web app)")
+    se_sub = se.add_subparsers(dest="settings_command")
+    ss = se_sub.add_parser("set", help="set one: e.g. todo_enabled true, action_threshold 0.8")
+    ss.add_argument("key")
+    ss.add_argument("value", help="JSON (true, 0.8, [\"/A\"]) or plain text")
+    wa = command("watch", cmd_watch, "watch or stop watching a folder (also in the web app)",
+                 description="from-now: skip what is already written in the documents at PATH (a "
+                             "folder means the documents in it now); read-all undoes it.")
+    wa.add_argument("action", choices=["add", "remove", "from-now", "read-all"])
+    wa.add_argument("path", help="folder or document path, e.g. '/Meeting notes'")
+    command("library", cmd_library, "list your device's folders and which are watched")
+
+    # doing the work now (`jotted serve` does it in the background)
+    co = command("collect", cmd_collect, "read what changed in watched folders and update the to-do list")
+    co.add_argument("--dry-run", action="store_true", help="only show which documents and pages changed")
+    td = command("todo", cmd_todo, "read ticks from, and republish, the To-do document")
+    td.add_argument("--force", action="store_true", help="republish even if nothing changed")
+    command("check", cmd_check, "collect and update the To-do document now")
+    command("status", cmd_status, "what Jotted reads, judges and publishes, and when it last did")
+
+    # AI
+    ai = command("ai", cmd_ai, "the language model and the Jev plugin: status and keys")
+    ai_sub = ai.add_subparsers(dest="ai_command")
+    k = ai_sub.add_parser("key", help="check and save a key (adding Jev's turns the plugin on)")
+    k.add_argument("which", choices=["llm", "jev"])
+    k.add_argument("--stdin", action="store_true", help="read the key from standard input instead of asking")
+    ai_sub.add_parser("remove", help="turn the Jev plugin off").add_argument("which", choices=["jev"])
+
+    # where an item came from
+    im = command("image", cmd_image, "draw a source page or line as SVG")
+    im_sub = im.add_subparsers(dest="image_command", required=True)
+    pg = im_sub.add_parser("page", help="a page, with a line highlighted")
+    pg.add_argument("doc_id")
+    pg.add_argument("page", type=int)
+    pg.add_argument("--anchor", help="the line to highlight")
+    ln = im_sub.add_parser("line", help="one handwritten line")
+    ln.add_argument("doc_id")
+    ln.add_argument("anchor")
+    for c in (pg, ln):
+        c.add_argument("-o", "--out", help="write to this file instead of standard output")
+
+    # the source plugins' own commands (reMarkable: auth)
+    for name in plugins.available():
+        try:
+            plugins.plugin_class(name).cli(sub)
+        except Exception as e:  # a broken plugin must not take the CLI down
+            print(f"warning: source plugin {name!r} failed to load: {e}", file=sys.stderr)
     return p
 
 
@@ -336,10 +507,16 @@ def main(argv: list[str] | None = None) -> int:
         console.print(f"[dim](config path: {resolve_path()}; set JOTTED_CONFIG to use another)[/dim]")
         return 2
     _setup_logging(cfg.logging.level)
+    from .api import ApiError
+    from .app import SYNC_ERRORS
+
     try:
         return args.func(cfg, args)
-    except (cloud.CloudError, FileNotFoundError) as e:
-        console.print(f"[red]Error:[/red] {e}")
+    except (ApiError, *SYNC_ERRORS, FileNotFoundError) as e:
+        if getattr(args, "json", False):
+            print(json.dumps({"error": str(e), "status": getattr(e, "status", 500)}))
+        else:
+            console.print(f"[red]Error:[/red] {escape(str(e))}")
         return 1
     except KeyboardInterrupt:
         return 130

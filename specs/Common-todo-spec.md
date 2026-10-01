@@ -47,6 +47,8 @@ The core imports no adapter, no Flask, no rmapi and no SDK. It sees only the por
 
 Existing modules stay where they are and are wrapped by the reMarkable adapter. The separate Tasks notebook flow was retired rather than moved onto the core (stage 5).
 
+Since Oct 2, 2026 the reMarkable adapters live in a source plugin (`jotted/plugins/remarkable/`): `DocumentSource` and `TodoPublisher` come from whichever plugin `[plugins] source` names, and handwriting is read by the shared `jotted.ink` reader. Every operation is in `jotted/api.py`, which the CLI and the web server both call (see the README's "How it fits together").
+
 ## Incremental reading
 
 Three levels, each skipping what hasn't changed:
