@@ -169,10 +169,16 @@ def download(cfg: Config, doc: DocRef) -> Path:
     cache = cfg.paths.cache_dir
     cache.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(dir=cache, prefix=".dl-") as tmp:
-        _run(cfg, ["-ni", "get", "--id", doc.id], cwd=Path(tmp))
-        files = [p for p in Path(tmp).iterdir() if p.is_file()]
+        root = Path(tmp).resolve()
+        # rmapi saves to "<name>.rmdoc" in its working folder, so a "/" in the name ("Ana / Sameera")
+        # reads as a subfolder: make it first, or the download fails. Only ever inside `root`.
+        target = (root / (doc.name.lstrip("/") + ".rmdoc")).resolve()
+        if target.parent != root and root in target.parents:
+            target.parent.mkdir(parents=True, exist_ok=True)
+        _run(cfg, ["-ni", "get", "--id", doc.id], cwd=root)
+        files = [p for p in root.rglob("*") if p.is_file()]
         if len(files) != 1:
-            raise CloudError(f"expected one downloaded file, found {[p.name for p in files]}")
+            raise CloudError(f"expected one downloaded file, found {[str(p.relative_to(root)) for p in files]}")
         dest = cache / f"{doc.id}.rmdoc"
         shutil.move(files[0], dest)
     sidecar = cache / f"{doc.id}.json"

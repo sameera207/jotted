@@ -162,6 +162,29 @@ def test_cloud_flow_with_fake_rmapi(tmp_path, cfg, monkeypatch):
         assert conf == str(token) and trace == ""
 
 
+def test_download_copes_with_a_slash_in_the_name(tmp_path, cfg, monkeypatch):
+    """rmapi saves "<name>.rmdoc" in its working folder, so "Ana / Sameera" needs an "Ana " folder."""
+    doc = synth.rmdoc(tmp_path / "src.rmdoc", [synth.rm_bytes([[(0, 0), (5, 5)]])])
+    fake = tmp_path / "rmapi"
+    fake.write_text(f"""#!/bin/sh
+cp "{doc}" "$(printf '%s' "$NAME").rmdoc"  # fails like rmapi when the folder is missing
+""")
+    fake.chmod(fake.stat().st_mode | stat.S_IEXEC)
+    monkeypatch.setenv("PATH", f"{tmp_path}{os.pathsep}{os.environ['PATH']}")
+    cfg.rmapi.token_file.parent.mkdir(parents=True, exist_ok=True)
+    for name in ("1-1 Dmytro / Sameera", "Final Team Fit/Technical Chat - Jo", "Plain name"):
+        monkeypatch.setenv("NAME", name)
+        ref = cloud.DocRef(id=f"id-{len(name)}", name=name, version=1, modified="m", parent="")
+        path = cloud.download(cfg, ref)
+        assert path == cfg.paths.cache_dir / f"{ref.id}.rmdoc" and path.read_bytes() == doc.read_bytes()
+    assert sorted(p.name for p in cfg.paths.cache_dir.iterdir() if p.name.startswith(".dl-")) == []  # cleaned up
+
+    monkeypatch.setenv("NAME", "../escape")  # a name pointing outside: no folder is made out there
+    with pytest.raises(cloud.CloudError):
+        cloud.download(cfg, cloud.DocRef(id="x", name="../../escape", version=1, modified="m", parent=""))
+    assert not (cfg.paths.cache_dir.parent / "escape").exists()
+
+
 # ---------------------------------------------------------------- recognition and classification (stubbed)
 
 from jotted import classify as classify_mod, llm, recognise  # noqa: E402
