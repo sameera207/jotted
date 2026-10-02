@@ -166,9 +166,11 @@ class TodoDocument:
         return PAGES * SLOTS_PER_PAGE
 
     def find(self) -> cloud.DocRef | None:
-        """The document, if it exists. rmapi addresses documents by name only, so with two of
-        the same name nothing can be updated safely: stop and say which to delete."""
-        docs = cloud.find_documents(self.cfg, self.name, self.folder)
+        """The document, if it exists: called `name`, directly in `folder` (one elsewhere in the
+        library is someone else's). rmapi addresses documents by name only, so with two of the
+        same name nothing can be updated safely: stop and say which to delete."""
+        entries, _ = cloud.library(self.cfg)
+        docs = [e.doc for e in entries if e.doc.name == self.name and e.folder == self.folder]
         if len(docs) > 1:
             when = ", ".join(sorted(d.modified[:16].replace("T", " ") + " UTC" for d in docs))
             raise cloud.CloudError(
@@ -181,8 +183,41 @@ class TodoDocument:
         found = self.find()
         return found.id if found else None
 
+    def _local(self, doc: cloud.DocRef) -> Path:
+        """The document's current version, downloaded once."""
+        path = self.cfg.paths.cache_dir / f"{doc.id}.rmdoc"
+        sidecar = path.with_suffix(".json")
+        if path.is_file() and sidecar.is_file() and json.loads(sidecar.read_text()).get("modified") == doc.modified:
+            return path
+        return cloud.download(self.cfg, doc)
+
+    def _usable(self, doc: cloud.DocRef) -> bool:
+        """Whether `doc` is a printed list Jotted can update. False for an empty shell (an
+        upload cut off halfway: no PDF, no pages, no ink), which is safe to replace. A notebook
+        with this name has ink and no PDF: it is the person's own, never touched."""
+        with zipfile.ZipFile(self._local(doc)) as z:
+            names = z.namelist()
+        if any(n.endswith(".pdf") for n in names):
+            return True
+        if any(n.endswith(".rm") for n in names):
+            where = "the top level" if self.folder == "/" else self.folder
+            raise cloud.CloudError(
+                f"The document called {self.name!r} in {where} on your reMarkable is a notebook, not Jotted's printed "
+                f"list, so Jotted leaves it alone. Rename it on the tablet, or give the To-do document another "
+                f"name in Settings.")
+        return False
+
+    def _existing(self) -> cloud.DocRef | None:
+        """The document to update; an empty shell is deleted first, so a fresh one is made."""
+        doc = self.find()
+        if doc is not None and not self._usable(doc):
+            log.warning("%s on the tablet is empty (an upload cut off halfway?); replacing it", self.name)
+            cloud.delete(self.cfg, self.name, self.folder)
+            return None
+        return doc
+
     def publish(self, entries: list[TodoEntry]) -> None:
-        existing = self.find()
+        existing = self._existing()
         with tempfile.TemporaryDirectory() as tmp:
             pdf = build_pdf(Path(tmp) / f"{self.name}.pdf", entries, scale=self.cfg.template.scale)
             cloud.upload_pdf(self.cfg, pdf, content_only=existing is not None, folder=self.folder)
@@ -194,12 +229,9 @@ class TodoDocument:
 
     def read_paper(self, occupied: set[int]) -> PaperRead | None:
         doc = self.find()
-        if doc is None:
-            return None
-        path = self.cfg.paths.cache_dir / f"{doc.id}.rmdoc"
-        sidecar = path.with_suffix(".json")
-        if not (path.is_file() and sidecar.is_file() and json.loads(sidecar.read_text()).get("modified") == doc.modified):
-            path = cloud.download(self.cfg, doc)
+        if doc is None or not self._usable(doc):
+            return None  # nothing to read: an empty shell holds no ticks, and is replaced on publishing
+        path = self._local(doc)
         scale = self.cfg.template.scale
         read = PaperRead(doc_id=doc.id, marker=doc.modified)
         with zipfile.ZipFile(path) as z:

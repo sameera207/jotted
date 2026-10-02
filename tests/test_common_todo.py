@@ -726,17 +726,91 @@ def test_a_document_with_another_page_count_is_rebuilt(repo):
     assert not service.sync_todo(repo, pub)["rebuilt"]
 
 
+def _entries(*docs):
+    from jotted.plugins.remarkable import cloud
+
+    return [cloud.LibraryEntry(cloud.DocRef(id=i, name=n, version=0, modified=m, parent=""), folder)
+            for i, n, folder, m in docs], []
+
+
 def test_two_todo_documents_with_the_same_name_stop_with_advice(monkeypatch):
     from jotted.plugins.remarkable import cloud
 
-    docs = [cloud.DocRef(id=i, name="To-do", version=0, modified=m, parent="")
-            for i, m in (("a", "2026-10-01T14:54:55Z"), ("b", "2026-10-01T14:55:17Z"))]
-    monkeypatch.setattr(cloud, "find_documents", lambda cfg, name, folder: docs)
+    both = _entries(("a", "To-do", "/", "2026-10-01T14:54:55Z"), ("b", "To-do", "/", "2026-10-01T14:55:17Z"))
+    monkeypatch.setattr(cloud, "library", lambda cfg: both)
     doc = todo_document.TodoDocument(None, "To-do", "/", ink=None)
     with pytest.raises(cloud.CloudError, match="Delete the one you don't use"):
         doc.find()
-    monkeypatch.setattr(cloud, "find_documents", lambda cfg, name, folder: docs[:1])
+    monkeypatch.setattr(cloud, "library", lambda cfg: (both[0][:1], []))
     assert doc.find().id == "a"
+
+
+@pytest.fixture
+def tablet(tmp_path, monkeypatch):
+    """A fake reMarkable cloud holding one document called To-do, of whatever kind a test puts there."""
+    import types
+    import zipfile
+
+    from jotted.plugins.remarkable import cloud
+
+    cfg = types.SimpleNamespace(paths=types.SimpleNamespace(cache_dir=tmp_path),
+                                template=TemplateConfig(), strokes=None)
+    state = {"docs": [], "files": {}, "deleted": [], "uploads": []}
+
+    def put(doc_id, folder, kind):
+        path = tmp_path / f"remote-{doc_id}.rmdoc"
+        if kind == "notebook":
+            synth.rmdoc(path, [synth.rm_bytes([[(0, 0), (40, 40)]])], doc_id=doc_id, name="To-do")
+        else:
+            with zipfile.ZipFile(path, "w") as z:
+                z.writestr(f"{doc_id}.metadata", "{}")  # all an interrupted upload leaves behind
+                if kind == "pdf":
+                    z.writestr(f"{doc_id}.content", '{"fileType": "pdf", "pages": []}')
+                    z.writestr(f"{doc_id}.pdf", b"%PDF-1.4")
+        state["docs"].append(("id-" + doc_id, "To-do", folder, "2026-10-01T14:54:55Z"))
+        state["files"]["id-" + doc_id] = path
+
+    monkeypatch.setattr(cloud, "library", lambda c: _entries(*state["docs"]))
+    monkeypatch.setattr(cloud, "download", lambda c, ref: state["files"][ref.id])
+    monkeypatch.setattr(cloud, "delete", lambda c, name, folder: state["deleted"].append((name, folder))
+                        or state["docs"].clear())
+    monkeypatch.setattr(cloud, "upload_pdf", lambda c, pdf, content_only, folder: state["uploads"].append(
+        (pdf.name, content_only, folder)))
+    state["put"] = put
+    state["doc"] = todo_document.TodoDocument(cfg, "To-do", "/", ink=None)
+    return state
+
+
+def test_an_empty_todo_shell_is_replaced_with_a_fresh_document(tablet):
+    tablet["put"]("shell", "/", "empty")
+    assert tablet["doc"].read_paper(set()) is None  # nothing to read in it
+    tablet["doc"].publish([])
+    assert tablet["deleted"] == [("To-do", "/")]
+    assert tablet["uploads"] == [("To-do.pdf", False, "/")]  # created anew, not swapped into the shell
+
+
+def test_a_printed_todo_document_has_its_pdf_swapped(tablet):
+    tablet["put"]("ours", "/", "pdf")
+    tablet["doc"].publish([])
+    assert tablet["deleted"] == [] and tablet["uploads"] == [("To-do.pdf", True, "/")]
+
+
+def test_a_notebook_of_yours_called_todo_is_never_touched(tablet):
+    from jotted.plugins.remarkable import cloud
+
+    tablet["put"]("mine", "/", "notebook")
+    with pytest.raises(cloud.CloudError, match="is a notebook, not Jotted's printed list"):
+        tablet["doc"].publish([])
+    with pytest.raises(cloud.CloudError, match="Rename it on the tablet"):
+        tablet["doc"].read_paper(set())
+    assert tablet["deleted"] == [] and tablet["uploads"] == []
+
+
+def test_a_todo_in_another_folder_is_not_the_todo_document(tablet):
+    tablet["put"]("elsewhere", "/Archive", "notebook")
+    assert tablet["doc"].find() is None
+    tablet["doc"].publish([])
+    assert tablet["uploads"] == [("To-do.pdf", False, "/")]
 
 
 def test_two_apps_starting_at_once_migrate_once(tmp_path):
