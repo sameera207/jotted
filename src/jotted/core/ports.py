@@ -120,8 +120,17 @@ class SourceError(Exception):
     ambiguous...). Plugins raise subclasses; the message is shown to the person."""
 
 
+class StateConflict(Exception):
+    """The item can't do that in its state (edit a dismissed item, tick a proposed one)."""
+
+
+class ListFull(StateConflict):
+    """Too many proposed items wait for a decision (Settings.proposed_limit)."""
+
+
 class Progress(Protocol):
     def __call__(self, message: str) -> None: ...
 
 
-__all__ = ["ActionJudge", "CollectSummary", "DocumentSource", "Progress", "Repository", "SourceError", "TodoPublisher"]
+__all__ = ["ActionJudge", "CollectSummary", "DocumentSource", "Progress", "ListFull", "Repository", "SourceError", "StateConflict",
+           "TodoPublisher"]

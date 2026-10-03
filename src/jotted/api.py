@@ -17,6 +17,9 @@ from __future__ import annotations
 
 import logging
 import os
+import re
+import unicodedata
+from urllib.parse import urlsplit
 from dataclasses import asdict, fields, replace
 from typing import Any, Callable
 
@@ -25,6 +28,7 @@ from .app import SYNC_ERRORS, App, Scheduler
 from .config import Config
 from .core import service
 from .core.model import DocInfo, Settings
+from .core.ports import StateConflict
 from .locking import Busy
 
 log = logging.getLogger("jotted")
@@ -33,6 +37,12 @@ OPERATIONS: dict[str, str] = {}  # operation name -> method name
 
 SOURCE_WAIT_S = 60  # how long a request waits for the source to be free
 RECENT_EVENTS = 50  # `events` without a cursor
+STATUSES = ("open", "done", "all", "proposed", "dismissed", "any")  # `all` is open and done: the list
+OWNERS = {"mine": "me", "others": "someone_else"}
+MAX_LIST = 200  # items in one page of `items`
+MAX_BATCH = 100  # items in one `items.add_batch`
+KIND = re.compile(r"[a-z0-9_-]{1,32}")
+LIMITS = {"text": 500, "owner_name": 80, "key": 200, "title": 200, "excerpt": 500, "url": 2000}
 
 
 class ApiError(Exception):
@@ -114,6 +124,10 @@ def _settings_from(changes: dict, current: Settings) -> Settings:
         raise Invalid("action_threshold must be between 0 and 1")
     if s.poll_interval_s < 15:
         raise Invalid("poll_interval_s must be at least 15 seconds")
+    if s.mcp_add_mode not in ("auto", "propose_all"):
+        raise Invalid("mcp_add_mode must be auto or propose_all")
+    if isinstance(s.proposed_limit, bool) or not isinstance(s.proposed_limit, int) or not 10 <= s.proposed_limit <= 500:
+        raise Invalid("proposed_limit must be a whole number from 10 to 500")
     if not isinstance(s.watch, list) or not all(isinstance(w, str) for w in s.watch):
         raise Invalid("watch must be a list of folder or document paths")
     s.watch = sorted({_path(w) for w in s.watch})
@@ -132,6 +146,66 @@ def _settings_from(changes: dict, current: Settings) -> Settings:
 
 def _path(p: str) -> str:
     return "/" + p.strip("/") if p.strip("/") else "/"
+
+
+def _plain(value: Any, field: str, *, required: bool = False) -> str | None:
+    """Text from a person or an agent, as Jotted keeps it: one line, no control characters,
+    within its length limit. It is only ever shown as text."""
+    if value is None or value == "":
+        if required:
+            raise Invalid(f"{field} is empty")
+        return None
+    if not isinstance(value, str):
+        raise Invalid(f"{field} must be text")
+    text = " ".join("".join(" " if unicodedata.category(ch)[0] in "CZ" else ch for ch in value).split())
+    if not text:
+        if required:
+            raise Invalid(f"{field} is empty")
+        return None
+    limit = LIMITS[field.split(".")[-1]]
+    if len(text) > limit:
+        raise Invalid(f"{field} is longer than {limit} characters")
+    return text
+
+
+def _source(source: Any) -> dict | None:
+    """A validated `source` ({kind, key, title, url, excerpt}); None if there is none."""
+    if source is None:
+        return None
+    if not isinstance(source, dict):
+        raise Invalid("source must be an object")
+    unknown = set(source) - {"kind", "key", "title", "url", "excerpt"}
+    if unknown:
+        raise Invalid(f"source has unknown field(s) {', '.join(sorted(unknown))}")
+    kind = source.get("kind")
+    if kind is not None and (not isinstance(kind, str) or not KIND.fullmatch(kind)):
+        raise Invalid("source.kind must be 1 to 32 of a-z, 0-9, _ and -")
+    out = {"kind": kind, **{f: _plain(source.get(f), f"source.{f}") for f in ("key", "title", "excerpt")}}
+    url = source.get("url")
+    if url not in (None, ""):
+        if not isinstance(url, str) or len(url) > LIMITS["url"]:
+            raise Invalid("source.url must be a link of at most 2000 characters")
+        parts = urlsplit(url.strip())
+        if parts.scheme != "https" or not parts.netloc or any(ord(ch) < 33 for ch in url.strip()):
+            raise Invalid("source.url must be an https link")
+        out["url"] = url.strip()
+    else:
+        out["url"] = None
+    if out["key"] and not kind:
+        raise Invalid("source.key needs source.kind")
+    return out if any(out.values()) else None
+
+
+def _owner(owner: Any, owner_name: Any) -> tuple[str | None, str | None]:
+    """(owner as stored, owner_name) from `mine`/`others` and a name, which means `others`."""
+    if owner not in (None, "", *OWNERS):
+        raise Invalid("owner must be mine or others")
+    name = _plain(owner_name, "owner_name")
+    if name and owner == "mine":
+        raise Invalid("owner_name is for items someone else owns (owner others)")
+    if name or owner == "others":
+        return "someone_else", name
+    return ("me", "") if owner == "mine" else (None, None)
 
 
 class Jotted:
@@ -177,33 +251,128 @@ class Jotted:
     # ------------------------------------------------------------ the to-do list
 
     @operation("items.list")
-    def items(self, status: str | None = None, owner: str | None = None, folder: str | None = None) -> list[dict]:
-        if status not in (None, "", "open", "done"):
-            raise Invalid("status must be open or done")
-        if owner not in (None, "", "mine", "others"):
+    def items(self, status: str | None = None, owner: str | None = None, folder: str | None = None,
+              source_kind: str | None = None, source_key: str | None = None, query: str | None = None,
+              limit: int | None = None, cursor: int | None = None) -> list[dict]:
+        """The list (open and done items), or the items in `status`: proposed, dismissed, or any.
+        With `limit`, one page: a full page may have more after it, from `cursor` = its last id."""
+        if status not in (None, "", *STATUSES):
+            raise Invalid("status must be " + ", ".join(STATUSES))
+        if owner not in (None, "", *OWNERS):
             raise Invalid("owner must be mine or others")
-        return self.repo.items(status=status or None, owner=owner or None, folder=folder or None)
-
-    @operation("items.add")
-    def add_item(self, text: str) -> dict:
+        if limit is not None and (isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= MAX_LIST):
+            raise Invalid(f"limit must be from 1 to {MAX_LIST}")
+        if cursor is not None and (isinstance(cursor, bool) or not isinstance(cursor, int)):
+            raise Invalid("cursor must be the id of the last item already listed")
         try:
-            item_id = self.repo.add_item(text if isinstance(text, str) else "")
+            return self.repo.items(status=None if status in (None, "", "all") else status, owner=owner or None,
+                                   folder=folder or None, source_kind=source_kind or None,
+                                   source_key=source_key or None, query=query or None, after=cursor, limit=limit)
+        except KeyError:
+            raise Invalid(f"no item {cursor} to continue after") from None
+
+    @operation("items.get")
+    def get_item(self, item_id: int) -> dict:
+        """One item in any status, with where it came from."""
+        try:
+            return self.repo.item(item_id)
+        except KeyError:
+            raise NotFound(f"no item {item_id}") from None
+
+    def _add(self, text: Any, owner: Any, owner_name: Any, source: Any, propose: bool, agent: bool) -> tuple[dict, str]:
+        """One item added, or the one already there for its source key: (item, outcome)."""
+        text = _plain(text, "text", required=True)
+        owner, owner_name = _owner(owner, owner_name)
+        source = _source(source)
+        plugin = getattr(self.app.plugin, "NAME", None)
+        agent = bool(agent) or bool(source and source["kind"] and source["kind"] != plugin)
+        settings = self.repo.settings()
+        proposed = bool(propose) or (agent and settings.mcp_add_mode == "propose_all")
+        if propose and agent and not (source and source["key"]):
+            raise Invalid("source.kind and source.key are required to propose an item: they say where it came "
+                          "from, so it is proposed only once")
+        try:
+            item_id, outcome = self.repo.add_item(text, origin="agent" if agent else "web", owner=owner or "me",
+                                                  owner_name=owner_name, source=source, proposed=proposed,
+                                                  proposed_limit=settings.proposed_limit)
         except ValueError as e:
             raise Invalid(str(e)) from e
-        self._on_change()
-        return self.repo.item(item_id)
+        except StateConflict as e:
+            raise Conflict(str(e)) from e
+        return self.repo.item(item_id), outcome
+
+    @operation("items.add")
+    def add_item(self, text: str, owner: str | None = None, owner_name: str | None = None,
+                 source: dict | None = None, propose: bool = False, agent: bool = False) -> dict:
+        """Add an item; `propose` leaves it waiting for the person to accept it. With a `source`
+        key seen before, nothing is added: the item already there comes back with `created`
+        false (status dismissed if the person turned it down)."""
+        item, outcome = self._add(text, owner, owner_name, source, propose, agent)
+        if outcome != "existing":
+            self._on_change()
+        return {**item, "created": outcome == "created"}
+
+    @operation("items.add_batch")
+    def add_items(self, items: list, propose: bool = False, agent: bool = False) -> dict:
+        """Up to 100 items, each as `items.add` takes it ({text, owner, owner_name, source, propose}).
+        Each stands alone: one that fails doesn't stop the others. Returns an outcome per item:
+        created, existing, dismissed, or invalid/conflict with its error."""
+        if not isinstance(items, list) or not all(isinstance(i, dict) for i in items):
+            raise Invalid("items must be a list of objects")
+        if len(items) > MAX_BATCH:
+            raise Invalid(f"at most {MAX_BATCH} items at a time")
+        results = []
+        for n, it in enumerate(items):
+            unknown = set(it) - {"text", "owner", "owner_name", "source", "propose"}
+            try:
+                if unknown:
+                    raise Invalid(f"unknown field(s) {', '.join(sorted(unknown))}")
+                item, outcome = self._add(it.get("text"), it.get("owner"), it.get("owner_name"), it.get("source"),
+                                          bool(propose or it.get("propose")), agent)
+            except ApiError as e:
+                results.append({"index": n, "outcome": e.code, "error": {"code": e.code, "message": str(e)}})
+                continue
+            results.append({"index": n, "outcome": "existing" if outcome == "updated" else outcome, "id": item["id"]})
+        if any(r["outcome"] == "created" for r in results):
+            self._on_change()
+        return {"results": results}
+
+    @operation("items.accept")
+    def accept_items(self, ids: list[int] | None = None, every: bool = False, source_kind: str | None = None) -> dict:
+        """Proposed items onto the list, after the person has looked at them: `ids`, or `every`
+        proposed one (of `source_kind`, if given). They reach the To-do document on its next update."""
+        if every == bool(ids):
+            raise Invalid("Name the items to accept, or accept them all")
+        if ids and not (isinstance(ids, list) and all(isinstance(i, int) and not isinstance(i, bool) for i in ids)):
+            raise Invalid("ids must be item ids")
+        accepted, skipped = self.repo.accept(None if every else ids, source_kind or None)
+        if ids and not accepted:
+            reasons = {s["reason"] for s in skipped}
+            if "not_proposed" in reasons:
+                raise Conflict("Not proposed: " + ", ".join(f"#{s['id']}" for s in skipped
+                                                          if s["reason"] == "not_proposed"))
+            raise NotFound("no item " + ", ".join(str(s["id"]) for s in skipped))
+        if accepted:
+            self._on_change()
+        return {"accepted": accepted, "skipped": skipped}
 
     @operation("items.edit")
     def edit_item(self, item_id: int, *, text: str | None = None, status: str | None = None,
-                  dismissed: bool | None = None) -> dict:
-        """Change an item's text or status, or dismiss it (not an action; or delete one added here).
-        Returns the item, or {} once dismissed."""
+                  dismissed: bool | None = None, owner: str | None = None, owner_name: str | None = None) -> dict:
+        """Change an item's text, owner or status, or dismiss it (not an action, or not wanted).
+        A dismissed item is kept, so its source never adds it again. Returns the item, or {} once
+        dismissed."""
+        text = _plain(text, "text")
+        stored_owner, owner_name = _owner(owner, owner_name)
         try:
-            item = self.repo.edit_action(item_id, text=text, status=status, dismissed=dismissed)
+            item = self.repo.edit_action(item_id, text=text, status=status, dismissed=dismissed,
+                                         owner=stored_owner, owner_name=owner_name)
         except KeyError:
             raise NotFound(f"no item {item_id}") from None
         except ValueError as e:
             raise Invalid(str(e)) from e
+        except StateConflict as e:
+            raise Conflict(str(e)) from e
         self._on_change()
         return item
 
@@ -324,6 +493,7 @@ class Jotted:
     def status(self) -> dict:
         s = self.repo.settings()
         items = self.repo.items()
+        proposed = self.repo.items(status="proposed")
         docs = self.repo.source_docs()
         meta = self.repo.todo_meta()
         return {
@@ -333,7 +503,7 @@ class Jotted:
             "documents_read": sum(1 for d in docs if d["marker"]),
             "last_collected_at": max((d["collected_at"] for d in docs if d["collected_at"]), default=None),
             "items": {"open": sum(1 for i in items if i["status"] == "open"),
-                      "done": sum(1 for i in items if i["status"] == "done")},
+                      "done": sum(1 for i in items if i["status"] == "done"), "proposed": len(proposed)},
             "todo": {"enabled": s.todo_enabled, "name": s.todo_name, "folder": s.todo_folder,
                      "published_at": meta.get("published_at")},
             "background": self.scheduler.describe() if self.scheduler else None,
@@ -361,8 +531,10 @@ class Jotted:
     # ------------------------------------------------------------ where an item came from
 
     @operation("page.image")
-    def page_image(self, doc_id: str, page: int, anchor: str | None = None) -> str:
-        """A source page as SVG, with the line `anchor` highlighted."""
+    def page_image(self, doc_id: str, page: int, anchor: str | None = None, width: int | None = None) -> str:
+        """A source page as SVG, with the line `anchor` highlighted; `width` in pixels (the height follows)."""
+        if width is not None and (isinstance(width, bool) or not isinstance(width, int) or not 16 <= width <= 4000):
+            raise Invalid("width must be from 16 to 4000 pixels")
         page_id = self.repo.page_id(doc_id, page)
         if not page_id:
             raise NotFound(f"no page {page} of {doc_id}")
@@ -370,6 +542,8 @@ class Jotted:
         svg = self.app.plugin.render_page(doc_id, page_id, highlight=line["rows"] if line else None)
         if svg is None:
             raise NotFound("this source can't draw its pages")
+        if width:
+            svg = re.sub(r"<svg\b", f'<svg width="{width}"', svg, count=1)
         return svg
 
     @operation("line.image")

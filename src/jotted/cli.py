@@ -130,6 +130,8 @@ def _label(item: dict) -> str:
     src = item["source"]
     if item["origin"] == "web":
         return "added here"
+    if item["origin"] == "agent":
+        return " › ".join(p for p in (src.get("kind"), src.get("title")) if p) or "added by an agent"
     if item["written"]:
         return f"{src['name']} · p{src['page']}"
     return f"{(src['folder'] or '/').strip('/') or 'Library'} › {src['name']} · p{src['page']}"
@@ -145,11 +147,21 @@ def _items_table(items: list[dict]) -> None:
     for col in ("id", "", "owner", "item", "from"):
         table.add_column(col)
     colours = {"me": "green", "someone_else": "cyan", "unclear": "yellow"}
+    marks = {"done": "✓", "proposed": "?", "dismissed": "✗"}
     for i in items:
-        table.add_row(str(i["id"]), "✓" if i["status"] == "done" else "·",
-                      f"[{colours.get(i['owner'], 'white')}]{i['owner']}[/]", escape(i["text"]),
+        owner = i.get("owner_name") or i["owner"]
+        table.add_row(str(i["id"]), marks.get(i["status"], "·"),
+                      f"[{colours.get(i['owner'], 'white')}]{escape(owner)}[/]", escape(i["text"]),
                       f"[dim]{escape(_label(i))}[/dim]")
     console.print(table)
+
+
+def _show_item(item: dict) -> None:
+    console.print(f"#{item['id']} [{item['status']}] {escape(item['text'])}  [dim]{escape(_label(item))}[/dim]")
+    if item["source"].get("excerpt"):
+        console.print(f"  [dim]“{escape(item['source']['excerpt'])}”[/dim]")
+    if item["source"].get("url"):
+        console.print(f"  [dim]{escape(item['source']['url'])}[/dim]")
 
 
 def _show_settings(settings: dict) -> None:
@@ -179,18 +191,66 @@ def _show_steps(status: dict) -> None:
 # ---------------------------------------------------------------- the to-do list
 
 
-@uses("items.list", "items.add", "items.edit")
+def _source_args(args: argparse.Namespace) -> dict | None:
+    source = {"kind": args.source_kind, "key": args.source_key, "title": args.source_title,
+              "url": args.source_url, "excerpt": args.excerpt}
+    return {k: v for k, v in source.items() if v is not None} or None
+
+
+def _batch(args: argparse.Namespace) -> list:
+    """The JSON array of items on standard input."""
+    if not args.stdin:
+        raise UsageError("`jotted items add-batch` reads a JSON array of items from standard input: pass --stdin")
+    try:
+        items = json.loads(sys.stdin.read() or "null")
+    except ValueError as e:
+        raise contract.Error("invalid", f"standard input isn't JSON: {e}") from e
+    if not isinstance(items, list):
+        raise contract.Error("invalid", "standard input must be a JSON array of items")
+    return items
+
+
+@uses("items.list", "items.get", "items.add", "items.add_batch", "items.accept", "items.edit")
 def cmd_items(cfg: Config, args: argparse.Namespace) -> Call:
     action = args.items_command or "list"
     if action == "list":
         return Call("items.list", {"status": None if args.status == "all" else args.status, "owner": args.owner,
-                                   "folder": args.folder}, _items_table)
+                                   "folder": args.folder, "source_kind": args.source_kind,
+                                   "source_key": args.source_key, "query": args.query, "limit": args.limit,
+                                   "cursor": args.cursor}, _items_table)
+    if action == "get":
+        return Call("items.get", {"item_id": args.id}, _show_item)
     if action == "add":
-        return Call("items.add", {"text": " ".join(args.text)}, lambda item: console.print(
-            f"Added #{item['id']}: {escape(item['text'])}. [dim]It reaches the To-do document on the next "
-            "check (`jotted todo` now).[/dim]"))
-    changes = {"edit": {"text": " ".join(getattr(args, "text", []) or [])}, "done": {"status": "done"},
-               "reopen": {"status": "open"}, "dismiss": {"dismissed": True}}[action]
+        def added(item: dict) -> None:
+            if not item["created"]:
+                console.print(f"Already there: #{item['id']} [{item['status']}] {escape(item['text'])}")
+            elif item["status"] == "proposed":
+                console.print(f"Proposed #{item['id']}: {escape(item['text'])}. [dim]Accept it with "
+                              f"`jotted items accept {item['id']}`.[/dim]")
+            else:
+                console.print(f"Added #{item['id']}: {escape(item['text'])}. [dim]It reaches the To-do document "
+                              "on the next check (`jotted todo` now).[/dim]")
+        return Call("items.add", {"text": " ".join(args.text), "owner": args.owner, "owner_name": args.owner_name,
+                                  "source": _source_args(args), "propose": args.propose, "agent": args.agent}, added)
+    if action == "add-batch":
+        return Call("items.add_batch", {"items": _batch(args), "propose": args.propose, "agent": args.agent},
+                    lambda r: console.print("\n".join(
+                        f"{x['index']}: {x['outcome']}" + (f" #{x['id']}" if "id" in x else f" ({x['error']['message']})")
+                        for x in r["results"]) or "Nothing to add."))
+    if action == "accept":
+        if args.all and args.ids:
+            raise UsageError("`jotted items accept`: name items or pass --all, not both")
+        return Call("items.accept", {"ids": args.ids or None, "every": args.all, "source_kind": args.source_kind},
+                    lambda r: console.print(
+                        f"Accepted {len(r['accepted'])}" + "".join(f"; #{x['id']} skipped ({x['reason']})"
+                                                                  for x in r["skipped"])))
+    if action == "edit":
+        text = " ".join(args.text) or None
+        if text is None and args.owner is None and args.owner_name is None:
+            raise UsageError("`jotted items edit`: give new text, --owner or --owner-name")
+        changes = {"text": text, "owner": args.owner, "owner_name": args.owner_name}
+    else:
+        changes = {"done": {"status": "done"}, "reopen": {"status": "open"}, "dismiss": {"dismissed": True}}[action]
     return Call("items.edit", {"item_id": args.id, **changes}, lambda item: console.print(
         f"#{args.id} removed from the list." if action == "dismiss" else
         f"#{item['id']} {'✓ ' if item['status'] == 'done' else ''}{escape(item['text'])}"))
@@ -332,7 +392,8 @@ def cmd_image(cfg: Config, args: argparse.Namespace) -> Call:
             console.print(f"Written to {data['path']}")
 
     if args.image_command == "page":
-        return Call("page.image", {"doc_id": args.doc_id, "page": args.page, "anchor": args.anchor}, show, then)
+        return Call("page.image", {"doc_id": args.doc_id, "page": args.page, "anchor": args.anchor,
+                                   "width": args.width}, show, then)
     return Call("line.image", {"doc_id": args.doc_id, "anchor": args.anchor}, show, then)
 
 
@@ -603,7 +664,37 @@ def cmd_schema(cfg: Config | None, args: argparse.Namespace) -> Done:
 def cmd_mcp(cfg: Config | None, args: argparse.Namespace) -> int:
     from . import mcp
 
-    return mcp.serve()
+    return mcp.serve(admin=args.admin, ui_dir=args.ui_dir)
+
+
+def cmd_claude(cfg: Config | None, args: argparse.Namespace) -> Done:
+    """Claude Desktop runs `jotted mcp` (jotted.integrations.claude_desktop)."""
+    from .integrations import claude_desktop
+
+    def changed(d: dict) -> None:
+        if not d["changed"]:
+            console.print("Nothing to change.")
+            return
+        console.print(("Would change " if d.get("dry_run") else "Changed ") + escape(d["config_path"])
+                      + (f" [dim](backup: {escape(d['backup_path'])})[/dim]" if d.get("backup_path") else ""))
+        if not d.get("dry_run"):
+            console.print("Quit and reopen Claude Desktop to use it.")
+
+    def show_status(d: dict) -> None:
+        if not d["configured"]:
+            console.print(f"Not connected [dim]({escape(d['config_path'])})[/dim]. Run `jotted claude connect`.")
+        elif not d["command_exists"]:
+            console.print(f"[yellow]Needs repair[/yellow]: {escape(d['command'] or '')} isn't there any more. "
+                          "Run `jotted claude connect`.")
+        else:
+            console.print(f"Connected: Claude Desktop runs {escape(d['command'])}"
+                          + ("" if d["matches_current"] else " [dim](another copy of jotted)[/dim]"))
+
+    if args.claude_command == "connect":
+        return Done(claude_desktop.connect(args.command_path, admin=args.admin, dry_run=args.dry_run), changed)
+    if args.claude_command == "disconnect":
+        return Done(claude_desktop.disconnect(), changed)
+    return Done(claude_desktop.status(), show_status)
 
 
 # ---------------------------------------------------------------- the command line
@@ -644,18 +735,45 @@ def build_parser() -> argparse.ArgumentParser:
     command("plugins", cmd_plugins, "installed source plugins, and which one is chosen", no_config=True)
 
     # the to-do list
-    it = command("items", cmd_items, "the to-do list: list, add, edit, tick, dismiss")
+    it = command("items", cmd_items, "the to-do list: list, add, propose, accept, edit, tick, dismiss")
     it_sub = it.add_subparsers(dest="items_command", metavar="ACTION")
     for c in (it, it_sub.add_parser("list", help="list items (the default)")):
-        c.add_argument("--status", choices=["open", "done", "all"], default="open")
+        c.add_argument("--status", choices=["open", "done", "all", "proposed", "dismissed", "any"], default="open",
+                       help="all: open and done (the list); any: every item, proposed and dismissed too")
         c.add_argument("--owner", choices=["mine", "others"])
         c.add_argument("--folder", help="only items from documents in this folder")
-    it_sub.add_parser("add", help="add an item of yours").add_argument("text", nargs="+")
-    ed = it_sub.add_parser("edit", help="change an item's text")
+        c.add_argument("--source-kind", help="only items from this kind of source (gdoc, gmail...)")
+        c.add_argument("--source-key", help="only the item from this source line, message or ticket")
+        c.add_argument("--query", help="only items whose text or source title contains this")
+        c.add_argument("--limit", type=int, help="at most this many (1 to 200); a full page may have more")
+        c.add_argument("--cursor", type=int, help="the next page: the id of the last item of the one before")
+    it_sub.add_parser("get", help="one item, in any status, with where it came from").add_argument("id", type=int)
+    ad = it_sub.add_parser("add", help="add an item (once per --source-key)")
+    ad.add_argument("text", nargs="+")
+    ab = it_sub.add_parser("add-batch", help="add up to 100 items from a JSON array on standard input")
+    ab.add_argument("--stdin", action="store_true", help="read the items from standard input (required)")
+    for c in (ad, ab):
+        c.add_argument("--propose", action="store_true", help="wait for the person to accept it before it is listed")
+        c.add_argument("--agent", action="store_true", help="added by an agent, not typed by the person "
+                                                           "(`jotted mcp` sets it)")
+    ac = it_sub.add_parser("accept", help="put proposed items on the list")
+    ac.add_argument("ids", type=int, nargs="*", help="the items to accept")
+    ac.add_argument("--all", action="store_true", help="every proposed item")
+    ac.add_argument("--source-kind", help="with --all: only those from this kind of source")
+    ed = it_sub.add_parser("edit", help="change an item's text or owner")
     ed.add_argument("id", type=int)
-    ed.add_argument("text", nargs="+")
+    ed.add_argument("text", nargs="*")
+    for c in (ad, ed):
+        c.add_argument("--owner", choices=["mine", "others"])
+        c.add_argument("--owner-name", help="who owns it, when that's someone else (at most 80 characters)")
+    ad.add_argument("--source-kind", help="where it came from: gdoc, gmail, confluence, jira, gcal, chat, other...")
+    ad.add_argument("--source-key", help="the line, message or ticket it came from: the item is added only once")
+    ad.add_argument("--source-title", help="the source's title, as it is shown")
+    ad.add_argument("--source-url", help="a link to the source (https only; Jotted never opens it)")
+    ad.add_argument("--excerpt", help="the text the item was taken from (at most 500 characters)")
     for name, help in (("done", "mark an item done"), ("reopen", "mark an item open again"),
-                       ("dismiss", "not an action: take it off the list (deletes one added here)")):
+                       ("dismiss", "not an action, or not wanted: take it off the list; its source never "
+                                   "adds it again")):
         it_sub.add_parser(name, help=help).add_argument("id", type=int)
 
     # what is read
@@ -685,7 +803,8 @@ def build_parser() -> argparse.ArgumentParser:
     pg = im_sub.add_parser("page", help="a page, with a line highlighted")
     pg.add_argument("doc_id")
     pg.add_argument("page", type=int)
-    pg.add_argument("--anchor", help="the line to highlight")
+    pg.add_argument("--anchor", "--highlight", help="the line to highlight (an item's page.anchor)")
+    pg.add_argument("--width", type=int, help="width in pixels; the height follows")
     ln = im_sub.add_parser("line", help="one handwritten line")
     ln.add_argument("doc_id")
     ln.add_argument("anchor")
@@ -713,7 +832,18 @@ def build_parser() -> argparse.ArgumentParser:
     command("version", cmd_version, "release and contract versions", no_config=True)
     command("schema", cmd_schema, "every command: its arguments, options and the shape of its data",
             no_config=True)
-    command("mcp", cmd_mcp, "serve Jotted's operations as MCP tools on stdio (for agents)", no_config=True)
+    mc = command("mcp", cmd_mcp, "serve Jotted's operations as MCP tools on stdio (for agents)", no_config=True)
+    mc.add_argument("--admin", action="store_true", help="also offer the tools that change what Jotted reads "
+                                                         "(settings, watch, library, collect, check)")
+    mc.add_argument("--ui-dir", help=argparse.SUPPRESS)  # development: serve the widget from these files
+    cl = command("claude", cmd_claude, "connect Claude Desktop to Jotted (it runs `jotted mcp`)", no_config=True)
+    cl_sub = cl.add_subparsers(dest="claude_command", required=True, metavar="ACTION")
+    cc = cl_sub.add_parser("connect", help="add Jotted to Claude Desktop's MCP servers (backs up its settings first)")
+    cc.add_argument("--command", dest="command_path", help="the jotted to run (default: this one)")
+    cc.add_argument("--admin", action="store_true", help="let Claude change settings and watched folders too")
+    cc.add_argument("--dry-run", action="store_true", help="say what would change; write nothing")
+    cl_sub.add_parser("status", help="whether Claude Desktop runs Jotted, and whether that copy still exists")
+    cl_sub.add_parser("disconnect", help="remove Jotted from Claude Desktop's MCP servers (backs up first)")
     cfg_p = sub.add_parser("config", help="configuration commands")
     cfg_sub = cfg_p.add_subparsers(dest="config_command", required=True, metavar="ACTION")
     cfg_sub.add_parser("check", help="validate config.toml and print resolved values").set_defaults(
@@ -804,11 +934,17 @@ def main(argv: list[str] | None = None) -> int:
         return _show_error(envelope, json_out)
 
 
-def invoke(argv: list[str]) -> dict:
-    """Run a command with --json in this process and return its envelope (`jotted mcp`, tests)."""
+def invoke(argv: list[str], stdin: str | None = None) -> dict:
+    """Run a command with --json in this process and return its envelope (`jotted mcp`, tests).
+    `stdin` is what the command reads from standard input (--stdin)."""
     out = io.StringIO()
-    with contextlib.redirect_stdout(out):
-        main(["--json", *argv])
+    real_stdin = sys.stdin
+    sys.stdin = io.StringIO(stdin or "")
+    try:
+        with contextlib.redirect_stdout(out):
+            main(["--json", *argv])
+    finally:
+        sys.stdin = real_stdin
     return json.loads(out.getvalue())
 
 

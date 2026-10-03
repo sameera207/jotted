@@ -999,11 +999,15 @@
           "enum": [
             "open",
             "done",
-            "all"
+            "all",
+            "proposed",
+            "dismissed",
+            "any"
           ],
           "flags": [
             "--status"
           ],
+          "help": "all: open and done (the list); any: every item, proposed and dismissed too",
           "name": "status",
           "required": false
         },
@@ -1026,6 +1030,51 @@
           "name": "folder",
           "required": false,
           "type": "string"
+        },
+        {
+          "flags": [
+            "--source-kind"
+          ],
+          "help": "only items from this kind of source (gdoc, gmail...)",
+          "name": "source_kind",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "flags": [
+            "--source-key"
+          ],
+          "help": "only the item from this source line, message or ticket",
+          "name": "source_key",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "flags": [
+            "--query"
+          ],
+          "help": "only items whose text or source title contains this",
+          "name": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "flags": [
+            "--limit"
+          ],
+          "help": "at most this many (1 to 200); a full page may have more",
+          "name": "limit",
+          "required": false,
+          "type": "integer"
+        },
+        {
+          "flags": [
+            "--cursor"
+          ],
+          "help": "the next page: the id of the last item of the one before",
+          "name": "cursor",
+          "required": false,
+          "type": "integer"
         }
       ],
       "command": "items",
@@ -1051,8 +1100,51 @@
                 "unclear"
               ]
             },
+            "owner_name": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
             "p_action": {
               "type": "number"
+            },
+            "page": {
+              "oneOf": [
+                {
+                  "type": "null"
+                },
+                {
+                  "properties": {
+                    "anchor": {
+                      "type": "string"
+                    },
+                    "doc_id": {
+                      "type": "string"
+                    },
+                    "doc_name": {
+                      "type": "string"
+                    },
+                    "page": {
+                      "type": "integer"
+                    },
+                    "page_count": {
+                      "type": [
+                        "integer",
+                        "null"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "doc_id",
+                    "doc_name",
+                    "page",
+                    "page_count",
+                    "anchor"
+                  ],
+                  "type": "object"
+                }
+              ]
             },
             "paper_text": {
               "type": "string"
@@ -1071,14 +1163,44 @@
                 "doc_id": {
                   "type": "string"
                 },
+                "excerpt": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
                 "folder": {
                   "type": "string"
+                },
+                "key": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "kind": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
                 },
                 "name": {
                   "type": "string"
                 },
                 "page": {
                   "type": "integer"
+                },
+                "title": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "url": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
                 }
               },
               "required": [
@@ -1086,14 +1208,21 @@
                 "name",
                 "folder",
                 "page",
-                "anchor"
+                "anchor",
+                "kind",
+                "key",
+                "title",
+                "url",
+                "excerpt"
               ],
               "type": "object"
             },
             "status": {
               "enum": [
                 "open",
-                "done"
+                "done",
+                "proposed",
+                "dismissed"
               ]
             },
             "text": {
@@ -1111,8 +1240,10 @@
             "written",
             "status",
             "owner",
+            "owner_name",
             "p_action",
             "source",
+            "page",
             "edited",
             "slot",
             "created_at"
@@ -1121,10 +1252,13 @@
         },
         "type": "array"
       },
-      "help": "the to-do list: list, add, edit, tick, dismiss",
+      "help": "the to-do list: list, add, propose, accept, edit, tick, dismiss",
       "operations": [
         "items.list",
+        "items.get",
         "items.add",
+        "items.add_batch",
+        "items.accept",
         "items.edit"
       ]
     },
@@ -1135,11 +1269,15 @@
           "enum": [
             "open",
             "done",
-            "all"
+            "all",
+            "proposed",
+            "dismissed",
+            "any"
           ],
           "flags": [
             "--status"
           ],
+          "help": "all: open and done (the list); any: every item, proposed and dismissed too",
           "name": "status",
           "required": false
         },
@@ -1162,6 +1300,51 @@
           "name": "folder",
           "required": false,
           "type": "string"
+        },
+        {
+          "flags": [
+            "--source-kind"
+          ],
+          "help": "only items from this kind of source (gdoc, gmail...)",
+          "name": "source_kind",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "flags": [
+            "--source-key"
+          ],
+          "help": "only the item from this source line, message or ticket",
+          "name": "source_key",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "flags": [
+            "--query"
+          ],
+          "help": "only items whose text or source title contains this",
+          "name": "query",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "flags": [
+            "--limit"
+          ],
+          "help": "at most this many (1 to 200); a full page may have more",
+          "name": "limit",
+          "required": false,
+          "type": "integer"
+        },
+        {
+          "flags": [
+            "--cursor"
+          ],
+          "help": "the next page: the id of the last item of the one before",
+          "name": "cursor",
+          "required": false,
+          "type": "integer"
         }
       ],
       "command": "items list",
@@ -1187,8 +1370,51 @@
                 "unclear"
               ]
             },
+            "owner_name": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
             "p_action": {
               "type": "number"
+            },
+            "page": {
+              "oneOf": [
+                {
+                  "type": "null"
+                },
+                {
+                  "properties": {
+                    "anchor": {
+                      "type": "string"
+                    },
+                    "doc_id": {
+                      "type": "string"
+                    },
+                    "doc_name": {
+                      "type": "string"
+                    },
+                    "page": {
+                      "type": "integer"
+                    },
+                    "page_count": {
+                      "type": [
+                        "integer",
+                        "null"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "doc_id",
+                    "doc_name",
+                    "page",
+                    "page_count",
+                    "anchor"
+                  ],
+                  "type": "object"
+                }
+              ]
             },
             "paper_text": {
               "type": "string"
@@ -1207,14 +1433,44 @@
                 "doc_id": {
                   "type": "string"
                 },
+                "excerpt": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
                 "folder": {
                   "type": "string"
+                },
+                "key": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "kind": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
                 },
                 "name": {
                   "type": "string"
                 },
                 "page": {
                   "type": "integer"
+                },
+                "title": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "url": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
                 }
               },
               "required": [
@@ -1222,14 +1478,21 @@
                 "name",
                 "folder",
                 "page",
-                "anchor"
+                "anchor",
+                "kind",
+                "key",
+                "title",
+                "url",
+                "excerpt"
               ],
               "type": "object"
             },
             "status": {
               "enum": [
                 "open",
-                "done"
+                "done",
+                "proposed",
+                "dismissed"
               ]
             },
             "text": {
@@ -1247,8 +1510,10 @@
             "written",
             "status",
             "owner",
+            "owner_name",
             "p_action",
             "source",
+            "page",
             "edited",
             "slot",
             "created_at"
@@ -1260,21 +1525,23 @@
       "help": "list items (the default)",
       "operations": [
         "items.list",
+        "items.get",
         "items.add",
+        "items.add_batch",
+        "items.accept",
         "items.edit"
       ]
     },
     {
       "arguments": [
         {
-          "many": true,
-          "name": "text",
+          "name": "id",
           "positional": true,
           "required": true,
-          "type": "string"
+          "type": "integer"
         }
       ],
-      "command": "items add",
+      "command": "items get",
       "data": {
         "properties": {
           "created_at": {
@@ -1296,8 +1563,51 @@
               "unclear"
             ]
           },
+          "owner_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "p_action": {
             "type": "number"
+          },
+          "page": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "properties": {
+                  "anchor": {
+                    "type": "string"
+                  },
+                  "doc_id": {
+                    "type": "string"
+                  },
+                  "doc_name": {
+                    "type": "string"
+                  },
+                  "page": {
+                    "type": "integer"
+                  },
+                  "page_count": {
+                    "type": [
+                      "integer",
+                      "null"
+                    ]
+                  }
+                },
+                "required": [
+                  "doc_id",
+                  "doc_name",
+                  "page",
+                  "page_count",
+                  "anchor"
+                ],
+                "type": "object"
+              }
+            ]
           },
           "paper_text": {
             "type": "string"
@@ -1316,14 +1626,44 @@
               "doc_id": {
                 "type": "string"
               },
+              "excerpt": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
               "folder": {
                 "type": "string"
+              },
+              "key": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "kind": {
+                "type": [
+                  "string",
+                  "null"
+                ]
               },
               "name": {
                 "type": "string"
               },
               "page": {
                 "type": "integer"
+              },
+              "title": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "url": {
+                "type": [
+                  "string",
+                  "null"
+                ]
               }
             },
             "required": [
@@ -1331,14 +1671,21 @@
               "name",
               "folder",
               "page",
-              "anchor"
+              "anchor",
+              "kind",
+              "key",
+              "title",
+              "url",
+              "excerpt"
             ],
             "type": "object"
           },
           "status": {
             "enum": [
               "open",
-              "done"
+              "done",
+              "proposed",
+              "dismissed"
             ]
           },
           "text": {
@@ -1356,18 +1703,470 @@
           "written",
           "status",
           "owner",
+          "owner_name",
           "p_action",
           "source",
+          "page",
           "edited",
           "slot",
           "created_at"
         ],
         "type": "object"
       },
-      "help": "add an item of yours",
+      "help": "one item, in any status, with where it came from",
       "operations": [
         "items.list",
+        "items.get",
         "items.add",
+        "items.add_batch",
+        "items.accept",
+        "items.edit"
+      ]
+    },
+    {
+      "arguments": [
+        {
+          "many": true,
+          "name": "text",
+          "positional": true,
+          "required": true,
+          "type": "string"
+        },
+        {
+          "flags": [
+            "--propose"
+          ],
+          "help": "wait for the person to accept it before it is listed",
+          "name": "propose",
+          "required": false,
+          "type": "boolean"
+        },
+        {
+          "flags": [
+            "--agent"
+          ],
+          "help": "added by an agent, not typed by the person (`jotted mcp` sets it)",
+          "name": "agent",
+          "required": false,
+          "type": "boolean"
+        },
+        {
+          "enum": [
+            "mine",
+            "others"
+          ],
+          "flags": [
+            "--owner"
+          ],
+          "name": "owner",
+          "required": false
+        },
+        {
+          "flags": [
+            "--owner-name"
+          ],
+          "help": "who owns it, when that's someone else (at most 80 characters)",
+          "name": "owner_name",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "flags": [
+            "--source-kind"
+          ],
+          "help": "where it came from: gdoc, gmail, confluence, jira, gcal, chat, other...",
+          "name": "source_kind",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "flags": [
+            "--source-key"
+          ],
+          "help": "the line, message or ticket it came from: the item is added only once",
+          "name": "source_key",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "flags": [
+            "--source-title"
+          ],
+          "help": "the source's title, as it is shown",
+          "name": "source_title",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "flags": [
+            "--source-url"
+          ],
+          "help": "a link to the source (https only; Jotted never opens it)",
+          "name": "source_url",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "flags": [
+            "--excerpt"
+          ],
+          "help": "the text the item was taken from (at most 500 characters)",
+          "name": "excerpt",
+          "required": false,
+          "type": "string"
+        }
+      ],
+      "command": "items add",
+      "data": {
+        "description": "the item; `created` false when its source key was added before (nothing new was added)",
+        "properties": {
+          "created": {
+            "type": "boolean"
+          },
+          "created_at": {
+            "type": "string"
+          },
+          "edited": {
+            "type": "boolean"
+          },
+          "id": {
+            "type": "integer"
+          },
+          "origin": {
+            "type": "string"
+          },
+          "owner": {
+            "enum": [
+              "me",
+              "someone_else",
+              "unclear"
+            ]
+          },
+          "owner_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "p_action": {
+            "type": "number"
+          },
+          "page": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "properties": {
+                  "anchor": {
+                    "type": "string"
+                  },
+                  "doc_id": {
+                    "type": "string"
+                  },
+                  "doc_name": {
+                    "type": "string"
+                  },
+                  "page": {
+                    "type": "integer"
+                  },
+                  "page_count": {
+                    "type": [
+                      "integer",
+                      "null"
+                    ]
+                  }
+                },
+                "required": [
+                  "doc_id",
+                  "doc_name",
+                  "page",
+                  "page_count",
+                  "anchor"
+                ],
+                "type": "object"
+              }
+            ]
+          },
+          "paper_text": {
+            "type": "string"
+          },
+          "slot": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "source": {
+            "properties": {
+              "anchor": {
+                "type": "string"
+              },
+              "doc_id": {
+                "type": "string"
+              },
+              "excerpt": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "folder": {
+                "type": "string"
+              },
+              "key": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "kind": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "name": {
+                "type": "string"
+              },
+              "page": {
+                "type": "integer"
+              },
+              "title": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "url": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "doc_id",
+              "name",
+              "folder",
+              "page",
+              "anchor",
+              "kind",
+              "key",
+              "title",
+              "url",
+              "excerpt"
+            ],
+            "type": "object"
+          },
+          "status": {
+            "enum": [
+              "open",
+              "done",
+              "proposed",
+              "dismissed"
+            ]
+          },
+          "text": {
+            "type": "string"
+          },
+          "written": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "origin",
+          "text",
+          "paper_text",
+          "written",
+          "status",
+          "owner",
+          "owner_name",
+          "p_action",
+          "source",
+          "page",
+          "edited",
+          "slot",
+          "created_at",
+          "created"
+        ],
+        "type": "object"
+      },
+      "help": "add an item (once per --source-key)",
+      "operations": [
+        "items.list",
+        "items.get",
+        "items.add",
+        "items.add_batch",
+        "items.accept",
+        "items.edit"
+      ]
+    },
+    {
+      "arguments": [
+        {
+          "flags": [
+            "--stdin"
+          ],
+          "help": "read the items from standard input (required)",
+          "name": "stdin",
+          "required": false,
+          "type": "boolean"
+        },
+        {
+          "flags": [
+            "--propose"
+          ],
+          "help": "wait for the person to accept it before it is listed",
+          "name": "propose",
+          "required": false,
+          "type": "boolean"
+        },
+        {
+          "flags": [
+            "--agent"
+          ],
+          "help": "added by an agent, not typed by the person (`jotted mcp` sets it)",
+          "name": "agent",
+          "required": false,
+          "type": "boolean"
+        }
+      ],
+      "command": "items add-batch",
+      "data": {
+        "properties": {
+          "results": {
+            "items": {
+              "properties": {
+                "error": {
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "message"
+                  ],
+                  "type": "object"
+                },
+                "id": {
+                  "type": "integer"
+                },
+                "index": {
+                  "type": "integer"
+                },
+                "outcome": {
+                  "enum": [
+                    "created",
+                    "existing",
+                    "dismissed",
+                    "invalid",
+                    "conflict"
+                  ]
+                }
+              },
+              "required": [
+                "index",
+                "outcome"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "results"
+        ],
+        "type": "object"
+      },
+      "help": "add up to 100 items from a JSON array on standard input",
+      "operations": [
+        "items.list",
+        "items.get",
+        "items.add",
+        "items.add_batch",
+        "items.accept",
+        "items.edit"
+      ]
+    },
+    {
+      "arguments": [
+        {
+          "help": "the items to accept",
+          "many": true,
+          "name": "ids",
+          "positional": true,
+          "required": false,
+          "type": "integer"
+        },
+        {
+          "flags": [
+            "--all"
+          ],
+          "help": "every proposed item",
+          "name": "all",
+          "required": false,
+          "type": "boolean"
+        },
+        {
+          "flags": [
+            "--source-kind"
+          ],
+          "help": "with --all: only those from this kind of source",
+          "name": "source_kind",
+          "required": false,
+          "type": "string"
+        }
+      ],
+      "command": "items accept",
+      "data": {
+        "properties": {
+          "accepted": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array"
+          },
+          "skipped": {
+            "items": {
+              "properties": {
+                "id": {
+                  "type": "integer"
+                },
+                "reason": {
+                  "enum": [
+                    "not_found",
+                    "not_proposed"
+                  ]
+                }
+              },
+              "required": [
+                "id",
+                "reason"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "accepted",
+          "skipped"
+        ],
+        "type": "object"
+      },
+      "help": "put proposed items on the list",
+      "operations": [
+        "items.list",
+        "items.get",
+        "items.add",
+        "items.add_batch",
+        "items.accept",
         "items.edit"
       ]
     },
@@ -1383,7 +2182,27 @@
           "many": true,
           "name": "text",
           "positional": true,
-          "required": true,
+          "required": false,
+          "type": "string"
+        },
+        {
+          "enum": [
+            "mine",
+            "others"
+          ],
+          "flags": [
+            "--owner"
+          ],
+          "name": "owner",
+          "required": false
+        },
+        {
+          "flags": [
+            "--owner-name"
+          ],
+          "help": "who owns it, when that's someone else (at most 80 characters)",
+          "name": "owner_name",
+          "required": false,
           "type": "string"
         }
       ],
@@ -1409,8 +2228,51 @@
               "unclear"
             ]
           },
+          "owner_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "p_action": {
             "type": "number"
+          },
+          "page": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "properties": {
+                  "anchor": {
+                    "type": "string"
+                  },
+                  "doc_id": {
+                    "type": "string"
+                  },
+                  "doc_name": {
+                    "type": "string"
+                  },
+                  "page": {
+                    "type": "integer"
+                  },
+                  "page_count": {
+                    "type": [
+                      "integer",
+                      "null"
+                    ]
+                  }
+                },
+                "required": [
+                  "doc_id",
+                  "doc_name",
+                  "page",
+                  "page_count",
+                  "anchor"
+                ],
+                "type": "object"
+              }
+            ]
           },
           "paper_text": {
             "type": "string"
@@ -1429,14 +2291,44 @@
               "doc_id": {
                 "type": "string"
               },
+              "excerpt": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
               "folder": {
                 "type": "string"
+              },
+              "key": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "kind": {
+                "type": [
+                  "string",
+                  "null"
+                ]
               },
               "name": {
                 "type": "string"
               },
               "page": {
                 "type": "integer"
+              },
+              "title": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "url": {
+                "type": [
+                  "string",
+                  "null"
+                ]
               }
             },
             "required": [
@@ -1444,14 +2336,21 @@
               "name",
               "folder",
               "page",
-              "anchor"
+              "anchor",
+              "kind",
+              "key",
+              "title",
+              "url",
+              "excerpt"
             ],
             "type": "object"
           },
           "status": {
             "enum": [
               "open",
-              "done"
+              "done",
+              "proposed",
+              "dismissed"
             ]
           },
           "text": {
@@ -1469,18 +2368,23 @@
           "written",
           "status",
           "owner",
+          "owner_name",
           "p_action",
           "source",
+          "page",
           "edited",
           "slot",
           "created_at"
         ],
         "type": "object"
       },
-      "help": "change an item's text",
+      "help": "change an item's text or owner",
       "operations": [
         "items.list",
+        "items.get",
         "items.add",
+        "items.add_batch",
+        "items.accept",
         "items.edit"
       ]
     },
@@ -1515,8 +2419,51 @@
               "unclear"
             ]
           },
+          "owner_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "p_action": {
             "type": "number"
+          },
+          "page": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "properties": {
+                  "anchor": {
+                    "type": "string"
+                  },
+                  "doc_id": {
+                    "type": "string"
+                  },
+                  "doc_name": {
+                    "type": "string"
+                  },
+                  "page": {
+                    "type": "integer"
+                  },
+                  "page_count": {
+                    "type": [
+                      "integer",
+                      "null"
+                    ]
+                  }
+                },
+                "required": [
+                  "doc_id",
+                  "doc_name",
+                  "page",
+                  "page_count",
+                  "anchor"
+                ],
+                "type": "object"
+              }
+            ]
           },
           "paper_text": {
             "type": "string"
@@ -1535,14 +2482,44 @@
               "doc_id": {
                 "type": "string"
               },
+              "excerpt": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
               "folder": {
                 "type": "string"
+              },
+              "key": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "kind": {
+                "type": [
+                  "string",
+                  "null"
+                ]
               },
               "name": {
                 "type": "string"
               },
               "page": {
                 "type": "integer"
+              },
+              "title": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "url": {
+                "type": [
+                  "string",
+                  "null"
+                ]
               }
             },
             "required": [
@@ -1550,14 +2527,21 @@
               "name",
               "folder",
               "page",
-              "anchor"
+              "anchor",
+              "kind",
+              "key",
+              "title",
+              "url",
+              "excerpt"
             ],
             "type": "object"
           },
           "status": {
             "enum": [
               "open",
-              "done"
+              "done",
+              "proposed",
+              "dismissed"
             ]
           },
           "text": {
@@ -1575,8 +2559,10 @@
           "written",
           "status",
           "owner",
+          "owner_name",
           "p_action",
           "source",
+          "page",
           "edited",
           "slot",
           "created_at"
@@ -1586,7 +2572,10 @@
       "help": "mark an item done",
       "operations": [
         "items.list",
+        "items.get",
         "items.add",
+        "items.add_batch",
+        "items.accept",
         "items.edit"
       ]
     },
@@ -1621,8 +2610,51 @@
               "unclear"
             ]
           },
+          "owner_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "p_action": {
             "type": "number"
+          },
+          "page": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "properties": {
+                  "anchor": {
+                    "type": "string"
+                  },
+                  "doc_id": {
+                    "type": "string"
+                  },
+                  "doc_name": {
+                    "type": "string"
+                  },
+                  "page": {
+                    "type": "integer"
+                  },
+                  "page_count": {
+                    "type": [
+                      "integer",
+                      "null"
+                    ]
+                  }
+                },
+                "required": [
+                  "doc_id",
+                  "doc_name",
+                  "page",
+                  "page_count",
+                  "anchor"
+                ],
+                "type": "object"
+              }
+            ]
           },
           "paper_text": {
             "type": "string"
@@ -1641,14 +2673,44 @@
               "doc_id": {
                 "type": "string"
               },
+              "excerpt": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
               "folder": {
                 "type": "string"
+              },
+              "key": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "kind": {
+                "type": [
+                  "string",
+                  "null"
+                ]
               },
               "name": {
                 "type": "string"
               },
               "page": {
                 "type": "integer"
+              },
+              "title": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "url": {
+                "type": [
+                  "string",
+                  "null"
+                ]
               }
             },
             "required": [
@@ -1656,14 +2718,21 @@
               "name",
               "folder",
               "page",
-              "anchor"
+              "anchor",
+              "kind",
+              "key",
+              "title",
+              "url",
+              "excerpt"
             ],
             "type": "object"
           },
           "status": {
             "enum": [
               "open",
-              "done"
+              "done",
+              "proposed",
+              "dismissed"
             ]
           },
           "text": {
@@ -1681,8 +2750,10 @@
           "written",
           "status",
           "owner",
+          "owner_name",
           "p_action",
           "source",
+          "page",
           "edited",
           "slot",
           "created_at"
@@ -1692,7 +2763,10 @@
       "help": "mark an item open again",
       "operations": [
         "items.list",
+        "items.get",
         "items.add",
+        "items.add_batch",
+        "items.accept",
         "items.edit"
       ]
     },
@@ -1710,10 +2784,13 @@
         "description": "empty: the item is gone",
         "type": "object"
       },
-      "help": "not an action: take it off the list (deletes one added here)",
+      "help": "not an action, or not wanted: take it off the list; its source never adds it again",
       "operations": [
         "items.list",
+        "items.get",
         "items.add",
+        "items.add_batch",
+        "items.accept",
         "items.edit"
       ]
     },
@@ -1833,7 +2910,16 @@
               "include_others": {
                 "type": "boolean"
               },
+              "mcp_add_mode": {
+                "enum": [
+                  "auto",
+                  "propose_all"
+                ]
+              },
               "poll_interval_s": {
+                "type": "integer"
+              },
+              "proposed_limit": {
                 "type": "integer"
               },
               "todo_enabled": {
@@ -1860,7 +2946,9 @@
               "todo_enabled",
               "todo_name",
               "todo_folder",
-              "from_now"
+              "from_now",
+              "mcp_add_mode",
+              "proposed_limit"
             ],
             "type": "object"
           },
@@ -1892,7 +2980,16 @@
                   "include_others": {
                     "type": "boolean"
                   },
+                  "mcp_add_mode": {
+                    "enum": [
+                      "auto",
+                      "propose_all"
+                    ]
+                  },
                   "poll_interval_s": {
+                    "type": "integer"
+                  },
+                  "proposed_limit": {
                     "type": "integer"
                   },
                   "todo_enabled": {
@@ -1919,7 +3016,9 @@
                   "todo_enabled",
                   "todo_name",
                   "todo_folder",
-                  "from_now"
+                  "from_now",
+                  "mcp_add_mode",
+                  "proposed_limit"
                 ],
                 "type": "object"
               }
@@ -1957,7 +3056,16 @@
           "include_others": {
             "type": "boolean"
           },
+          "mcp_add_mode": {
+            "enum": [
+              "auto",
+              "propose_all"
+            ]
+          },
           "poll_interval_s": {
+            "type": "integer"
+          },
+          "proposed_limit": {
             "type": "integer"
           },
           "todo_enabled": {
@@ -1984,7 +3092,9 @@
           "todo_enabled",
           "todo_name",
           "todo_folder",
-          "from_now"
+          "from_now",
+          "mcp_add_mode",
+          "proposed_limit"
         ],
         "type": "object"
       },
@@ -2025,7 +3135,16 @@
           "include_others": {
             "type": "boolean"
           },
+          "mcp_add_mode": {
+            "enum": [
+              "auto",
+              "propose_all"
+            ]
+          },
           "poll_interval_s": {
+            "type": "integer"
+          },
+          "proposed_limit": {
             "type": "integer"
           },
           "todo_enabled": {
@@ -2052,7 +3171,9 @@
           "todo_enabled",
           "todo_name",
           "todo_folder",
-          "from_now"
+          "from_now",
+          "mcp_add_mode",
+          "proposed_limit"
         ],
         "type": "object"
       },
@@ -2220,11 +3341,15 @@
               },
               "open": {
                 "type": "integer"
+              },
+              "proposed": {
+                "type": "integer"
               }
             },
             "required": [
               "open",
-              "done"
+              "done",
+              "proposed"
             ],
             "type": "object"
           },
@@ -2335,12 +3460,22 @@
         },
         {
           "flags": [
-            "--anchor"
+            "--anchor",
+            "--highlight"
           ],
-          "help": "the line to highlight",
+          "help": "the line to highlight (an item's page.anchor)",
           "name": "anchor",
           "required": false,
           "type": "string"
+        },
+        {
+          "flags": [
+            "--width"
+          ],
+          "help": "width in pixels; the height follows",
+          "name": "width",
+          "required": false,
+          "type": "integer"
         },
         {
           "flags": [
@@ -2486,6 +3621,8 @@
                     "item.added",
                     "item.changed",
                     "item.removed",
+                    "item.proposed",
+                    "item.accepted",
                     "check.started",
                     "check.finished",
                     "todo.published",
@@ -2675,12 +3812,166 @@
       "operations": []
     },
     {
-      "arguments": [],
+      "arguments": [
+        {
+          "flags": [
+            "--admin"
+          ],
+          "help": "also offer the tools that change what Jotted reads (settings, watch, library, collect, check)",
+          "name": "admin",
+          "required": false,
+          "type": "boolean"
+        }
+      ],
       "command": "mcp",
       "data": {
         "description": "an MCP server on stdio; no JSON output"
       },
       "help": "serve Jotted's operations as MCP tools on stdio (for agents)",
+      "operations": []
+    },
+    {
+      "arguments": [
+        {
+          "flags": [
+            "--command"
+          ],
+          "help": "the jotted to run (default: this one)",
+          "name": "command_path",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "flags": [
+            "--admin"
+          ],
+          "help": "let Claude change settings and watched folders too",
+          "name": "admin",
+          "required": false,
+          "type": "boolean"
+        },
+        {
+          "flags": [
+            "--dry-run"
+          ],
+          "help": "say what would change; write nothing",
+          "name": "dry_run",
+          "required": false,
+          "type": "boolean"
+        }
+      ],
+      "command": "claude connect",
+      "data": {
+        "properties": {
+          "backup_path": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "changed": {
+            "type": "boolean"
+          },
+          "config_path": {
+            "type": "string"
+          },
+          "dry_run": {
+            "type": "boolean"
+          },
+          "entry": {
+            "type": "object"
+          },
+          "restart_required": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "changed",
+          "config_path",
+          "backup_path",
+          "restart_required"
+        ],
+        "type": "object"
+      },
+      "help": "add Jotted to Claude Desktop's MCP servers (backs up its settings first)",
+      "operations": []
+    },
+    {
+      "arguments": [],
+      "command": "claude status",
+      "data": {
+        "properties": {
+          "admin": {
+            "type": "boolean"
+          },
+          "command": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "command_exists": {
+            "type": "boolean"
+          },
+          "config_path": {
+            "type": "string"
+          },
+          "configured": {
+            "type": "boolean"
+          },
+          "matches_current": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "configured",
+          "config_path",
+          "command",
+          "command_exists",
+          "matches_current",
+          "admin"
+        ],
+        "type": "object"
+      },
+      "help": "whether Claude Desktop runs Jotted, and whether that copy still exists",
+      "operations": []
+    },
+    {
+      "arguments": [],
+      "command": "claude disconnect",
+      "data": {
+        "properties": {
+          "backup_path": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "changed": {
+            "type": "boolean"
+          },
+          "config_path": {
+            "type": "string"
+          },
+          "dry_run": {
+            "type": "boolean"
+          },
+          "entry": {
+            "type": "object"
+          },
+          "restart_required": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "changed",
+          "config_path",
+          "backup_path",
+          "restart_required"
+        ],
+        "type": "object"
+      },
+      "help": "remove Jotted from Claude Desktop's MCP servers (backs up first)",
       "operations": []
     },
     {
@@ -3102,16 +4393,69 @@
         }
       }
     },
-    "items.add": {
-      "doc": "",
+    "items.accept": {
+      "doc": "Proposed items onto the list, after the person has looked at them: `ids`, or `every`\nproposed one (of `source_kind`, if given). They reach the To-do document on its next update.",
       "params": {
+        "every": {
+          "default": false,
+          "type": "bool"
+        },
+        "ids": {
+          "default": null,
+          "type": "list[int] | None"
+        },
+        "source_kind": {
+          "default": null,
+          "type": "str | None"
+        }
+      }
+    },
+    "items.add": {
+      "doc": "Add an item; `propose` leaves it waiting for the person to accept it. With a `source`\nkey seen before, nothing is added: the item already there comes back with `created`\nfalse (status dismissed if the person turned it down).",
+      "params": {
+        "agent": {
+          "default": false,
+          "type": "bool"
+        },
+        "owner": {
+          "default": null,
+          "type": "str | None"
+        },
+        "owner_name": {
+          "default": null,
+          "type": "str | None"
+        },
+        "propose": {
+          "default": false,
+          "type": "bool"
+        },
+        "source": {
+          "default": null,
+          "type": "dict | None"
+        },
         "text": {
           "type": "str"
         }
       }
     },
+    "items.add_batch": {
+      "doc": "Up to 100 items, each as `items.add` takes it ({text, owner, owner_name, source, propose}).\nEach stands alone: one that fails doesn't stop the others. Returns an outcome per item:\ncreated, existing, dismissed, or invalid/conflict with its error.",
+      "params": {
+        "agent": {
+          "default": false,
+          "type": "bool"
+        },
+        "items": {
+          "type": "list"
+        },
+        "propose": {
+          "default": false,
+          "type": "bool"
+        }
+      }
+    },
     "items.edit": {
-      "doc": "Change an item's text or status, or dismiss it (not an action; or delete one added here).\nReturns the item, or {} once dismissed.",
+      "doc": "Change an item's text, owner or status, or dismiss it (not an action, or not wanted).\nA dismissed item is kept, so its source never adds it again. Returns the item, or {} once\ndismissed.",
       "params": {
         "dismissed": {
           "default": null,
@@ -3119,6 +4463,14 @@
         },
         "item_id": {
           "type": "int"
+        },
+        "owner": {
+          "default": null,
+          "type": "str | None"
+        },
+        "owner_name": {
+          "default": null,
+          "type": "str | None"
         },
         "status": {
           "default": null,
@@ -3130,14 +4482,42 @@
         }
       }
     },
-    "items.list": {
-      "doc": "",
+    "items.get": {
+      "doc": "One item in any status, with where it came from.",
       "params": {
+        "item_id": {
+          "type": "int"
+        }
+      }
+    },
+    "items.list": {
+      "doc": "The list (open and done items), or the items in `status`: proposed, dismissed, or any.\nWith `limit`, one page: a full page may have more after it, from `cursor` = its last id.",
+      "params": {
+        "cursor": {
+          "default": null,
+          "type": "int | None"
+        },
         "folder": {
           "default": null,
           "type": "str | None"
         },
+        "limit": {
+          "default": null,
+          "type": "int | None"
+        },
         "owner": {
+          "default": null,
+          "type": "str | None"
+        },
+        "query": {
+          "default": null,
+          "type": "str | None"
+        },
+        "source_key": {
+          "default": null,
+          "type": "str | None"
+        },
+        "source_kind": {
           "default": null,
           "type": "str | None"
         },
@@ -3163,7 +4543,7 @@
       }
     },
     "page.image": {
-      "doc": "A source page as SVG, with the line `anchor` highlighted.",
+      "doc": "A source page as SVG, with the line `anchor` highlighted; `width` in pixels (the height follows).",
       "params": {
         "anchor": {
           "default": null,
@@ -3174,6 +4554,10 @@
         },
         "page": {
           "type": "int"
+        },
+        "width": {
+          "default": null,
+          "type": "int | None"
         }
       }
     },

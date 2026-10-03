@@ -65,6 +65,10 @@ class Settings:
     # Document IDs where only writing added from now on is read: what is already on their
     # pages when they are first collected is recorded as a baseline and never judged.
     from_now: list[str] = field(default_factory=list)
+    # What an agent (`jotted mcp`) adds: "auto" puts what the person asked for straight on the
+    # list and proposes what it inferred; "propose_all" proposes everything.
+    mcp_add_mode: str = "auto"
+    proposed_limit: int = 200  # proposed items waiting for a decision, at most
 
     def watches(self, doc: DocInfo) -> bool:
         for w in self.watch:

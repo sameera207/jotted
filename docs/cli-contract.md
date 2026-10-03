@@ -58,6 +58,9 @@ Treat a code you don't know as a failure and show its message: new codes can be 
 ### Values
 
 - IDs are stable: an item keeps its `id` for life.
+- An item's `status` is `open` or `done` on the list. Two more show up only when you ask for them (`items --status proposed|dismissed|any`, `items get`) or in their events: `proposed` (an agent found it; it waits for the person to accept it, and never reaches the tablet before) and `dismissed` (kept so its source never adds it again).
+- An item's `origin` is the source plugin's name (read from handwriting), `todo` (written in a row of the To-do document), `web` (typed in an app or the CLI) or `agent` (added by an agent). New origins can appear.
+- An item's `source` says where it came from. `doc_id`, `name`, `folder`, `page` and `anchor` are the handwritten page (and are empty or 0 for a typed item). `kind`, `key`, `title`, `url` and `excerpt` describe any source: a `gdoc` line, a `gmail` message, a `jira` ticket. `(kind, key)` is unique, which is how an agent's item is added only once. `page` is the page to draw (`image page`), or null when there is no handwriting. Show `excerpt`, `title` and `url` as plain text: an agent copied them from another document. Never open `url` on its own.
 - Paths are the device's own: `/Meeting Notes/Weekly sync`.
 - Times are ISO 8601 in UTC. Event times (`at`) look like `2026-10-03T04:12:09Z`; some older fields (an item's `created_at`, `published_at`) still carry microseconds and `+00:00`. Parse with a full ISO 8601 parser.
 - Fields are only ever added within a contract version. Ignore fields you don't know.
@@ -125,6 +128,8 @@ This prints one JSON object per line, one per change, as changes happen, whichev
 | `item.added` | `item`: the item as `items` lists it |
 | `item.changed` | `item`: the item now (edited, done, reopened, moved, from the app or a tick on the tablet) |
 | `item.removed` | `item`: `{"id": …}` only (dismissed, deleted, or no longer an action) |
+| `item.proposed` | `item`: a proposed item, new or reworded. It isn't on the list (`items`) yet |
+| `item.accepted` | `item`: a proposed item the person accepted. An `item.added` for it follows, so a screen that shows the list can ignore this one |
 | `check.started` | none |
 | `check.finished` | `new`, `updated`, `missing`, `pages_read`, `errors` |
 | `todo.published` | `items`: rows on the To-do document |
@@ -163,7 +168,7 @@ jotted --json version
 - Pin a release. Its `schema.json` is attached to the GitHub release and kept in `docs/schema.json` at that tag.
 - A copy bundled inside an app should run with `JOTTED_BUNDLED=1`: then it never updates itself (`update` fails with `conflict`), and the app updates it by shipping a new pin.
 
-Other environment variables: `JOTTED_CONFIG` (another `config.toml`), `JOTTED_HOME` (another app folder; handy for tests), `JOTTED_NO_UPDATE=1`.
+Other environment variables: `JOTTED_CONFIG` (another `config.toml`), `JOTTED_HOME` (another app folder; handy for tests), `JOTTED_NO_UPDATE=1`, `JOTTED_CLAUDE_CONFIG` (the Claude Desktop settings file `claude connect` edits; for tests).
 
 ## Recipes
 
@@ -174,36 +179,61 @@ Other environment variables: `JOTTED_CONFIG` (another `config.toml`), `JOTTED_HO
 3. On failure, branch on `error.code`: `not_set_up` goes to setup, `busy` retries after a moment, `not_connected` shows a "reconnect" action (`connect --stdin --replace`), `model_error` shows a "check your key" action. Anything else shows `error.message`.
 4. To refresh, listen to `events --follow` rather than polling.
 
-For example, the To-do window runs `items` and `items done ID`. "Where it came from" runs `image page DOC PAGE --anchor A` with the item's `source` fields (without `-o`, the SVG comes back in `data.svg`). Notebooks run `library` and `watch`. Settings runs `settings`, `settings set KEY VALUE`, `ai`, `ai model NAME`.
+For example, the To-do window runs `items` and `items done ID`. "Where it came from" runs `image page DOC PAGE --highlight A --width 600` with the item's `page` fields (without `-o`, the SVG comes back in `data.svg`). Notebooks run `library` and `watch`. Settings runs `settings`, `settings set KEY VALUE`, `ai`, `ai model NAME`.
+
+### Proposals: items an agent found
+
+An agent that reads other documents (a meeting doc, mail, a ticket) proposes what it found instead of adding it:
+
+```bash
+echo '[{"text": "Send Dana the estimate", "source": {"kind": "gdoc", "key": "1AbC#h.x7q", "title": "Platform sync", "excerpt": "Sam to send the estimate to Dana"}}]' \
+  | jotted --json items add-batch --stdin --propose --agent
+```
+
+1. Each item gets an outcome: `created`, `existing` (that source key was added before), `dismissed` (the person turned it down before: nothing is added), or `invalid`/`conflict` with its `error`. One bad item doesn't stop the others.
+2. Proposed items wait: show them with `items --status proposed` and let the person accept (`items accept ID…`, or `items accept --all`) or dismiss (`items dismiss ID`) each one. Accepted items reach the To-do document on its next update.
+3. At most `proposed_limit` (setting, 200) wait at once; past that, proposing fails with `conflict`.
+4. `items add TEXT --source-kind K --source-key KEY` adds one item the same way: once per key, with `created` false when it was there already.
+
+`status` counts proposed items (`items.proposed`), for a badge.
 
 ### An MCP connector
 
-`jotted mcp` is already an MCP server on stdio. Point your client at it:
+`jotted mcp` is already an MCP server on stdio. For Claude Desktop, `jotted claude connect` sets it up (a desktop app passes its bundled binary with `--command PATH`); `claude status` says whether it is connected and whether that binary still exists, and `claude disconnect` removes it. Each backs up Claude Desktop's settings first and changes only the `jotted` entry. Any other client:
 
 ```json
-{"mcpServers": {"jotted": {"command": "jotted", "args": ["mcp"]}}}
+{"mcpServers": {"jotted": {"command": "/absolute/path/to/jotted", "args": ["mcp"]}}}
 ```
 
-Each tool runs one CLI command and returns its `data` as JSON text, or its `error` with `isError: true`:
+Each tool runs one CLI command and returns its `data` as JSON text, or its `error` with `isError: true`. Item results carry text fields only (`id`, `text`, `status`, `owner`, `owner_name`, `origin`, `source`, `page`), never images. `items_list` returns `{"items": […], "next_cursor": …}`, 50 at a time. Items the agent adds are `origin: agent`. `items_add` is for what the person asked for and is added straight away (proposed instead under the setting `mcp_add_mode: propose_all`). `items_propose` is for what the agent inferred, and always waits for the person. Hosts that render MCP Apps (Claude Desktop) get the Jotted widget too: `show_list` opens `ui://jotted/list`, and the tools marked "for the widget only" below are offered only to a host that advertises the `io.modelcontextprotocol/ui` extension, so handwriting images never reach a model. Tools that change what Jotted reads are offered only by `jotted mcp --admin`:
 
 <!-- BEGIN GENERATED: mcp-tools -->
 | Tool | Runs | What it does |
 | --- | --- | --- |
-| `items_list` | `jotted items list` | The to-do list: items found in handwritten notes, and ones added by hand. |
-| `items_add` | `jotted items add` | Add an item to the to-do list. |
-| `items_edit` | `jotted items edit` | Change an item's text. |
+| `items_list` | `jotted items list` | The person's to-do list: open items by default, from handwritten notes and ones added here. `status` proposed lists what waits for the person's review. Check `source_key` here before proposing something you are unsure is new. |
+| `items_get` | `jotted items get` | One item, in any status, with where it came from (source and excerpt). |
+| `items_add` | `jotted items add --agent` | Add an item the person asked you to add, in this conversation. For anything you found or inferred in a document, message or ticket, use items_propose instead. |
+| `items_propose` | `jotted items add-batch --stdin --propose --agent` | Propose items you inferred from another document, message, ticket or meeting: they wait for the person to accept them and never reach their tablet before. Every item needs source.kind and source.key (the line, message or ticket it came from), so the same thing is never proposed twice, nor again once the person dismissed it. Up to 100 at a time. |
+| `items_edit` | `jotted items edit` | Change an item's text or owner. |
 | `items_done` | `jotted items done` | Mark an item done. |
-| `items_reopen` | `jotted items reopen` | Mark an item open again. |
-| `items_dismiss` | `jotted items dismiss` | Take an item off the list: it isn't an action (one added by hand is deleted). |
-| `library` | `jotted library` | The device's folders and documents, and which are watched. |
-| `watch` | `jotted watch` | Watch or stop watching a folder or document; from-now skips what is already written. |
-| `settings_get` | `jotted settings` | Jotted's settings: watched folders, thresholds, the To-do document. |
-| `settings_set` | `jotted settings set` | Change one setting. The value is JSON (true, 0.8, ["/A"]) or plain text. |
-| `check` | `jotted check` | Read what changed in watched folders and update the To-do document, now. |
-| `status` | `jotted status` | What Jotted reads, judges and publishes, and when it last did. |
+| `items_reopen` | `jotted items reopen` | Mark a done item open again. |
+| `items_dismiss` | `jotted items dismiss` | Take an item off the list (not an action, or not wanted). Its source never adds it again. |
+| `items_accept` | `jotted items accept` | Put proposed items on the list. Use only after the person has reviewed the proposals and said which to keep. |
+| `show_list` | `jotted events; items --status all; items --status proposed` | Show the person's Jotted to-do list, with what you proposed, as an interactive list they can tick, accept and edit. Use it when they ask to see or review their list. Without the widget you get the same list as text. Opens the widget (`ui://jotted/list`). |
+| `status` | `jotted status` | What Jotted reads, judges and publishes, how many items are open, done and proposed, and when it last checked. |
 | `setup_status` | `jotted setup status` | Setup steps, done or not. A step that isn't done names the command the person should run in a terminal (keys and codes never go through an agent). |
+| `items_add_typed` | `jotted items add` | Add an item the person typed into the Jotted widget. For the widget only (`visibility: ["app"]`). |
+| `items_changes` | `jotted events` | Changes since a cursor, for the widget to stay current. For the widget only (`visibility: ["app"]`). |
+| `page_image` | `jotted image page` | A handwritten page as SVG, with one line highlighted. For the widget only (`visibility: ["app"]`). |
+| `line_image` | `jotted image line` | One handwritten line as SVG. For the widget only (`visibility: ["app"]`). |
+| `library` | `jotted library` | The device's folders and documents, and which are watched. Only with `jotted mcp --admin`. |
+| `watch` | `jotted watch` | Watch or stop watching a folder or document; from-now skips what is already written. Only with `jotted mcp --admin`. |
+| `settings_get` | `jotted settings` | Jotted's settings: watched folders, thresholds, the To-do document. Only with `jotted mcp --admin`. |
+| `settings_set` | `jotted settings set` | Change one setting. The value is JSON (true, 0.8, ["/A"]) or plain text. Only with `jotted mcp --admin`. |
+| `collect` | `jotted collect` | Read what changed in watched folders now. Only with `jotted mcp --admin`. |
+| `check` | `jotted check` | Read what changed in watched folders and update the To-do document, now. Only with `jotted mcp --admin`. |
 
-Never exposed (they take a secret): `ai key`, `auth`, `connect`.
+Never exposed (they take a secret, or rewire an app): `ai key`, `auth`, `claude connect`, `claude disconnect`, `connect`.
 <!-- END GENERATED: mcp-tools -->
 
 Building your own connector (another protocol, a remote bridge)? Do the same thing: map each tool to a `jotted --json …` command, take its input schema from that command's arguments in `schema.json`, and return `data` or `error`. Never pass keys or one-time codes through an agent: when `setup_status` shows a missing key, tell the person which command to run.
@@ -247,13 +277,16 @@ Generated from `jotted schema` (release 0.1.0, contract 1, accepts 1+). Exact ar
 | `jotted ai provider NAME` | Choose the LLM adapter (anthropic). |
 | `jotted ai model NAME` | Choose the model; it has to read images. |
 | `jotted plugins` | Installed source plugins, and which one is chosen. |
-| `jotted items [--status open\|done\|all] [--owner mine\|others] [--folder FOLDER]` | The to-do list: list, add, edit, tick, dismiss. |
-| `jotted items list [--status open\|done\|all] [--owner mine\|others] [--folder FOLDER]` | List items (the default). |
-| `jotted items add TEXT...` | Add an item of yours. |
-| `jotted items edit ID TEXT...` | Change an item's text. |
+| `jotted items [--status open\|done\|all\|proposed\|dismissed\|any] [--owner mine\|others] [--folder FOLDER] [--source-kind SOURCE_KIND] [--source-key SOURCE_KEY] [--query QUERY] [--limit LIMIT] [--cursor CURSOR]` | The to-do list: list, add, propose, accept, edit, tick, dismiss. |
+| `jotted items list [--status open\|done\|all\|proposed\|dismissed\|any] [--owner mine\|others] [--folder FOLDER] [--source-kind SOURCE_KIND] [--source-key SOURCE_KEY] [--query QUERY] [--limit LIMIT] [--cursor CURSOR]` | List items (the default). |
+| `jotted items get ID` | One item, in any status, with where it came from. |
+| `jotted items add TEXT... [--propose] [--agent] [--owner mine\|others] [--owner-name OWNER_NAME] [--source-kind SOURCE_KIND] [--source-key SOURCE_KEY] [--source-title SOURCE_TITLE] [--source-url SOURCE_URL] [--excerpt EXCERPT]` | Add an item (once per --source-key). |
+| `jotted items add-batch [--stdin] [--propose] [--agent]` | Add up to 100 items from a JSON array on standard input. |
+| `jotted items accept [IDS...] [--all] [--source-kind SOURCE_KIND]` | Put proposed items on the list. |
+| `jotted items edit ID [TEXT...] [--owner mine\|others] [--owner-name OWNER_NAME]` | Change an item's text or owner. |
 | `jotted items done ID` | Mark an item done. |
 | `jotted items reopen ID` | Mark an item open again. |
-| `jotted items dismiss ID` | Not an action: take it off the list (deletes one added here). |
+| `jotted items dismiss ID` | Not an action, or not wanted: take it off the list; its source never adds it again. |
 | `jotted library` | List your device's folders and which are watched. |
 | `jotted watch add\|remove\|from-now\|read-all PATH` | Watch or stop watching a folder (also in the web app). |
 | `jotted settings` | Show or change settings (also in the web app). |
@@ -262,7 +295,7 @@ Generated from `jotted schema` (release 0.1.0, contract 1, accepts 1+). Exact ar
 | `jotted todo [--force]` | Read ticks from, and republish, the To-do document. |
 | `jotted check` | Collect and update the To-do document now. |
 | `jotted status` | What Jotted reads, judges and publishes, and when it last did. |
-| `jotted image page DOC_ID PAGE [--anchor ANCHOR] [--out OUT]` | A page, with a line highlighted. |
+| `jotted image page DOC_ID PAGE [--highlight ANCHOR] [--width WIDTH] [--out OUT]` | A page, with a line highlighted. |
 | `jotted image line DOC_ID ANCHOR [--out OUT]` | One handwritten line. |
 | `jotted events [--since SINCE] [--follow]` | Changes since a cursor; --follow keeps printing them. |
 | `jotted serve [--host HOST] [--port PORT] [--no-browser] [--dev] [--no-background]` | Run the web app, background checking and the CLI's fast path. |
@@ -270,7 +303,10 @@ Generated from `jotted schema` (release 0.1.0, contract 1, accepts 1+). Exact ar
 | `jotted update` | Update Jotted to the latest version on GitHub. |
 | `jotted version` | Release and contract versions. |
 | `jotted schema` | Every command: its arguments, options and the shape of its data. |
-| `jotted mcp` | Serve Jotted's operations as MCP tools on stdio (for agents). |
+| `jotted mcp [--admin]` | Serve Jotted's operations as MCP tools on stdio (for agents). |
+| `jotted claude connect [--command COMMAND_PATH] [--admin] [--dry-run]` | Add Jotted to Claude Desktop's MCP servers (backs up its settings first). |
+| `jotted claude status` | Whether Claude Desktop runs Jotted, and whether that copy still exists. |
+| `jotted claude disconnect` | Remove Jotted from Claude Desktop's MCP servers (backs up first). |
 | `jotted config check` | Validate config.toml and print resolved values. |
 | `jotted connect [--stdin] [--replace]` | Connect your reMarkable with a one-time code. |
 
@@ -383,64 +419,133 @@ jotted plugins
 
 ### `jotted items`
 
-The to-do list: list, add, edit, tick, dismiss.
+The to-do list: list, add, propose, accept, edit, tick, dismiss.
 
 ```text
-jotted items [--status open|done|all] [--owner mine|others] [--folder FOLDER]
+jotted items [--status open|done|all|proposed|dismissed|any] [--owner mine|others] [--folder FOLDER] [--source-kind SOURCE_KIND] [--source-key SOURCE_KEY] [--query QUERY] [--limit LIMIT] [--cursor CURSOR]
 ```
 
 | Argument | Type | Notes |
 | --- | --- | --- |
-| `--status` | `"open" \| "done" \| "all"` | default `open` |
+| `--status` | `"open" \| "done" \| "all" \| "proposed" \| "dismissed" \| "any"` | all: open and done (the list); any: every item, proposed and dismissed too; default `open` |
 | `--owner` | `"mine" \| "others"` |  |
 | `--folder` | `string` | only items from documents in this folder |
+| `--source-kind` | `string` | only items from this kind of source (gdoc, gmail...) |
+| `--source-key` | `string` | only the item from this source line, message or ticket |
+| `--query` | `string` | only items whose text or source title contains this |
+| `--limit` | `integer` | at most this many (1 to 200); a full page may have more |
+| `--cursor` | `integer` | the next page: the id of the last item of the one before |
 
-`data`: `{id: integer, origin: string, text: string, paper_text: string, written: boolean, status: "open" \| "done", owner: "me" \| "someone_else" \| "unclear", p_action: number, source: {doc_id, name, folder, page, anchor}, edited: boolean, slot: integer \| null, created_at: string}[]`
+`data`: `{id: integer, origin: string, text: string, paper_text: string, written: boolean, status: "open" \| "done" \| "proposed" \| "dismissed", owner: "me" \| "someone_else" \| "unclear", owner_name: string \| null, p_action: number, source: {doc_id, name, folder, page, anchor, kind, key, title, url, excerpt}, page: null \| {doc_id, doc_name, page, page_count, anchor}, edited: boolean, slot: integer \| null, created_at: string}[]`
 
 ### `jotted items list`
 
 List items (the default).
 
 ```text
-jotted items list [--status open|done|all] [--owner mine|others] [--folder FOLDER]
+jotted items list [--status open|done|all|proposed|dismissed|any] [--owner mine|others] [--folder FOLDER] [--source-kind SOURCE_KIND] [--source-key SOURCE_KEY] [--query QUERY] [--limit LIMIT] [--cursor CURSOR]
 ```
 
 | Argument | Type | Notes |
 | --- | --- | --- |
-| `--status` | `"open" \| "done" \| "all"` | default `open` |
+| `--status` | `"open" \| "done" \| "all" \| "proposed" \| "dismissed" \| "any"` | all: open and done (the list); any: every item, proposed and dismissed too; default `open` |
 | `--owner` | `"mine" \| "others"` |  |
 | `--folder` | `string` | only items from documents in this folder |
+| `--source-kind` | `string` | only items from this kind of source (gdoc, gmail...) |
+| `--source-key` | `string` | only the item from this source line, message or ticket |
+| `--query` | `string` | only items whose text or source title contains this |
+| `--limit` | `integer` | at most this many (1 to 200); a full page may have more |
+| `--cursor` | `integer` | the next page: the id of the last item of the one before |
 
-`data`: `{id: integer, origin: string, text: string, paper_text: string, written: boolean, status: "open" \| "done", owner: "me" \| "someone_else" \| "unclear", p_action: number, source: {doc_id, name, folder, page, anchor}, edited: boolean, slot: integer \| null, created_at: string}[]`
+`data`: `{id: integer, origin: string, text: string, paper_text: string, written: boolean, status: "open" \| "done" \| "proposed" \| "dismissed", owner: "me" \| "someone_else" \| "unclear", owner_name: string \| null, p_action: number, source: {doc_id, name, folder, page, anchor, kind, key, title, url, excerpt}, page: null \| {doc_id, doc_name, page, page_count, anchor}, edited: boolean, slot: integer \| null, created_at: string}[]`
 
-### `jotted items add`
+### `jotted items get`
 
-Add an item of yours.
-
-```text
-jotted items add TEXT...
-```
-
-| Argument | Type | Notes |
-| --- | --- | --- |
-| `TEXT` | `string` | required; one or more words |
-
-`data`: `{id: integer, origin: string, text: string, paper_text: string, written: boolean, status: "open" \| "done", owner: "me" \| "someone_else" \| "unclear", p_action: number, source: {doc_id, name, folder, page, anchor}, edited: boolean, slot: integer \| null, created_at: string}`
-
-### `jotted items edit`
-
-Change an item's text.
+One item, in any status, with where it came from.
 
 ```text
-jotted items edit ID TEXT...
+jotted items get ID
 ```
 
 | Argument | Type | Notes |
 | --- | --- | --- |
 | `ID` | `integer` | required |
-| `TEXT` | `string` | required; one or more words |
 
-`data`: `{id: integer, origin: string, text: string, paper_text: string, written: boolean, status: "open" \| "done", owner: "me" \| "someone_else" \| "unclear", p_action: number, source: {doc_id, name, folder, page, anchor}, edited: boolean, slot: integer \| null, created_at: string}`
+`data`: `{id: integer, origin: string, text: string, paper_text: string, written: boolean, status: "open" \| "done" \| "proposed" \| "dismissed", owner: "me" \| "someone_else" \| "unclear", owner_name: string \| null, p_action: number, source: {doc_id, name, folder, page, anchor, kind, key, title, url, excerpt}, page: null \| {doc_id, doc_name, page, page_count, anchor}, edited: boolean, slot: integer \| null, created_at: string}`
+
+### `jotted items add`
+
+Add an item (once per --source-key).
+
+```text
+jotted items add TEXT... [--propose] [--agent] [--owner mine|others] [--owner-name OWNER_NAME] [--source-kind SOURCE_KIND] [--source-key SOURCE_KEY] [--source-title SOURCE_TITLE] [--source-url SOURCE_URL] [--excerpt EXCERPT]
+```
+
+| Argument | Type | Notes |
+| --- | --- | --- |
+| `TEXT` | `string` | required; one or more words |
+| `--propose` | `boolean` | wait for the person to accept it before it is listed |
+| `--agent` | `boolean` | added by an agent, not typed by the person (`jotted mcp` sets it) |
+| `--owner` | `"mine" \| "others"` |  |
+| `--owner-name` | `string` | who owns it, when that's someone else (at most 80 characters) |
+| `--source-kind` | `string` | where it came from: gdoc, gmail, confluence, jira, gcal, chat, other... |
+| `--source-key` | `string` | the line, message or ticket it came from: the item is added only once |
+| `--source-title` | `string` | the source's title, as it is shown |
+| `--source-url` | `string` | a link to the source (https only; Jotted never opens it) |
+| `--excerpt` | `string` | the text the item was taken from (at most 500 characters) |
+
+`data`: `{id: integer, origin: string, text: string, paper_text: string, written: boolean, status: "open" \| "done" \| "proposed" \| "dismissed", owner: "me" \| "someone_else" \| "unclear", owner_name: string \| null, p_action: number, source: {doc_id, name, folder, page, anchor, kind, key, title, url, excerpt}, page: null \| {doc_id, doc_name, page, page_count, anchor}, edited: boolean, slot: integer \| null, created_at: string, created: boolean}`
+
+The item; `created` false when its source key was added before (nothing new was added).
+
+### `jotted items add-batch`
+
+Add up to 100 items from a JSON array on standard input.
+
+```text
+jotted items add-batch [--stdin] [--propose] [--agent]
+```
+
+| Argument | Type | Notes |
+| --- | --- | --- |
+| `--stdin` | `boolean` | read the items from standard input (required) |
+| `--propose` | `boolean` | wait for the person to accept it before it is listed |
+| `--agent` | `boolean` | added by an agent, not typed by the person (`jotted mcp` sets it) |
+
+`data`: `{results: {index, outcome, id, error}[]}`
+
+### `jotted items accept`
+
+Put proposed items on the list.
+
+```text
+jotted items accept [IDS...] [--all] [--source-kind SOURCE_KIND]
+```
+
+| Argument | Type | Notes |
+| --- | --- | --- |
+| `IDS` | `integer` | the items to accept; one or more words |
+| `--all` | `boolean` | every proposed item |
+| `--source-kind` | `string` | with --all: only those from this kind of source |
+
+`data`: `{accepted: integer[], skipped: {id, reason}[]}`
+
+### `jotted items edit`
+
+Change an item's text or owner.
+
+```text
+jotted items edit ID [TEXT...] [--owner mine|others] [--owner-name OWNER_NAME]
+```
+
+| Argument | Type | Notes |
+| --- | --- | --- |
+| `ID` | `integer` | required |
+| `TEXT` | `string` | one or more words |
+| `--owner` | `"mine" \| "others"` |  |
+| `--owner-name` | `string` | who owns it, when that's someone else (at most 80 characters) |
+
+`data`: `{id: integer, origin: string, text: string, paper_text: string, written: boolean, status: "open" \| "done" \| "proposed" \| "dismissed", owner: "me" \| "someone_else" \| "unclear", owner_name: string \| null, p_action: number, source: {doc_id, name, folder, page, anchor, kind, key, title, url, excerpt}, page: null \| {doc_id, doc_name, page, page_count, anchor}, edited: boolean, slot: integer \| null, created_at: string}`
 
 ### `jotted items done`
 
@@ -454,7 +559,7 @@ jotted items done ID
 | --- | --- | --- |
 | `ID` | `integer` | required |
 
-`data`: `{id: integer, origin: string, text: string, paper_text: string, written: boolean, status: "open" \| "done", owner: "me" \| "someone_else" \| "unclear", p_action: number, source: {doc_id, name, folder, page, anchor}, edited: boolean, slot: integer \| null, created_at: string}`
+`data`: `{id: integer, origin: string, text: string, paper_text: string, written: boolean, status: "open" \| "done" \| "proposed" \| "dismissed", owner: "me" \| "someone_else" \| "unclear", owner_name: string \| null, p_action: number, source: {doc_id, name, folder, page, anchor, kind, key, title, url, excerpt}, page: null \| {doc_id, doc_name, page, page_count, anchor}, edited: boolean, slot: integer \| null, created_at: string}`
 
 ### `jotted items reopen`
 
@@ -468,11 +573,11 @@ jotted items reopen ID
 | --- | --- | --- |
 | `ID` | `integer` | required |
 
-`data`: `{id: integer, origin: string, text: string, paper_text: string, written: boolean, status: "open" \| "done", owner: "me" \| "someone_else" \| "unclear", p_action: number, source: {doc_id, name, folder, page, anchor}, edited: boolean, slot: integer \| null, created_at: string}`
+`data`: `{id: integer, origin: string, text: string, paper_text: string, written: boolean, status: "open" \| "done" \| "proposed" \| "dismissed", owner: "me" \| "someone_else" \| "unclear", owner_name: string \| null, p_action: number, source: {doc_id, name, folder, page, anchor, kind, key, title, url, excerpt}, page: null \| {doc_id, doc_name, page, page_count, anchor}, edited: boolean, slot: integer \| null, created_at: string}`
 
 ### `jotted items dismiss`
 
-Not an action: take it off the list (deletes one added here).
+Not an action, or not wanted: take it off the list; its source never adds it again.
 
 ```text
 jotted items dismiss ID
@@ -509,7 +614,7 @@ jotted watch add|remove|from-now|read-all PATH
 | `ACTION` | `"add" \| "remove" \| "from-now" \| "read-all"` | required |
 | `PATH` | `string` | folder or document path, e.g. '/Meeting notes'; required |
 
-`data`: `{watch: string[], action_threshold: number, poll_interval_s: integer, include_others: boolean, todo_enabled: boolean, todo_name: string, todo_folder: string, from_now: string[]} \| {settings: {watch, action_threshold, poll_interval_s, include_others, todo_enabled, todo_name, todo_folder, from_now}, documents: string[], already_read: string[]}`
+`data`: `{watch: string[], action_threshold: number, poll_interval_s: integer, include_others: boolean, todo_enabled: boolean, todo_name: string, todo_folder: string, from_now: string[], mcp_add_mode: "auto" \| "propose_all", proposed_limit: integer} \| {settings: {watch, action_threshold, poll_interval_s, include_others, todo_enabled, todo_name, todo_folder, from_now, mcp_add_mode, proposed_limit}, documents: string[], already_read: string[]}`
 
 Add/remove: the settings; from-now/read-all: the documents affected.
 
@@ -521,7 +626,7 @@ Show or change settings (also in the web app).
 jotted settings
 ```
 
-`data`: `{watch: string[], action_threshold: number, poll_interval_s: integer, include_others: boolean, todo_enabled: boolean, todo_name: string, todo_folder: string, from_now: string[]}`
+`data`: `{watch: string[], action_threshold: number, poll_interval_s: integer, include_others: boolean, todo_enabled: boolean, todo_name: string, todo_folder: string, from_now: string[], mcp_add_mode: "auto" \| "propose_all", proposed_limit: integer}`
 
 ### `jotted settings set`
 
@@ -536,7 +641,7 @@ jotted settings set KEY VALUE
 | `KEY` | `string` | required |
 | `VALUE` | `string` | JSON (true, 0.8, ["/A"]) or plain text; required |
 
-`data`: `{watch: string[], action_threshold: number, poll_interval_s: integer, include_others: boolean, todo_enabled: boolean, todo_name: string, todo_folder: string, from_now: string[]}`
+`data`: `{watch: string[], action_threshold: number, poll_interval_s: integer, include_others: boolean, todo_enabled: boolean, todo_name: string, todo_folder: string, from_now: string[], mcp_add_mode: "auto" \| "propose_all", proposed_limit: integer}`
 
 ### `jotted collect`
 
@@ -586,21 +691,22 @@ What Jotted reads, judges and publishes, and when it last did.
 jotted status
 ```
 
-`data`: `{source: {name, label, mark, device, connected, detail}, judge: string, watch: string[], documents_read: integer, last_collected_at: string \| null, items: {open, done}, todo: {enabled, name, folder, published_at}, background: any}`
+`data`: `{source: {name, label, mark, device, connected, detail}, judge: string, watch: string[], documents_read: integer, last_collected_at: string \| null, items: {open, done, proposed}, todo: {enabled, name, folder, published_at}, background: any}`
 
 ### `jotted image page`
 
 A page, with a line highlighted.
 
 ```text
-jotted image page DOC_ID PAGE [--anchor ANCHOR] [--out OUT]
+jotted image page DOC_ID PAGE [--highlight ANCHOR] [--width WIDTH] [--out OUT]
 ```
 
 | Argument | Type | Notes |
 | --- | --- | --- |
 | `DOC_ID` | `string` | required |
 | `PAGE` | `integer` | required |
-| `--anchor` | `string` | the line to highlight |
+| `--anchor, --highlight` | `string` | the line to highlight (an item's page.anchor) |
+| `--width` | `integer` | width in pixels; the height follows |
 | `-o, --out` | `string` | write to this file instead of standard output |
 
 `data`: `{svg: string} \| {path: string}`
@@ -709,10 +815,50 @@ This document.
 Serve Jotted's operations as MCP tools on stdio (for agents).
 
 ```text
-jotted mcp
+jotted mcp [--admin]
 ```
 
+| Argument | Type | Notes |
+| --- | --- | --- |
+| `--admin` | `boolean` | also offer the tools that change what Jotted reads (settings, watch, library, collect, check) |
+
 `data`: an MCP server on stdio; no JSON output.
+
+### `jotted claude connect`
+
+Add Jotted to Claude Desktop's MCP servers (backs up its settings first).
+
+```text
+jotted claude connect [--command COMMAND_PATH] [--admin] [--dry-run]
+```
+
+| Argument | Type | Notes |
+| --- | --- | --- |
+| `--command` | `string` | the jotted to run (default: this one) |
+| `--admin` | `boolean` | let Claude change settings and watched folders too |
+| `--dry-run` | `boolean` | say what would change; write nothing |
+
+`data`: `{changed: boolean, config_path: string, backup_path: string \| null, restart_required: boolean, entry?: object, dry_run?: boolean}`
+
+### `jotted claude status`
+
+Whether Claude Desktop runs Jotted, and whether that copy still exists.
+
+```text
+jotted claude status
+```
+
+`data`: `{configured: boolean, config_path: string, command: string \| null, command_exists: boolean, matches_current: boolean, admin: boolean}`
+
+### `jotted claude disconnect`
+
+Remove Jotted from Claude Desktop's MCP servers (backs up first).
+
+```text
+jotted claude disconnect
+```
+
+`data`: `{changed: boolean, config_path: string, backup_path: string \| null, restart_required: boolean, entry?: object, dry_run?: boolean}`
 
 ### `jotted config check`
 

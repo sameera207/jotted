@@ -773,6 +773,117 @@
     "type": "object"
    }
   },
+  "claude connect": {
+   "arguments": [
+    "admin",
+    "command_path",
+    "dry_run"
+   ],
+   "data": {
+    "properties": {
+     "backup_path": {
+      "type": [
+       "string",
+       "null"
+      ]
+     },
+     "changed": {
+      "type": "boolean"
+     },
+     "config_path": {
+      "type": "string"
+     },
+     "dry_run": {
+      "type": "boolean"
+     },
+     "entry": {
+      "type": "object"
+     },
+     "restart_required": {
+      "type": "boolean"
+     }
+    },
+    "required": [
+     "changed",
+     "config_path",
+     "backup_path",
+     "restart_required"
+    ],
+    "type": "object"
+   }
+  },
+  "claude disconnect": {
+   "arguments": [],
+   "data": {
+    "properties": {
+     "backup_path": {
+      "type": [
+       "string",
+       "null"
+      ]
+     },
+     "changed": {
+      "type": "boolean"
+     },
+     "config_path": {
+      "type": "string"
+     },
+     "dry_run": {
+      "type": "boolean"
+     },
+     "entry": {
+      "type": "object"
+     },
+     "restart_required": {
+      "type": "boolean"
+     }
+    },
+    "required": [
+     "changed",
+     "config_path",
+     "backup_path",
+     "restart_required"
+    ],
+    "type": "object"
+   }
+  },
+  "claude status": {
+   "arguments": [],
+   "data": {
+    "properties": {
+     "admin": {
+      "type": "boolean"
+     },
+     "command": {
+      "type": [
+       "string",
+       "null"
+      ]
+     },
+     "command_exists": {
+      "type": "boolean"
+     },
+     "config_path": {
+      "type": "string"
+     },
+     "configured": {
+      "type": "boolean"
+     },
+     "matches_current": {
+      "type": "boolean"
+     }
+    },
+    "required": [
+     "configured",
+     "config_path",
+     "command",
+     "command_exists",
+     "matches_current",
+     "admin"
+    ],
+    "type": "object"
+   }
+  },
   "collect": {
    "arguments": [
     "dry_run"
@@ -1100,6 +1211,8 @@
           "item.added",
           "item.changed",
           "item.removed",
+          "item.proposed",
+          "item.accepted",
           "check.started",
           "check.finished",
           "todo.published",
@@ -1163,7 +1276,8 @@
     "anchor",
     "doc_id",
     "out",
-    "page"
+    "page",
+    "width"
    ],
    "data": {
     "oneOf": [
@@ -1194,8 +1308,13 @@
   },
   "items": {
    "arguments": [
+    "cursor",
     "folder",
+    "limit",
     "owner",
+    "query",
+    "source_key",
+    "source_kind",
     "status"
    ],
    "data": {
@@ -1220,8 +1339,51 @@
         "unclear"
        ]
       },
+      "owner_name": {
+       "type": [
+        "string",
+        "null"
+       ]
+      },
       "p_action": {
        "type": "number"
+      },
+      "page": {
+       "oneOf": [
+        {
+         "type": "null"
+        },
+        {
+         "properties": {
+          "anchor": {
+           "type": "string"
+          },
+          "doc_id": {
+           "type": "string"
+          },
+          "doc_name": {
+           "type": "string"
+          },
+          "page": {
+           "type": "integer"
+          },
+          "page_count": {
+           "type": [
+            "integer",
+            "null"
+           ]
+          }
+         },
+         "required": [
+          "doc_id",
+          "doc_name",
+          "page",
+          "page_count",
+          "anchor"
+         ],
+         "type": "object"
+        }
+       ]
       },
       "paper_text": {
        "type": "string"
@@ -1240,14 +1402,44 @@
         "doc_id": {
          "type": "string"
         },
+        "excerpt": {
+         "type": [
+          "string",
+          "null"
+         ]
+        },
         "folder": {
          "type": "string"
+        },
+        "key": {
+         "type": [
+          "string",
+          "null"
+         ]
+        },
+        "kind": {
+         "type": [
+          "string",
+          "null"
+         ]
         },
         "name": {
          "type": "string"
         },
         "page": {
          "type": "integer"
+        },
+        "title": {
+         "type": [
+          "string",
+          "null"
+         ]
+        },
+        "url": {
+         "type": [
+          "string",
+          "null"
+         ]
         }
        },
        "required": [
@@ -1255,14 +1447,21 @@
         "name",
         "folder",
         "page",
-        "anchor"
+        "anchor",
+        "kind",
+        "key",
+        "title",
+        "url",
+        "excerpt"
        ],
        "type": "object"
       },
       "status": {
        "enum": [
         "open",
-        "done"
+        "done",
+        "proposed",
+        "dismissed"
        ]
       },
       "text": {
@@ -1280,8 +1479,10 @@
       "written",
       "status",
       "owner",
+      "owner_name",
       "p_action",
       "source",
+      "page",
       "edited",
       "slot",
       "created_at"
@@ -1291,12 +1492,68 @@
     "type": "array"
    }
   },
-  "items add": {
+  "items accept": {
    "arguments": [
-    "text"
+    "all",
+    "ids",
+    "source_kind"
    ],
    "data": {
     "properties": {
+     "accepted": {
+      "items": {
+       "type": "integer"
+      },
+      "type": "array"
+     },
+     "skipped": {
+      "items": {
+       "properties": {
+        "id": {
+         "type": "integer"
+        },
+        "reason": {
+         "enum": [
+          "not_found",
+          "not_proposed"
+         ]
+        }
+       },
+       "required": [
+        "id",
+        "reason"
+       ],
+       "type": "object"
+      },
+      "type": "array"
+     }
+    },
+    "required": [
+     "accepted",
+     "skipped"
+    ],
+    "type": "object"
+   }
+  },
+  "items add": {
+   "arguments": [
+    "agent",
+    "excerpt",
+    "owner",
+    "owner_name",
+    "propose",
+    "source_key",
+    "source_kind",
+    "source_title",
+    "source_url",
+    "text"
+   ],
+   "data": {
+    "description": "the item; `created` false when its source key was added before (nothing new was added)",
+    "properties": {
+     "created": {
+      "type": "boolean"
+     },
      "created_at": {
       "type": "string"
      },
@@ -1316,8 +1573,51 @@
        "unclear"
       ]
      },
+     "owner_name": {
+      "type": [
+       "string",
+       "null"
+      ]
+     },
      "p_action": {
       "type": "number"
+     },
+     "page": {
+      "oneOf": [
+       {
+        "type": "null"
+       },
+       {
+        "properties": {
+         "anchor": {
+          "type": "string"
+         },
+         "doc_id": {
+          "type": "string"
+         },
+         "doc_name": {
+          "type": "string"
+         },
+         "page": {
+          "type": "integer"
+         },
+         "page_count": {
+          "type": [
+           "integer",
+           "null"
+          ]
+         }
+        },
+        "required": [
+         "doc_id",
+         "doc_name",
+         "page",
+         "page_count",
+         "anchor"
+        ],
+        "type": "object"
+       }
+      ]
      },
      "paper_text": {
       "type": "string"
@@ -1336,14 +1636,44 @@
        "doc_id": {
         "type": "string"
        },
+       "excerpt": {
+        "type": [
+         "string",
+         "null"
+        ]
+       },
        "folder": {
         "type": "string"
+       },
+       "key": {
+        "type": [
+         "string",
+         "null"
+        ]
+       },
+       "kind": {
+        "type": [
+         "string",
+         "null"
+        ]
        },
        "name": {
         "type": "string"
        },
        "page": {
         "type": "integer"
+       },
+       "title": {
+        "type": [
+         "string",
+         "null"
+        ]
+       },
+       "url": {
+        "type": [
+         "string",
+         "null"
+        ]
        }
       },
       "required": [
@@ -1351,14 +1681,21 @@
        "name",
        "folder",
        "page",
-       "anchor"
+       "anchor",
+       "kind",
+       "key",
+       "title",
+       "url",
+       "excerpt"
       ],
       "type": "object"
      },
      "status": {
       "enum": [
        "open",
-       "done"
+       "done",
+       "proposed",
+       "dismissed"
       ]
      },
      "text": {
@@ -1376,11 +1713,71 @@
      "written",
      "status",
      "owner",
+     "owner_name",
      "p_action",
      "source",
+     "page",
      "edited",
      "slot",
-     "created_at"
+     "created_at",
+     "created"
+    ],
+    "type": "object"
+   }
+  },
+  "items add-batch": {
+   "arguments": [
+    "agent",
+    "propose",
+    "stdin"
+   ],
+   "data": {
+    "properties": {
+     "results": {
+      "items": {
+       "properties": {
+        "error": {
+         "properties": {
+          "code": {
+           "type": "string"
+          },
+          "message": {
+           "type": "string"
+          }
+         },
+         "required": [
+          "code",
+          "message"
+         ],
+         "type": "object"
+        },
+        "id": {
+         "type": "integer"
+        },
+        "index": {
+         "type": "integer"
+        },
+        "outcome": {
+         "enum": [
+          "created",
+          "existing",
+          "dismissed",
+          "invalid",
+          "conflict"
+         ]
+        }
+       },
+       "required": [
+        "index",
+        "outcome"
+       ],
+       "type": "object"
+      },
+      "type": "array"
+     }
+    },
+    "required": [
+     "results"
     ],
     "type": "object"
    }
@@ -1419,8 +1816,51 @@
        "unclear"
       ]
      },
+     "owner_name": {
+      "type": [
+       "string",
+       "null"
+      ]
+     },
      "p_action": {
       "type": "number"
+     },
+     "page": {
+      "oneOf": [
+       {
+        "type": "null"
+       },
+       {
+        "properties": {
+         "anchor": {
+          "type": "string"
+         },
+         "doc_id": {
+          "type": "string"
+         },
+         "doc_name": {
+          "type": "string"
+         },
+         "page": {
+          "type": "integer"
+         },
+         "page_count": {
+          "type": [
+           "integer",
+           "null"
+          ]
+         }
+        },
+        "required": [
+         "doc_id",
+         "doc_name",
+         "page",
+         "page_count",
+         "anchor"
+        ],
+        "type": "object"
+       }
+      ]
      },
      "paper_text": {
       "type": "string"
@@ -1439,14 +1879,44 @@
        "doc_id": {
         "type": "string"
        },
+       "excerpt": {
+        "type": [
+         "string",
+         "null"
+        ]
+       },
        "folder": {
         "type": "string"
+       },
+       "key": {
+        "type": [
+         "string",
+         "null"
+        ]
+       },
+       "kind": {
+        "type": [
+         "string",
+         "null"
+        ]
        },
        "name": {
         "type": "string"
        },
        "page": {
         "type": "integer"
+       },
+       "title": {
+        "type": [
+         "string",
+         "null"
+        ]
+       },
+       "url": {
+        "type": [
+         "string",
+         "null"
+        ]
        }
       },
       "required": [
@@ -1454,14 +1924,21 @@
        "name",
        "folder",
        "page",
-       "anchor"
+       "anchor",
+       "kind",
+       "key",
+       "title",
+       "url",
+       "excerpt"
       ],
       "type": "object"
      },
      "status": {
       "enum": [
        "open",
-       "done"
+       "done",
+       "proposed",
+       "dismissed"
       ]
      },
      "text": {
@@ -1479,8 +1956,10 @@
      "written",
      "status",
      "owner",
+     "owner_name",
      "p_action",
      "source",
+     "page",
      "edited",
      "slot",
      "created_at"
@@ -1491,6 +1970,8 @@
   "items edit": {
    "arguments": [
     "id",
+    "owner",
+    "owner_name",
     "text"
    ],
    "data": {
@@ -1514,8 +1995,51 @@
        "unclear"
       ]
      },
+     "owner_name": {
+      "type": [
+       "string",
+       "null"
+      ]
+     },
      "p_action": {
       "type": "number"
+     },
+     "page": {
+      "oneOf": [
+       {
+        "type": "null"
+       },
+       {
+        "properties": {
+         "anchor": {
+          "type": "string"
+         },
+         "doc_id": {
+          "type": "string"
+         },
+         "doc_name": {
+          "type": "string"
+         },
+         "page": {
+          "type": "integer"
+         },
+         "page_count": {
+          "type": [
+           "integer",
+           "null"
+          ]
+         }
+        },
+        "required": [
+         "doc_id",
+         "doc_name",
+         "page",
+         "page_count",
+         "anchor"
+        ],
+        "type": "object"
+       }
+      ]
      },
      "paper_text": {
       "type": "string"
@@ -1534,14 +2058,44 @@
        "doc_id": {
         "type": "string"
        },
+       "excerpt": {
+        "type": [
+         "string",
+         "null"
+        ]
+       },
        "folder": {
         "type": "string"
+       },
+       "key": {
+        "type": [
+         "string",
+         "null"
+        ]
+       },
+       "kind": {
+        "type": [
+         "string",
+         "null"
+        ]
        },
        "name": {
         "type": "string"
        },
        "page": {
         "type": "integer"
+       },
+       "title": {
+        "type": [
+         "string",
+         "null"
+        ]
+       },
+       "url": {
+        "type": [
+         "string",
+         "null"
+        ]
        }
       },
       "required": [
@@ -1549,14 +2103,21 @@
        "name",
        "folder",
        "page",
-       "anchor"
+       "anchor",
+       "kind",
+       "key",
+       "title",
+       "url",
+       "excerpt"
       ],
       "type": "object"
      },
      "status": {
       "enum": [
        "open",
-       "done"
+       "done",
+       "proposed",
+       "dismissed"
       ]
      },
      "text": {
@@ -1574,8 +2135,186 @@
      "written",
      "status",
      "owner",
+     "owner_name",
      "p_action",
      "source",
+     "page",
+     "edited",
+     "slot",
+     "created_at"
+    ],
+    "type": "object"
+   }
+  },
+  "items get": {
+   "arguments": [
+    "id"
+   ],
+   "data": {
+    "properties": {
+     "created_at": {
+      "type": "string"
+     },
+     "edited": {
+      "type": "boolean"
+     },
+     "id": {
+      "type": "integer"
+     },
+     "origin": {
+      "type": "string"
+     },
+     "owner": {
+      "enum": [
+       "me",
+       "someone_else",
+       "unclear"
+      ]
+     },
+     "owner_name": {
+      "type": [
+       "string",
+       "null"
+      ]
+     },
+     "p_action": {
+      "type": "number"
+     },
+     "page": {
+      "oneOf": [
+       {
+        "type": "null"
+       },
+       {
+        "properties": {
+         "anchor": {
+          "type": "string"
+         },
+         "doc_id": {
+          "type": "string"
+         },
+         "doc_name": {
+          "type": "string"
+         },
+         "page": {
+          "type": "integer"
+         },
+         "page_count": {
+          "type": [
+           "integer",
+           "null"
+          ]
+         }
+        },
+        "required": [
+         "doc_id",
+         "doc_name",
+         "page",
+         "page_count",
+         "anchor"
+        ],
+        "type": "object"
+       }
+      ]
+     },
+     "paper_text": {
+      "type": "string"
+     },
+     "slot": {
+      "type": [
+       "integer",
+       "null"
+      ]
+     },
+     "source": {
+      "properties": {
+       "anchor": {
+        "type": "string"
+       },
+       "doc_id": {
+        "type": "string"
+       },
+       "excerpt": {
+        "type": [
+         "string",
+         "null"
+        ]
+       },
+       "folder": {
+        "type": "string"
+       },
+       "key": {
+        "type": [
+         "string",
+         "null"
+        ]
+       },
+       "kind": {
+        "type": [
+         "string",
+         "null"
+        ]
+       },
+       "name": {
+        "type": "string"
+       },
+       "page": {
+        "type": "integer"
+       },
+       "title": {
+        "type": [
+         "string",
+         "null"
+        ]
+       },
+       "url": {
+        "type": [
+         "string",
+         "null"
+        ]
+       }
+      },
+      "required": [
+       "doc_id",
+       "name",
+       "folder",
+       "page",
+       "anchor",
+       "kind",
+       "key",
+       "title",
+       "url",
+       "excerpt"
+      ],
+      "type": "object"
+     },
+     "status": {
+      "enum": [
+       "open",
+       "done",
+       "proposed",
+       "dismissed"
+      ]
+     },
+     "text": {
+      "type": "string"
+     },
+     "written": {
+      "type": "boolean"
+     }
+    },
+    "required": [
+     "id",
+     "origin",
+     "text",
+     "paper_text",
+     "written",
+     "status",
+     "owner",
+     "owner_name",
+     "p_action",
+     "source",
+     "page",
      "edited",
      "slot",
      "created_at"
@@ -1585,8 +2324,13 @@
   },
   "items list": {
    "arguments": [
+    "cursor",
     "folder",
+    "limit",
     "owner",
+    "query",
+    "source_key",
+    "source_kind",
     "status"
    ],
    "data": {
@@ -1611,8 +2355,51 @@
         "unclear"
        ]
       },
+      "owner_name": {
+       "type": [
+        "string",
+        "null"
+       ]
+      },
       "p_action": {
        "type": "number"
+      },
+      "page": {
+       "oneOf": [
+        {
+         "type": "null"
+        },
+        {
+         "properties": {
+          "anchor": {
+           "type": "string"
+          },
+          "doc_id": {
+           "type": "string"
+          },
+          "doc_name": {
+           "type": "string"
+          },
+          "page": {
+           "type": "integer"
+          },
+          "page_count": {
+           "type": [
+            "integer",
+            "null"
+           ]
+          }
+         },
+         "required": [
+          "doc_id",
+          "doc_name",
+          "page",
+          "page_count",
+          "anchor"
+         ],
+         "type": "object"
+        }
+       ]
       },
       "paper_text": {
        "type": "string"
@@ -1631,14 +2418,44 @@
         "doc_id": {
          "type": "string"
         },
+        "excerpt": {
+         "type": [
+          "string",
+          "null"
+         ]
+        },
         "folder": {
          "type": "string"
+        },
+        "key": {
+         "type": [
+          "string",
+          "null"
+         ]
+        },
+        "kind": {
+         "type": [
+          "string",
+          "null"
+         ]
         },
         "name": {
          "type": "string"
         },
         "page": {
          "type": "integer"
+        },
+        "title": {
+         "type": [
+          "string",
+          "null"
+         ]
+        },
+        "url": {
+         "type": [
+          "string",
+          "null"
+         ]
         }
        },
        "required": [
@@ -1646,14 +2463,21 @@
         "name",
         "folder",
         "page",
-        "anchor"
+        "anchor",
+        "kind",
+        "key",
+        "title",
+        "url",
+        "excerpt"
        ],
        "type": "object"
       },
       "status": {
        "enum": [
         "open",
-        "done"
+        "done",
+        "proposed",
+        "dismissed"
        ]
       },
       "text": {
@@ -1671,8 +2495,10 @@
       "written",
       "status",
       "owner",
+      "owner_name",
       "p_action",
       "source",
+      "page",
       "edited",
       "slot",
       "created_at"
@@ -1707,8 +2533,51 @@
        "unclear"
       ]
      },
+     "owner_name": {
+      "type": [
+       "string",
+       "null"
+      ]
+     },
      "p_action": {
       "type": "number"
+     },
+     "page": {
+      "oneOf": [
+       {
+        "type": "null"
+       },
+       {
+        "properties": {
+         "anchor": {
+          "type": "string"
+         },
+         "doc_id": {
+          "type": "string"
+         },
+         "doc_name": {
+          "type": "string"
+         },
+         "page": {
+          "type": "integer"
+         },
+         "page_count": {
+          "type": [
+           "integer",
+           "null"
+          ]
+         }
+        },
+        "required": [
+         "doc_id",
+         "doc_name",
+         "page",
+         "page_count",
+         "anchor"
+        ],
+        "type": "object"
+       }
+      ]
      },
      "paper_text": {
       "type": "string"
@@ -1727,14 +2596,44 @@
        "doc_id": {
         "type": "string"
        },
+       "excerpt": {
+        "type": [
+         "string",
+         "null"
+        ]
+       },
        "folder": {
         "type": "string"
+       },
+       "key": {
+        "type": [
+         "string",
+         "null"
+        ]
+       },
+       "kind": {
+        "type": [
+         "string",
+         "null"
+        ]
        },
        "name": {
         "type": "string"
        },
        "page": {
         "type": "integer"
+       },
+       "title": {
+        "type": [
+         "string",
+         "null"
+        ]
+       },
+       "url": {
+        "type": [
+         "string",
+         "null"
+        ]
        }
       },
       "required": [
@@ -1742,14 +2641,21 @@
        "name",
        "folder",
        "page",
-       "anchor"
+       "anchor",
+       "kind",
+       "key",
+       "title",
+       "url",
+       "excerpt"
       ],
       "type": "object"
      },
      "status": {
       "enum": [
        "open",
-       "done"
+       "done",
+       "proposed",
+       "dismissed"
       ]
      },
      "text": {
@@ -1767,8 +2673,10 @@
      "written",
      "status",
      "owner",
+     "owner_name",
      "p_action",
      "source",
+     "page",
      "edited",
      "slot",
      "created_at"
@@ -1849,7 +2757,9 @@
    }
   },
   "mcp": {
-   "arguments": [],
+   "arguments": [
+    "admin"
+   ],
    "data": {
     "description": "an MCP server on stdio; no JSON output"
    }
@@ -1932,7 +2842,16 @@
      "include_others": {
       "type": "boolean"
      },
+     "mcp_add_mode": {
+      "enum": [
+       "auto",
+       "propose_all"
+      ]
+     },
      "poll_interval_s": {
+      "type": "integer"
+     },
+     "proposed_limit": {
       "type": "integer"
      },
      "todo_enabled": {
@@ -1959,7 +2878,9 @@
      "todo_enabled",
      "todo_name",
      "todo_folder",
-     "from_now"
+     "from_now",
+     "mcp_add_mode",
+     "proposed_limit"
     ],
     "type": "object"
    }
@@ -1983,7 +2904,16 @@
      "include_others": {
       "type": "boolean"
      },
+     "mcp_add_mode": {
+      "enum": [
+       "auto",
+       "propose_all"
+      ]
+     },
      "poll_interval_s": {
+      "type": "integer"
+     },
+     "proposed_limit": {
       "type": "integer"
      },
      "todo_enabled": {
@@ -2010,7 +2940,9 @@
      "todo_enabled",
      "todo_name",
      "todo_folder",
-     "from_now"
+     "from_now",
+     "mcp_add_mode",
+     "proposed_limit"
     ],
     "type": "object"
    }
@@ -2160,11 +3092,15 @@
        },
        "open": {
         "type": "integer"
+       },
+       "proposed": {
+        "type": "integer"
        }
       },
       "required": [
        "open",
-       "done"
+       "done",
+       "proposed"
       ],
       "type": "object"
      },
@@ -2341,7 +3277,16 @@
        "include_others": {
         "type": "boolean"
        },
+       "mcp_add_mode": {
+        "enum": [
+         "auto",
+         "propose_all"
+        ]
+       },
        "poll_interval_s": {
+        "type": "integer"
+       },
+       "proposed_limit": {
         "type": "integer"
        },
        "todo_enabled": {
@@ -2368,7 +3313,9 @@
        "todo_enabled",
        "todo_name",
        "todo_folder",
-       "from_now"
+       "from_now",
+       "mcp_add_mode",
+       "proposed_limit"
       ],
       "type": "object"
      },
@@ -2400,7 +3347,16 @@
          "include_others": {
           "type": "boolean"
          },
+         "mcp_add_mode": {
+          "enum": [
+           "auto",
+           "propose_all"
+          ]
+         },
          "poll_interval_s": {
+          "type": "integer"
+         },
+         "proposed_limit": {
           "type": "integer"
          },
          "todo_enabled": {
@@ -2427,7 +3383,9 @@
          "todo_enabled",
          "todo_name",
          "todo_folder",
-         "from_now"
+         "from_now",
+         "mcp_add_mode",
+         "proposed_limit"
         ],
         "type": "object"
        }
@@ -2500,18 +3458,43 @@
    "limit",
    "since"
   ],
+  "items.accept": [
+   "every",
+   "ids",
+   "source_kind"
+  ],
   "items.add": [
+   "agent",
+   "owner",
+   "owner_name",
+   "propose",
+   "source",
    "text"
+  ],
+  "items.add_batch": [
+   "agent",
+   "items",
+   "propose"
   ],
   "items.edit": [
    "dismissed",
    "item_id",
+   "owner",
+   "owner_name",
    "status",
    "text"
   ],
+  "items.get": [
+   "item_id"
+  ],
   "items.list": [
+   "cursor",
    "folder",
+   "limit",
    "owner",
+   "query",
+   "source_key",
+   "source_kind",
    "status"
   ],
   "library": [],
@@ -2522,7 +3505,8 @@
   "page.image": [
    "anchor",
    "doc_id",
-   "page"
+   "page",
+   "width"
   ],
   "pending": [
    "fetch"

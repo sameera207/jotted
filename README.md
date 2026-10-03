@@ -146,6 +146,7 @@ The CLI is the product's one public interface: everything the web app does is a 
 | `jotted serve [--no-browser] [--port 0]` | The web app, background checking and the CLI's fast path |
 | `jotted version` / `jotted schema` | Release and contract versions; every command and the shape of its data |
 | `jotted mcp` | Jotted's operations as MCP tools, for agents |
+| `jotted claude connect` | Add Jotted to Claude Desktop (`claude status`, `claude disconnect`) |
 
 ### For scripts and apps
 
@@ -162,7 +163,7 @@ Branch on `code`, never on `message`. Each code has its own exit status: `invali
 
 While `jotted serve` runs, CLI commands are handed to it instead of starting the work themselves (it writes `serve.json` next to the database); the output is the same. `--local` runs a command in its own process anyway.
 
-For agents: `jotted mcp` serves the to-do list, library, watching, settings, checks, status and setup status as MCP tools on stdio. Keys never go through it. An agent with a shell can also run `jotted --json …` directly; `jotted schema` describes every command.
+For agents: `jotted mcp` serves the to-do list, status and setup status as MCP tools on stdio; `jotted claude connect` adds it to Claude Desktop. What an agent finds in other documents (meeting docs, mail, tickets) it proposes, and proposals wait for you to accept them before they reach the list or the tablet. The library, watching, settings and checks are offered only with `jotted mcp --admin`. Keys never go through it. An agent with a shell can also run `jotted --json …` directly; `jotted schema` describes every command.
 
 `jotted serve` (what `jotted start` runs) does the same work in the background and serves the web app. A CLI command that needs your device while the server is checking it waits for it: one job at a time, across processes.
 

@@ -26,15 +26,26 @@ STR, INT, NUM, BOOL = {"type": "string"}, {"type": "integer"}, {"type": "number"
 NSTR = {"type": ["string", "null"]}
 ANY = {}
 
+NINT = {"type": ["integer", "null"]}
 ITEM = _obj({
-    "id": INT, "origin": STR, "text": STR, "paper_text": STR, "written": BOOL, "status": {"enum": ["open", "done"]},
-    "owner": {"enum": ["me", "someone_else", "unclear"]}, "p_action": NUM,
-    "source": _obj({"doc_id": STR, "name": STR, "folder": STR, "page": INT, "anchor": STR}),
-    "edited": BOOL, "slot": {"type": ["integer", "null"]}, "created_at": STR,
+    "id": INT, "origin": STR, "text": STR, "paper_text": STR, "written": BOOL,
+    "status": {"enum": ["open", "done", "proposed", "dismissed"]},
+    "owner": {"enum": ["me", "someone_else", "unclear"]}, "owner_name": NSTR, "p_action": NUM,
+    "source": _obj({"doc_id": STR, "name": STR, "folder": STR, "page": INT, "anchor": STR,
+                    "kind": NSTR, "key": NSTR, "title": NSTR, "url": NSTR, "excerpt": NSTR}),
+    "page": {"oneOf": [{"type": "null"}, _obj({"doc_id": STR, "doc_name": STR, "page": INT, "page_count": NINT,
+                                               "anchor": STR})]},
+    "edited": BOOL, "slot": NINT, "created_at": STR,
 })
+ADDED = {**ITEM, "properties": {**ITEM["properties"], "created": BOOL}, "required": [*ITEM["required"], "created"],
+         "description": "the item; `created` false when its source key was added before (nothing new was added)"}
+CLAUDE_CHANGE = _obj({"changed": BOOL, "config_path": STR, "backup_path": NSTR, "restart_required": BOOL,
+                      "entry": {"type": "object"}, "dry_run": BOOL},
+                     required=["changed", "config_path", "backup_path", "restart_required"])
 SETTINGS = _obj({
     "watch": _arr(STR), "action_threshold": NUM, "poll_interval_s": INT, "include_others": BOOL,
     "todo_enabled": BOOL, "todo_name": STR, "todo_folder": STR, "from_now": _arr(STR),
+    "mcp_add_mode": {"enum": ["auto", "propose_all"]}, "proposed_limit": INT,
 })
 KEY = _obj({"set": BOOL, "source": {"enum": ["saved", "environment", None]}, "hint": NSTR})
 AI = _obj({
@@ -48,7 +59,7 @@ STEPS = _obj({"complete": BOOL, "steps": _arr(_obj({
     "id": STR, "title": STR, "done": BOOL, "optional": BOOL, "command": STR, "detail": STR},
     required=["id", "title", "done"]))})
 EVENT = _obj({"cursor": INT, "at": STR, "type": {"enum": [
-    "item.added", "item.changed", "item.removed", "check.started", "check.finished", "todo.published",
+    "item.added", "item.changed", "item.removed", "item.proposed", "item.accepted", "check.started", "check.finished", "todo.published",
     "settings.changed", "source.error"]}}, required=["cursor", "at", "type"])
 SVG = {"oneOf": [_obj({"svg": STR}), _obj({"path": STR})]}
 
@@ -63,7 +74,13 @@ DATA: dict[str, dict] = {
     "ai": AI, "ai key": AI, "ai remove": AI, "ai provider": AI, "ai model": AI,
     "plugins": _obj({"chosen": NSTR, "installed": _arr(_obj({"name": STR, "label": STR, "module": STR,
                                                              "chosen": BOOL}, required=["name", "module", "chosen"]))}),
-    "items": _arr(ITEM), "items list": _arr(ITEM), "items add": ITEM, "items edit": ITEM, "items done": ITEM,
+    "items": _arr(ITEM), "items list": _arr(ITEM), "items get": ITEM, "items add": ADDED,
+    "items add-batch": _obj({"results": _arr(_obj({
+        "index": INT, "outcome": {"enum": ["created", "existing", "dismissed", "invalid", "conflict"]},
+        "id": INT, "error": _obj({"code": STR, "message": STR})}, required=["index", "outcome"]))}),
+    "items accept": _obj({"accepted": _arr(INT), "skipped": _arr(_obj({
+        "id": INT, "reason": {"enum": ["not_found", "not_proposed"]}}))}),
+    "items edit": ITEM, "items done": ITEM,
     "items reopen": ITEM, "items dismiss": {"type": "object", "description": "empty: the item is gone"},
     "library": _obj({
         "folders": _arr(_obj({"path": STR, "documents": INT, "watched": BOOL})),
@@ -80,7 +97,7 @@ DATA: dict[str, dict] = {
     "todo": _obj({"enabled": BOOL}, required=[]),
     "check": _obj({"collect": ANY, "todo": ANY}, required=[]),
     "status": _obj({"source": SOURCE, "judge": STR, "watch": _arr(STR), "documents_read": INT,
-                    "last_collected_at": NSTR, "items": _obj({"open": INT, "done": INT}),
+                    "last_collected_at": NSTR, "items": _obj({"open": INT, "done": INT, "proposed": INT}),
                     "todo": _obj({"enabled": BOOL, "name": STR, "folder": STR, "published_at": NSTR}),
                     "background": ANY}),
     "image page": SVG, "image line": SVG,
@@ -93,6 +110,9 @@ DATA: dict[str, dict] = {
                      "bundled": BOOL}),
     "schema": {"type": "object", "description": "this document"},
     "mcp": {"description": "an MCP server on stdio; no JSON output"},
+    "claude connect": CLAUDE_CHANGE, "claude disconnect": CLAUDE_CHANGE,
+    "claude status": _obj({"configured": BOOL, "config_path": STR, "command": NSTR, "command_exists": BOOL,
+                           "matches_current": BOOL, "admin": BOOL}),
     "config check": _obj({"path": STR, "config": {"type": "object"}, "source": SOURCE, "ai": AI}),
 }
 

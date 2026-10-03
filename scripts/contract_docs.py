@@ -146,9 +146,14 @@ def errors_block(d: dict) -> str:
 
 def mcp_block(d: dict) -> str:
     rows = ["| Tool | Runs | What it does |", "| --- | --- | --- |"]
-    for name, (command, description) in mcp.TOOLS.items():
-        rows.append(f"| `{name}` | `jotted {command}` | {_cell(description)} |")
-    rows += ["", "Never exposed (they take a secret): " + ", ".join(f"`{c}`" for c in sorted(mcp.NEVER)) + "."]
+    for name, tool in mcp.TOOLS.items():
+        runs = tool.runs or " ".join(["jotted", tool.command, *tool.fixed])
+        notes = (" Only with `jotted mcp --admin`." if tool.admin else "") + \
+            (" For the widget only (`visibility: [\"app\"]`)." if tool.app_only else "") + \
+            (f" Opens the widget (`{mcp.mcp_ui.URI}`)." if tool.widget else "")
+        rows.append(f"| `{name}` | `{runs}` | {_cell(tool.description)}{notes} |")
+    rows += ["", "Never exposed (they take a secret, or rewire an app): "
+             + ", ".join(f"`{c}`" for c in sorted(mcp.NEVER)) + "."]
     return "\n".join(rows) + "\n"
 
 

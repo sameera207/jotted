@@ -416,7 +416,7 @@ def test_include_others_setting(repo):
 
 
 def test_items_added_on_the_web_are_printed_and_ticked_like_any_other(repo):
-    item_id = repo.add_item("- Call the plumber")
+    item_id, _ = repo.add_item("- Call the plumber")
     pub = FakePublisher()
     service.sync_todo(repo, pub)
     entry = next(e for e in pub.published[-1] if e.item_id == item_id)
@@ -459,7 +459,8 @@ def test_tasks_from_the_retired_notebook_become_items_and_keep_their_rows(tmp_pa
     assert set(items) == {"call Bob about invoices", "from the web"}  # the erased task stays behind
     paper, web = items["call Bob about invoices"], items["from the web"]
     assert paper["origin"] == "remarkable" and paper["edited"] and paper["paper_text"] == "call Bob"
-    assert paper["source"] == {"doc_id": "nb", "name": "Tasks", "folder": "/", "page": 1, "anchor": "1:14"}
+    assert paper["source"] == {"doc_id": "nb", "name": "Tasks", "folder": "/", "page": 1, "anchor": "1:14",
+                               "kind": "remarkable", "key": "nb:1:14", "title": "Tasks", "url": None, "excerpt": None}
     assert paper["slot"] == 4  # still in its row on the To-do document
     assert repo.source_line("nb", "1:14")["bbox"] == [-400, 200, 200, 280]  # its handwriting can be shown
     assert web["origin"] == "web" and web["status"] == "done"

@@ -1,8 +1,12 @@
 """SQLite implementation of the core's Repository port.
 
-Every item lives in `actions`, whatever its origin (`source`): "remarkable" (collected
-from a watched document), "todo" (written by hand in an empty row of the To-do
-document) or "web" (added in the web app).
+Every item lives in `actions`, whatever its origin (`source`): the source plugin's name
+(collected from a watched document), "todo" (written by hand in an empty row of the To-do
+document), "web" (typed in the web app or the CLI) or "agent" (added by an agent, usually
+from another document it read: `source_kind`/`source_key` say which line).
+
+An item is open or done (`status`); `proposed` items wait for the person to accept them and
+`dismissed` ones are kept, so their source line is never added again.
 """
 
 from __future__ import annotations
@@ -17,9 +21,12 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from ..core.model import DocInfo, Judgment, PageInfo, Settings, SourceLine, TodoEntry, WrittenItem
+from ..core.ports import ListFull, StateConflict
 
 BULLETS = "-–—•*·>"
 WEB_DOC = "web"  # doc_id of items added in the web app
+AGENT = "agent"  # origin, and doc_id, of items an agent added
+TYPED = ("web", AGENT)  # origins with no handwriting behind them
 
 
 def clean_text(text: str) -> str:
@@ -130,6 +137,18 @@ CREATE TABLE IF NOT EXISTS events (
 CREATE INDEX IF NOT EXISTS events_at ON events (at);
 """
 
+# Columns added to `actions` since its first release, added to older databases on start.
+ADDED_COLUMNS = {
+    "written": "INTEGER NOT NULL DEFAULT 0",  # 1 = written by hand on the To-do document itself
+    "proposed": "INTEGER NOT NULL DEFAULT 0",  # 1 = waiting to be accepted; never on the To-do document
+    "owner_name": "TEXT",
+    "source_kind": "TEXT",  # where the item came from: the plugin's name, "todo", "gdoc", "gmail"...
+    "source_key": "TEXT",  # the line, message or ticket there; unique with its kind
+    "source_title": "TEXT",
+    "source_url": "TEXT",
+    "excerpt": "TEXT",
+}
+
 EVENTS_KEPT_S = 7 * 24 * 3600  # a week
 PRUNE_EVERY = 500  # events between prunes
 
@@ -160,11 +179,18 @@ class _Changes:
     def emit(self) -> None:
         for item_id, before in self.before.items():
             after = self.repo._item_in(self.db, item_id)
-            if before is None and after is not None:
-                self.repo._event(self.db, "item.added", item=after)
-            elif before is not None and after is None:
+            if before == after:
+                continue
+            if after is None:
                 self.repo._event(self.db, "item.removed", item={"id": item_id})
-            elif before != after:
+            elif after["status"] == "proposed":  # not on the list yet: wrappers showing the list skip these
+                self.repo._event(self.db, "item.proposed", item=after)
+            elif before is None:
+                self.repo._event(self.db, "item.added", item=after)
+            elif before["status"] == "proposed":  # now on the list: added, for wrappers that don't know accepting
+                self.repo._event(self.db, "item.accepted", item=after)
+                self.repo._event(self.db, "item.added", item=after)
+            else:
                 self.repo._event(self.db, "item.changed", item=after)
 
 
@@ -175,13 +201,20 @@ class SqliteRepository:
         with self.db() as db:
             db.executescript(SCHEMA)
             cols = {r["name"] for r in db.execute("PRAGMA table_info(actions)")}
-            if "written" not in cols:  # 1 = written by hand on the To-do document itself
+            for name, decl in ADDED_COLUMNS.items():
+                if name in cols:
+                    continue
                 try:
-                    db.execute("ALTER TABLE actions ADD COLUMN written INTEGER NOT NULL DEFAULT 0")
+                    db.execute(f"ALTER TABLE actions ADD COLUMN {name} {decl}")
                 except sqlite3.OperationalError as e:  # another app starting at the same time added it
                     if "duplicate column" not in str(e):
                         raise
             self._migrate_tasks(db)
+            # Handwritten items are keyed by their line, so one rule finds a duplicate whatever its origin.
+            db.execute("UPDATE actions SET source_kind = source, source_key = doc_id || ':' || anchor "
+                       "WHERE source_key IS NULL AND source NOT IN (?, ?)", TYPED)
+            db.execute("CREATE UNIQUE INDEX IF NOT EXISTS actions_source ON actions (source_kind, source_key) "
+                       "WHERE source_key IS NOT NULL")
 
     @contextmanager
     def db(self):
@@ -392,9 +425,11 @@ class SqliteRepository:
                         cur = db.execute(
                             """INSERT INTO actions (source, doc_id, doc_name, folder, page_id, page_index, anchor, bbox,
                                  text, paper_text, owner, p_action, text_changed_at, status_changed_at, created_at,
-                                 updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                                 updated_at, source_kind, source_key)
+                               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                             (doc.source, doc.id, doc.name, doc.folder, page.id, page.index, ln.anchor, _bbox(ln.bbox),
-                             text, text, owner or "unclear", p_action, paper_at, paper_at, stamp, stamp),
+                             text, text, owner or "unclear", p_action, paper_at, paper_at, stamp, stamp,
+                             doc.source, f"{doc.id}:{ln.anchor}"),
                         )
                         changes.new(cur.lastrowid)
                         added += 1
@@ -435,14 +470,26 @@ class SqliteRepository:
 
     # ------------------------------------------------------------ the combined list
 
-    def items(self, status: str | None = None, owner: str | None = None, folder: str | None = None) -> list[dict]:
-        """Every item on the list, for the web app."""
+    # Items with the page count of their document (None when it isn't one that was read).
+    SELECT_ITEMS = ("SELECT a.*, (SELECT MAX(page_count) FROM source_docs d WHERE d.id = a.doc_id) AS doc_pages "
+                    "FROM actions a")
+
+    def items(self, status: str | None = None, owner: str | None = None, folder: str | None = None, *,
+              source_kind: str | None = None, source_key: str | None = None, query: str | None = None,
+              after: int | None = None, limit: int | None = None) -> list[dict]:
+        """Items in list order. `status` is open, done, proposed, dismissed or "any"; without one,
+        the list itself (open and done). `after` is the id of the last item already seen."""
         with self.db() as db:
             slots = {r["item_id"]: r["slot"] for r in db.execute("SELECT * FROM todo_slots")}
             out = [self._item_dict(r, slots.get(r["id"])) for r in db.execute(
-                "SELECT * FROM actions WHERE dismissed = 0 AND missing = 0 ORDER BY created_at, id")]
-        if status:
-            out = [i for i in out if i["status"] == status]
+                self.SELECT_ITEMS + " WHERE a.missing = 0 ORDER BY a.created_at, a.id")]
+            if after is not None:
+                mark = db.execute("SELECT created_at, id FROM actions WHERE id = ?", (after,)).fetchone()
+                if mark is None:
+                    raise KeyError(after)
+        if status != "any":
+            wanted = (status,) if status else ("open", "done")
+            out = [i for i in out if i["status"] in wanted]
         if owner == "mine":
             out = [i for i in out if i["owner"] in ("me", "unclear")]
         elif owner == "others":
@@ -450,50 +497,99 @@ class SqliteRepository:
         if folder:
             f = "/" + folder.strip("/")
             out = [i for i in out if (i["source"]["folder"] + "/").startswith(f.rstrip("/") + "/")]
-        return out
+        if source_kind:
+            out = [i for i in out if i["source"]["kind"] == source_kind]
+        if source_key:
+            out = [i for i in out if i["source"]["key"] == source_key]
+        if query:
+            q = query.casefold()
+            out = [i for i in out if q in i["text"].casefold() or q in (i["source"]["title"] or "").casefold()]
+        if after is not None:
+            out = [i for i in out if (i["created_at"], i["id"]) > (mark["created_at"], mark["id"])]
+        return out[:limit] if limit else out
 
     @staticmethod
     def _item_dict(r, slot: int | None) -> dict:
+        typed = r["source"] in TYPED
+        status = "dismissed" if r["dismissed"] else "proposed" if r["proposed"] else r["status"]
         return {
             "id": r["id"], "origin": r["source"], "text": r["text"], "paper_text": r["paper_text"],
             "written": bool(r["written"]), "bbox": json.loads(r["bbox"]) if r["bbox"] else None,
-            "status": r["status"], "owner": r["owner"], "p_action": round(r["p_action"], 2),
+            "status": status, "owner": r["owner"], "owner_name": r["owner_name"], "p_action": round(r["p_action"], 2),
             "source": {"doc_id": r["doc_id"], "name": r["doc_name"], "folder": r["folder"],
-                       "page": r["page_index"], "anchor": r["anchor"]},
-            "edited": r["source"] != "web" and r["text"] != r["paper_text"], "slot": slot,
+                       "page": r["page_index"], "anchor": r["anchor"],
+                       "kind": r["source_kind"], "key": r["source_key"],
+                       "title": r["source_title"] or (None if typed else r["doc_name"]),
+                       "url": r["source_url"], "excerpt": r["excerpt"]},
+            "page": None if typed or not r["page_id"] else {
+                "doc_id": r["doc_id"], "doc_name": r["doc_name"], "page": r["page_index"],
+                "page_count": r["doc_pages"], "anchor": r["anchor"]},
+            "edited": not typed and r["text"] != r["paper_text"], "slot": slot,
             "created_at": r["created_at"],
         }
 
     def _item_in(self, db, item_id: int) -> dict | None:
-        """An item as `items` lists it, inside a transaction; None if it isn't on the list."""
-        r = db.execute("SELECT * FROM actions WHERE id = ? AND dismissed = 0 AND missing = 0", (item_id,)).fetchone()
+        """An item inside a transaction, for its events; None if it isn't (or is no longer) an item:
+        dismissed, or its line gone."""
+        r = db.execute(self.SELECT_ITEMS + " WHERE a.id = ? AND a.dismissed = 0 AND a.missing = 0",
+                       (item_id,)).fetchone()
         if r is None:
             return None
         slot = db.execute("SELECT slot FROM todo_slots WHERE item_id = ?", (item_id,)).fetchone()
         return self._item_dict(r, slot["slot"] if slot else None)
 
     def item(self, item_id: int) -> dict:
-        found = next((i for i in self.items() if i["id"] == item_id), None)
-        if found is None:
+        """One item in any status, dismissed ones included; KeyError if there is none."""
+        with self.db() as db:
+            r = db.execute(self.SELECT_ITEMS + " WHERE a.id = ? AND a.missing = 0", (item_id,)).fetchone()
+            slot = db.execute("SELECT slot FROM todo_slots WHERE item_id = ?", (item_id,)).fetchone()
+        if r is None:
             raise KeyError(item_id)
-        return found
+        return self._item_dict(r, slot["slot"] if slot else None)
 
-    def add_item(self, text: str) -> int:
-        """An item typed in the web app: yours, and printed on the To-do document at its next update."""
+    def add_item(self, text: str, *, origin: str = "web", owner: str = "me", owner_name: str | None = None,
+                 source: dict | None = None, proposed: bool = False,
+                 proposed_limit: int | None = None) -> tuple[int, str]:
+        """An item typed in the web app or the CLI, or added by an agent. With a source key it is
+        added once: a second add finds it. Returns (id, outcome): "created"; "updated" (a proposed
+        item's text changed); "existing"; "dismissed" (the person turned it down: left alone)."""
         text = clean_text(text)
         if not text:
             raise ValueError("The item is empty")
+        source = source or {}
+        kind, key = source.get("kind"), source.get("key")
         stamp = now()
         with self._tracked() as (db, changes):
+            if key:
+                row = db.execute("SELECT * FROM actions WHERE source_kind = ? AND source_key = ?",
+                                 (kind, key)).fetchone()
+                if row is not None:
+                    if row["dismissed"]:
+                        return row["id"], "dismissed"
+                    if row["proposed"] and text != row["text"]:
+                        changes(row["id"])
+                        self._update(db, "actions", row["id"], {"text": text, "paper_text": text,
+                                                                "text_changed_at": stamp}, stamp)
+                        return row["id"], "updated"
+                    return row["id"], "existing"
+            if proposed and proposed_limit is not None:
+                waiting = db.execute("SELECT COUNT(*) FROM actions WHERE proposed = 1 AND dismissed = 0 "
+                                     "AND missing = 0").fetchone()[0]
+                if waiting >= proposed_limit:
+                    raise ListFull(f"There are already {waiting} proposed items; accept or dismiss some first")
             cur = db.execute(
                 """INSERT INTO actions (source, doc_id, doc_name, folder, page_id, page_index, anchor, text,
-                     paper_text, owner, p_action, text_changed_at, status_changed_at, created_at, updated_at)
-                   VALUES ('web', ?, '', '', '', 0, ?, ?, ?, 'me', 1.0, ?, ?, ?, ?)""",
-                (WEB_DOC, uuid.uuid4().hex, text, text, stamp, stamp, stamp, stamp),
+                     paper_text, owner, owner_name, p_action, text_changed_at, status_changed_at, created_at,
+                     updated_at, proposed, source_kind, source_key, source_title, source_url, excerpt)
+                   VALUES (?, ?, ?, '', '', 0, ?, ?, ?, ?, ?, 1.0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (origin, AGENT if origin == AGENT else WEB_DOC, source.get("title") or "", uuid.uuid4().hex,
+                 text, text, owner, owner_name, stamp, stamp, stamp, stamp, int(proposed), kind, key,
+                 source.get("title"), source.get("url"), source.get("excerpt")),
             )
             changes.new(cur.lastrowid)
-            self._web_changed(db, stamp)
-        return int(cur.lastrowid)
+            if not proposed:
+                self._web_changed(db, stamp)
+        return int(cur.lastrowid), "created"
 
     @staticmethod
     def _web_changed(db, stamp: str) -> None:
@@ -501,7 +597,9 @@ class SqliteRepository:
                    "ON CONFLICT (key) DO UPDATE SET value = excluded.value", (stamp,))
 
     def edit_action(self, action_id: int, *, text: str | None = None, status: str | None = None,
-                    dismissed: bool | None = None) -> dict:
+                    dismissed: bool | None = None, owner: str | None = None, owner_name: str | None = None) -> dict:
+        """Returns the item, or {} once dismissed. A dismissed item can't change; a proposed one
+        can be reworded or dismissed, but is ticked only once accepted."""
         stamp = now()
         with self._tracked() as (db, changes):
             row = db.execute("SELECT * FROM actions WHERE id = ?", (action_id,)).fetchone()
@@ -515,12 +613,45 @@ class SqliteRepository:
                 if status not in ("open", "done"):
                     raise ValueError("status must be 'open' or 'done'")
                 values.update(status=status, status_changed_at=stamp)
+            if owner is not None and owner != row["owner"]:
+                values["owner"] = owner
+            if owner_name is not None and owner_name != row["owner_name"]:
+                values["owner_name"] = owner_name or None
+            if values and row["dismissed"]:
+                raise StateConflict(f"Item {action_id} was dismissed")
+            if row["proposed"] and ("status" in values or (status == "open" and not row["dismissed"])):
+                raise StateConflict(f"Item {action_id} is proposed: accept it first")
             if dismissed is not None:
                 values["dismissed"] = int(dismissed)
             if values:
                 self._update(db, "actions", action_id, values, stamp)
                 self._web_changed(db, stamp)
         return self.item(action_id) if not dismissed else {}
+
+    def accept(self, ids: list[int] | None, source_kind: str | None = None) -> tuple[list[int], list[dict]]:
+        """Proposed items onto the list: `ids`, or (None) every proposed one, of `source_kind` if given.
+        Returns the ids accepted and those skipped, with why (not_found, not_proposed)."""
+        stamp = now()
+        accepted, skipped = [], []
+        with self._tracked() as (db, changes):
+            if ids is None:
+                ids = [r["id"] for r in db.execute(
+                    "SELECT id FROM actions WHERE proposed = 1 AND dismissed = 0 AND missing = 0 "
+                    "AND (? IS NULL OR source_kind = ?) ORDER BY created_at, id", (source_kind, source_kind))]
+            for item_id in ids:
+                row = db.execute("SELECT * FROM actions WHERE id = ? AND missing = 0", (item_id,)).fetchone()
+                if row is None:
+                    skipped.append({"id": item_id, "reason": "not_found"})
+                elif not row["proposed"] or row["dismissed"]:
+                    skipped.append({"id": item_id, "reason": "not_proposed"})
+                elif item_id not in accepted:
+                    changes(item_id)
+                    self._update(db, "actions", item_id, {"proposed": 0, "status": "open",
+                                                          "status_changed_at": stamp}, stamp)
+                    accepted.append(item_id)
+            if accepted:
+                self._web_changed(db, stamp)
+        return accepted, skipped
 
     def source_line(self, doc_id: str, anchor: str) -> dict | None:
         with self.db() as db:
@@ -573,6 +704,9 @@ class SqliteRepository:
                 label = "written on an earlier To-do"
             elif i["origin"] == "web":
                 label = "added in Jotted"
+            elif i["origin"] == AGENT:
+                kind, title = i["source"]["kind"], i["source"]["title"]
+                label = f"{kind} › {title}" if kind and title else (title or kind or "added by an agent")
             else:
                 folder = src["folder"].strip("/") or "Library"
                 label = f"{folder} › {src['name']} · p{src['page']}"
@@ -626,9 +760,10 @@ class SqliteRepository:
                 cur = db.execute(
                     """INSERT OR IGNORE INTO actions (source, doc_id, doc_name, folder, page_id, page_index, anchor,
                          bbox, text, paper_text, owner, p_action, text_changed_at, status_changed_at, created_at,
-                         updated_at, written) VALUES ('todo', ?, ?, ?, ?, ?, ?, ?, ?, ?, 'me', 1.0, ?, ?, ?, ?, 1)""",
+                         updated_at, written, source_kind, source_key)
+                       VALUES ('todo', ?, ?, ?, ?, ?, ?, ?, ?, ?, 'me', 1.0, ?, ?, ?, ?, 1, 'todo', ?)""",
                     (doc_id, settings.todo_name, settings.todo_folder, w.page_id, w.page_index, w.anchor,
-                     _bbox(w.bbox), text, text, stamp, stamp, stamp, stamp),
+                     _bbox(w.bbox), text, text, stamp, stamp, stamp, stamp, f"{doc_id}:{w.anchor}"),
                 )
                 if not cur.rowcount:
                     continue

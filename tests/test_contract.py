@@ -371,7 +371,7 @@ def test_schema_covers_every_command_and_operation(cfg, capsys):
     assert not missing, f"commands without a data shape: {missing}"
     items_list = next(c for c in s["commands"] if c["command"] == "items list")
     status = next(a for a in items_list["arguments"] if a["name"] == "status")
-    assert status["enum"] == ["open", "done", "all"] and status["default"] == "open"
+    assert status["enum"][:3] == ["open", "done", "all"] and status["default"] == "open"
     assert next(c for c in s["commands"] if c["command"] == "auth")["deprecated"]
 
 
@@ -532,13 +532,27 @@ def test_mcp_serves_the_operations_as_tools_without_secrets(cfg):
     ])
     assert init["result"]["serverInfo"]["name"] == "jotted" and "tools" in init["result"]["capabilities"]
     names = {t["name"] for t in listed["result"]["tools"]}
-    assert names == {"items_list", "items_add", "items_edit", "items_done", "items_reopen", "items_dismiss",
-                     "library", "watch", "settings_get", "settings_set", "check", "status", "setup_status"}
+    assert names == {"items_list", "items_get", "items_add", "items_propose", "items_edit", "items_done",
+                     "items_reopen", "items_dismiss", "items_accept", "show_list", "status", "setup_status"}
     assert not any("key" in n or "connect" in n for n in names)
     add = next(t for t in listed["result"]["tools"] if t["name"] == "items_add")
-    assert add["inputSchema"]["required"] == ["text"]
+    assert add["inputSchema"]["required"] == ["text"] and "propose" not in add["inputSchema"]["properties"]
+    assert "agent" not in add["inputSchema"]["properties"] and "source" in add["inputSchema"]["properties"]
     done = next(t for t in listed["result"]["tools"] if t["name"] == "items_done")
     assert done["inputSchema"]["properties"]["id"]["type"] == "integer"
+    assert next(t for t in listed["result"]["tools"] if t["name"] == "items_list")["annotations"]["readOnlyHint"]
+    dismiss = next(t for t in listed["result"]["tools"] if t["name"] == "items_dismiss")
+    assert dismiss["annotations"]["destructiveHint"]
+
+
+def test_mcp_offers_settings_and_watching_only_with_admin(cfg):
+    out = io.StringIO()
+    mcp.serve(io.StringIO(json.dumps({"jsonrpc": "2.0", "id": 1, "method": "tools/list"}) + "\n"), out, admin=True)
+    names = {t["name"] for t in json.loads(out.getvalue())["result"]["tools"]}
+    assert {"library", "watch", "settings_get", "settings_set", "collect", "check"} <= names
+    (refused,) = rpc([{"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+                       "params": {"name": "settings_set", "arguments": {"key": "watch", "value": "[\"/\"]"}}}])
+    assert refused["result"]["isError"] and "--admin" in refused["result"]["content"][0]["text"]
 
 
 def test_mcp_tools_run_the_cli_commands(cfg):
@@ -554,8 +568,11 @@ def test_mcp_tools_run_the_cli_commands(cfg):
     ])
     item = json.loads(added["result"]["content"][0]["text"])
     assert not added["result"]["isError"] and item["text"] == "Send the minutes"
-    assert json.loads(listed["result"]["content"][0]["text"])[0]["id"] == item["id"]
-    assert not done["result"]["isError"] and json.loads(done["result"]["content"][0]["text"]) == []
+    assert item["origin"] == "agent" and item["status"] == "open" and item["created"]  # asked for: straight on
+    assert "bbox" not in item and "p_action" not in item  # text fields only
+    page = json.loads(listed["result"]["content"][0]["text"])
+    assert page["items"][0]["id"] == item["id"] and page["next_cursor"] is None
+    assert not done["result"]["isError"] and json.loads(done["result"]["content"][0]["text"])["items"] == []
     assert missing["result"]["isError"] and json.loads(missing["result"]["content"][0]["text"])["code"] == "not_found"
     assert wrong["result"]["isError"]
     assert any(s["id"] == "llm" for s in json.loads(steps["result"]["content"][0]["text"])["steps"])
