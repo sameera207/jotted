@@ -48,7 +48,8 @@ def test_every_web_route_calls_an_operation(cfg):
     flask = create_app(cfg, background=False)
     routes = {rule.rule: flask.view_functions[rule.endpoint] for rule in flask.url_map.iter_rules()
               if rule.endpoint != "static" and rule.rule != "/"}
-    unmapped = [r for r, fn in routes.items() if getattr(fn, "operation", None) not in api.OPERATIONS]
+    unmapped = [r for r, fn in routes.items()
+                if getattr(fn, "operation", None) not in api.OPERATIONS and r != "/api/op/<name>"]
     assert not unmapped, f"routes without an api operation: {unmapped}"
 
 
@@ -158,30 +159,36 @@ def test_a_busy_source_is_a_conflict_not_a_hang(cfg, monkeypatch):
 
 
 def run(capsys, *argv) -> tuple[int, object]:
-    code = cli.main(["--json", *argv])
+    code = cli.main(["--json", "--local", *argv])
     out = capsys.readouterr().out
     return code, json.loads(out) if out.strip() else None
 
 
+def data(capsys, *argv):
+    code, envelope = run(capsys, *argv)
+    assert code == 0 and envelope["ok"] and envelope["v"] == 1, envelope
+    return envelope["data"]
+
+
 def test_the_cli_runs_the_list_with_json(cfg, capsys):
-    code, item = run(capsys, "items", "add", "Renew", "the", "passport")
-    assert code == 0 and item["text"] == "Renew the passport" and item["origin"] == "web"
-    assert run(capsys, "items")[1][0]["id"] == item["id"]
-    assert run(capsys, "items", "done", str(item["id"]))[1]["status"] == "done"
-    assert run(capsys, "items")[1] == []  # open only, by default
-    assert len(run(capsys, "items", "--status", "all")[1]) == 1
-    assert run(capsys, "items", "edit", str(item["id"]), "Renew", "both", "passports")[1]["text"] == "Renew both passports"
+    item = data(capsys, "items", "add", "Renew", "the", "passport")
+    assert item["text"] == "Renew the passport" and item["origin"] == "web"
+    assert data(capsys, "items")[0]["id"] == item["id"]
+    assert data(capsys, "items", "done", str(item["id"]))["status"] == "done"
+    assert data(capsys, "items") == []  # open only, by default
+    assert len(data(capsys, "items", "--status", "all")) == 1
+    assert data(capsys, "items", "edit", str(item["id"]), "Renew", "both", "passports")["text"] == "Renew both passports"
     code, err = run(capsys, "items", "done", "999")
-    assert code == 1 and err == {"error": "no item 999", "status": 404}
+    assert code == 1 and err == {"v": 1, "ok": False, "error": {"code": "not_found", "message": "no item 999"}}
 
 
 def test_the_cli_changes_settings_and_reports_status(cfg, capsys):
-    assert run(capsys, "settings", "set", "todo_enabled", "true")[1]["todo_enabled"] is True
-    assert run(capsys, "settings", "set", "watch", '["Meetings/"]')[1]["watch"] == ["/Meetings"]
+    assert data(capsys, "settings", "set", "todo_enabled", "true")["todo_enabled"] is True
+    assert data(capsys, "settings", "set", "watch", '["Meetings/"]')["watch"] == ["/Meetings"]
     code, err = run(capsys, "settings", "set", "action_threshold", "2")
-    assert code == 1 and "between 0 and 1" in err["error"]
-    status = run(capsys, "status")[1]
+    assert code == 1 and err["error"]["code"] == "invalid" and "between 0 and 1" in err["error"]["message"]
+    status = data(capsys, "status")
     assert status["source"]["name"] == "remarkable" and status["watch"] == ["/Meetings"]
     assert status["judge"] == "llm" and status["todo"]["enabled"]
-    ai = run(capsys, "ai")[1]
+    ai = data(capsys, "ai")
     assert ai["llm"]["provider"] == "anthropic" and not ai["jev"]["enabled"]

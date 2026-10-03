@@ -9,7 +9,7 @@ It runs on your computer. Nothing goes through a server of ours: images of new l
 You need a reMarkable with cloud sync (a Connect subscription), an [Anthropic API key](https://console.anthropic.com/settings/keys), and [uv](https://docs.astral.sh/uv/getting-started/installation/).
 
 ```bash
-uv tool install git+https://github.com/sameera207/jotted
+uv tool install git+https://github.com/sameera207/jotted-cli
 jotted start
 ```
 
@@ -82,14 +82,14 @@ Every setting lives in this one file, including rmapi's token location. You neve
 ### 4. Connect to reMarkable Cloud (once)
 
 ```bash
-uv run jotted auth
+uv run jotted connect
 ```
 
-1. The command asks for a one-time code.
+1. The command asks for a one-time code (or pass it on standard input with `--stdin`).
 2. Sign in at my.remarkable.com and open the page for connecting a desktop app to get the code.
 3. Paste the code. The token is saved to `.secrets/rmapi.conf`.
 
-That token grants full access to your library. Never commit it. If it leaks, revoke the device on my.remarkable.com and run `auth` again.
+That token grants full access to your library. Never commit it. If it leaks, revoke the device on my.remarkable.com and run `jotted connect --replace`. (`jotted auth`, its old name, still works for one release.)
 
 ### 5. Run it
 
@@ -116,16 +116,22 @@ There used to be a separate Tasks notebook as well. It's gone: write tasks in an
 
 ### The language model and plugins
 
-Settings shows the **language model**: its adapter, model and key. It reads handwriting, and judges which lines are actions unless a plugin does. You can replace its key there; the adapter and model are set in `config.toml` (`[llm] provider` and `model`).
+Settings shows the **language model**: its adapter, model and key. It reads handwriting, and judges which lines are actions unless a plugin does. You can replace its key there. `config.toml` sets the default adapter and model (`[llm] provider` and `model`); `jotted ai provider NAME` and `jotted ai model NAME` choose others, saved with the settings.
 
 **Jev**, from TypeSafe, is an optional plugin. Add its key in Settings (or during `jotted setup`) and Jev judges actions and owners instead, with its own threshold slider. Remove the key and the LLM judges again. Keys typed in Settings are checked with the provider first and saved like the ones from setup; a key exported in your shell wins, and can only be removed there.
 
 ## The command line
 
-The CLI is the whole product: everything the web app does is a command, and every command takes `--json` (before the command name) for scripts and other apps.
+The CLI is the product's one public interface: everything the web app does is a command, and every other front end (the desktop app, `jotted mcp`, your scripts) only runs `jotted --json …`. Building on it? Read [`docs/cli-contract.md`](docs/cli-contract.md); [`docs/schema.json`](docs/schema.json) has every command's arguments and data. Both are regenerated from the code (`scripts/contract_docs.py`).
 
 | Command | What it does |
 | --- | --- |
+| `jotted setup status` | Every setup step, done or not, and the command that does it |
+| `jotted setup prepare` | The steps that need no answer: the app folder, downloading rmapi |
+| `jotted connect [--stdin] [--replace]` | Connect your reMarkable with a one-time code (from the reMarkable plugin) |
+| `jotted ai` / `ai key llm\|jev [--stdin]` / `ai remove jev` | The language model and the Jev plugin |
+| `jotted ai provider NAME` / `ai model NAME` | Choose the LLM adapter and model |
+| `jotted plugins` | Installed source plugins, and which one is chosen |
 | `jotted items [--status open\|done\|all] [--owner mine\|others] [--folder F]` | List the to-do list |
 | `jotted items add TEXT` / `edit ID TEXT` / `done ID` / `reopen ID` / `dismiss ID` | Change it |
 | `jotted watch add\|remove\|from-now\|read-all PATH` | Choose what is read |
@@ -135,9 +141,28 @@ The CLI is the whole product: everything the web app does is a command, and ever
 | `jotted todo [--force]` | Read ticks from the To-do document and republish it |
 | `jotted check` | Both of the above |
 | `jotted status` | What is read, judged and published, and when |
-| `jotted ai` / `ai key llm\|jev` / `ai remove jev` | The language model and the Jev plugin |
 | `jotted image page DOC PAGE` / `image line DOC ANCHOR` | Where an item came from, as SVG |
-| `jotted auth` | Connect to the reMarkable cloud (from the reMarkable plugin) |
+| `jotted events [--since CURSOR] [--follow]` | What changed; `--follow` prints changes as they happen |
+| `jotted serve [--no-browser] [--port 0]` | The web app, background checking and the CLI's fast path |
+| `jotted version` / `jotted schema` | Release and contract versions; every command and the shape of its data |
+| `jotted mcp` | Jotted's operations as MCP tools, for agents |
+
+### For scripts and apps
+
+With `--json` (before or after the command), stdout carries exactly one JSON envelope:
+
+```json
+{"v": 1, "ok": true, "data": {}}
+{"v": 1, "ok": false, "error": {"code": "busy", "message": "…", "retry": true}}
+```
+
+Branch on `code`, never on `message`. Each code has its own exit status: `invalid`, `not_found`, `conflict` 1; `usage`, `config` 2; `not_set_up` 3 (`error.step` names the step); `busy` 4; `not_connected` 5; `model_error` 6; `interrupted` 130. Logs and progress go to stderr. Nothing prompts unless stdin is a terminal and `--json` is off; keys and codes can always come on stdin with `--stdin`.
+
+`jotted --json events --follow` prints one JSON line per change (items added, changed or removed, checks, the To-do document published, settings), from any process. Keep the last `cursor` and pass it as `--since` after a restart to miss nothing.
+
+While `jotted serve` runs, CLI commands are handed to it instead of starting the work themselves (it writes `serve.json` next to the database); the output is the same. `--local` runs a command in its own process anyway.
+
+For agents: `jotted mcp` serves the to-do list, library, watching, settings, checks, status and setup status as MCP tools on stdio. Keys never go through it. An agent with a shell can also run `jotted --json …` directly; `jotted schema` describes every command.
 
 `jotted serve` (what `jotted start` runs) does the same work in the background and serves the web app. A CLI command that needs your device while the server is checking it waits for it: one job at a time, across processes.
 
@@ -146,10 +171,14 @@ The CLI is the whole product: everything the web app does is a command, and ever
 ```text
 jotted/core/           model, ports and services; imports no plugin, adapter, Flask or AI SDK
 jotted/api.py          every operation, once: the CLI, the web server and any other app call it
-jotted/cli.py          the command line over api.py
-jotted/server.py       the web app and JSON API over api.py
+jotted/cli.py          the command line over api.py: the public interface
+jotted/contract.py     what `--json` prints: the envelope, error codes and exit statuses
+jotted/steps.py        setup as steps a wrapper can check and run one at a time
+jotted/fastpath.py     handing CLI commands to a running `jotted serve`
+jotted/schema.py       `jotted schema`; mcp.py: `jotted mcp`
+jotted/server.py       the web app and its JSON API over api.py (internal)
 jotted/plugins/        source plugins: where notes come from (SDK and registry)
-jotted/plugins/remarkable/   the reMarkable cloud: rmapi, .rm pages, the To-do PDF, setup, `auth`
+jotted/plugins/remarkable/   the reMarkable cloud: rmapi, .rm pages, the To-do PDF, setup, `connect`
 jotted/ink/            handwriting for every plugin: strokes, line clustering, reading with the LLM
 jotted/llm.py          the LLM port (Claude in adapters/anthropic_llm.py); the Jev plugin judges instead when on
 jotted/adapters/       SQLite, and the AI providers
@@ -157,7 +186,7 @@ jotted/adapters/       SQLite, and the AI providers
 
 - **Front ends hold no logic.** `cli.py` and `server.py` parse input, call one `api.Jotted` method and show its result. Tests check that every operation is a CLI command and every web route calls an operation.
 - **Sources are plugins.** Nothing outside `jotted/plugins/remarkable/` knows about reMarkable, and a test checks it. A plugin returns the core's ports, owns its config sections, setup steps and CLI commands, and hands handwriting to `jotted.ink` as strokes. Another package can add one through the `jotted.sources` entry point group; choose it with `[plugins] source` in `config.toml`. `jotted/plugins/__init__.py` describes the interface.
-- **The web server's API is for other apps too.** Read requests are only answered on this computer's own address, so a web page can't reach it through DNS rebinding. Requests that change something need the install's token in `X-Jotted-Token`; it is in `<secrets_dir>/server-token`, readable by your user only.
+- **The web server's API is internal.** Other apps use the `jotted` command, not this API. Read requests are only answered on this computer's own address, so a web page can't reach it through DNS rebinding. Requests that change something need the install's token in `X-Jotted-Token`; it is in `<secrets_dir>/server-token`, readable by your user only.
 
 See `specs/Common-todo-spec.md` for the to-do list's design.
 
@@ -165,7 +194,7 @@ See `specs/Common-todo-spec.md` for the to-do list's design.
 
 | Symptom | Fix |
 | --- | --- |
-| `auth` or `collect` fails with an auth error | Delete `.secrets/rmapi.conf` and run `jotted auth` again |
+| `connect` or `collect` fails with an auth error | Run `jotted connect --replace` |
 | "busy with another job" | `jotted serve` is checking your device; try again in a moment |
 | Need to see what rmapi is doing | Set `rmapi.trace = true` in `config.toml` |
 | Warnings about unreadable blocks | Newer firmware than rmscene knows: `uv lock --upgrade-package rmscene && uv sync` |

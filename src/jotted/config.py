@@ -12,7 +12,7 @@ import os
 import re
 import sys
 import tomllib
-from dataclasses import dataclass, field, fields
+from dataclasses import dataclass, field, fields, replace
 from pathlib import Path
 from typing import Any, get_type_hints
 
@@ -24,7 +24,13 @@ EXAMPLE = Path(__file__).with_name("config.example.toml")  # every setting, with
 
 
 class ConfigError(Exception):
-    pass
+    code = "config"
+
+
+class ConfigMissing(ConfigError):
+    """No config.toml yet: the first setup step hasn't run."""
+    code = "not_set_up"
+    step = "app_folder"
 
 
 @dataclass(frozen=True)
@@ -240,10 +246,25 @@ def set_value(path: Path, section: str, key: str, value: str) -> None:
     path.write_text("".join(lines))
 
 
+def with_llm(cfg: Config, provider: str | None = None, model: str | None = None) -> Config:
+    """`cfg` with the LLM chosen with `jotted ai provider`/`ai model` (saved in the database),
+    which override config.toml's [llm]. A new provider brings its own key variable."""
+    changes: dict[str, Any] = {}
+    if provider and provider != cfg.llm.provider:
+        from . import llm
+
+        changes["provider"] = provider
+        changes["api_key_env"] = getattr(llm.llm_class(replace(cfg.llm, provider=provider)), "KEY_ENV",
+                                         cfg.llm.api_key_env)
+    if model:
+        changes["model"] = model
+    return replace(cfg, llm=replace(cfg.llm, **changes)) if changes else cfg
+
+
 def load(path: Path | None = None) -> Config:
     path = (path or resolve_path()).expanduser()
     if not path.is_file():
-        raise ConfigError(f"config file not found: {path}. Run `jotted start` to set up")
+        raise ConfigMissing(f"Jotted isn't set up yet (no {path}). Run `jotted start`, or `jotted setup prepare`")
     try:
         raw = tomllib.loads(path.read_text())
     except tomllib.TOMLDecodeError as e:

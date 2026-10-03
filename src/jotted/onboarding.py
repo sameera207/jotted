@@ -5,9 +5,10 @@ change a key, say). Every step checks first and is skipped when already done, so
 second start asks nothing. Input and output go through `UI`, so a Mac app can drive
 the same steps with its own windows.
 
-Steps: a home for settings and data, the source plugin's own steps (for reMarkable: rmapi
-and the cloud connection), the LLM's API key, and the optional Jev plugin (offered on
-first setup and when run again on purpose).
+The steps are `jotted.steps`' (a wrapper can check and run them one at a time); this is
+their interactive form: a home for settings and data, the source plugin's own steps (for
+reMarkable: rmapi and the cloud connection), the LLM's API key, and the optional Jev
+plugin (offered on first setup and when run again on purpose).
 """
 
 from __future__ import annotations
@@ -18,7 +19,7 @@ import os
 from rich.console import Console
 from rich.markup import escape
 
-from . import config, keys, llm, plugins
+from . import config, keys, llm, steps
 from .config import Config
 from .ui import UI, SetupError
 
@@ -55,8 +56,9 @@ class ConsoleUI:
 
 
 def run(ui: UI, redo: bool = False) -> Config:
-    """Bring this machine to a working setup and return its config. `redo` asks again
-    about the reMarkable connection and the keys, keeping what's there by default."""
+    """Bring this machine to a working setup and return its config: every step of
+    `jotted.steps` that has an interactive form, in order. `redo` asks again about the
+    reMarkable connection and the keys, keeping what's there by default."""
     path = config.resolve_path()
     fresh = not path.is_file()
     if fresh:
@@ -65,18 +67,17 @@ def run(ui: UI, redo: bool = False) -> Config:
         ui.done(f"Settings, data and keys will live in {path.parent}")
     cfg = config.load(path)
     keys.load_into_env(cfg)
-    plugin = plugins.plugin_class(cfg.plugins.source)(cfg, plugins.Host(ink=None))  # setup reads no ink
-    if plugin.setup(ui, redo):
-        cfg = config.load(path)
-    _llm_key(ui, cfg, redo)
-    _jev(ui, cfg, ask=fresh or redo)
+    for step in steps.steps(cfg):
+        if step.walk:
+            step.walk(steps.Walk(ui, cfg, redo, fresh))
+            cfg = config.load(path)  # a step may have written config.toml
     return cfg
 
 
 # ---------------------------------------------------------------- API keys
 
 
-def _llm_key(ui: UI, cfg: Config, redo: bool) -> None:
+def llm_key(ui: UI, cfg: Config, redo: bool) -> None:
     cls = llm.llm_class(cfg.llm)
     current = os.environ.get(cfg.llm.api_key_env)
     if current and not redo:
@@ -88,10 +89,10 @@ def _llm_key(ui: UI, cfg: Config, redo: bool) -> None:
     ui.info(f"Create a key at {cls.KEY_URL}")
     if not _ask_key(ui, cfg, cfg.llm.api_key_env, lambda: cls(cfg.llm), cls, current):
         raise SetupError(f"Jotted needs a {cls.LABEL} key to read your notes. Create one at {cls.KEY_URL}, "
-                         "then run `jotted start` again")
+                         "then run `jotted start` again", step="llm")
 
 
-def _jev(ui: UI, cfg: Config, ask: bool) -> None:
+def jev(ui: UI, cfg: Config, ask: bool) -> None:
     """The Jev plugin: optional, so only offered on first setup or `jotted setup`."""
     from .adapters.typesafe_judge import TypeSafeJudge as cls
 

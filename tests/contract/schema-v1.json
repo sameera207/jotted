@@ -1,0 +1,2550 @@
+{
+ "commands": {
+  "ai": {
+   "arguments": [],
+   "data": {
+    "properties": {
+     "jev": {
+      "properties": {
+       "by": {
+        "type": "string"
+       },
+       "enabled": {
+        "type": "boolean"
+       },
+       "key": {
+        "properties": {
+         "hint": {
+          "type": [
+           "string",
+           "null"
+          ]
+         },
+         "set": {
+          "type": "boolean"
+         },
+         "source": {
+          "enum": [
+           "saved",
+           "environment",
+           null
+          ]
+         }
+        },
+        "required": [
+         "set",
+         "source",
+         "hint"
+        ],
+        "type": "object"
+       },
+       "key_url": {
+        "type": "string"
+       },
+       "model": {
+        "type": "string"
+       },
+       "name": {
+        "type": "string"
+       }
+      },
+      "required": [
+       "name",
+       "by",
+       "model",
+       "key_url",
+       "key",
+       "enabled"
+      ],
+      "type": "object"
+     },
+     "judge": {
+      "enum": [
+       "llm",
+       "jev"
+      ]
+     },
+     "llm": {
+      "properties": {
+       "family": {
+        "type": "string"
+       },
+       "key": {
+        "properties": {
+         "hint": {
+          "type": [
+           "string",
+           "null"
+          ]
+         },
+         "set": {
+          "type": "boolean"
+         },
+         "source": {
+          "enum": [
+           "saved",
+           "environment",
+           null
+          ]
+         }
+        },
+        "required": [
+         "set",
+         "source",
+         "hint"
+        ],
+        "type": "object"
+       },
+       "key_url": {
+        "type": "string"
+       },
+       "label": {
+        "type": "string"
+       },
+       "model": {
+        "type": "string"
+       },
+       "provider": {
+        "type": "string"
+       },
+       "providers": {
+        "items": {
+         "properties": {
+          "id": {
+           "type": "string"
+          },
+          "label": {
+           "type": "string"
+          }
+         },
+         "required": [
+          "id",
+          "label"
+         ],
+         "type": "object"
+        },
+        "type": "array"
+       }
+      },
+      "required": [
+       "provider",
+       "label",
+       "family",
+       "model",
+       "key_url",
+       "key",
+       "providers"
+      ],
+      "type": "object"
+     }
+    },
+    "required": [
+     "llm",
+     "jev",
+     "judge"
+    ],
+    "type": "object"
+   }
+  },
+  "ai key": {
+   "arguments": [
+    "stdin",
+    "which"
+   ],
+   "data": {
+    "properties": {
+     "jev": {
+      "properties": {
+       "by": {
+        "type": "string"
+       },
+       "enabled": {
+        "type": "boolean"
+       },
+       "key": {
+        "properties": {
+         "hint": {
+          "type": [
+           "string",
+           "null"
+          ]
+         },
+         "set": {
+          "type": "boolean"
+         },
+         "source": {
+          "enum": [
+           "saved",
+           "environment",
+           null
+          ]
+         }
+        },
+        "required": [
+         "set",
+         "source",
+         "hint"
+        ],
+        "type": "object"
+       },
+       "key_url": {
+        "type": "string"
+       },
+       "model": {
+        "type": "string"
+       },
+       "name": {
+        "type": "string"
+       }
+      },
+      "required": [
+       "name",
+       "by",
+       "model",
+       "key_url",
+       "key",
+       "enabled"
+      ],
+      "type": "object"
+     },
+     "judge": {
+      "enum": [
+       "llm",
+       "jev"
+      ]
+     },
+     "llm": {
+      "properties": {
+       "family": {
+        "type": "string"
+       },
+       "key": {
+        "properties": {
+         "hint": {
+          "type": [
+           "string",
+           "null"
+          ]
+         },
+         "set": {
+          "type": "boolean"
+         },
+         "source": {
+          "enum": [
+           "saved",
+           "environment",
+           null
+          ]
+         }
+        },
+        "required": [
+         "set",
+         "source",
+         "hint"
+        ],
+        "type": "object"
+       },
+       "key_url": {
+        "type": "string"
+       },
+       "label": {
+        "type": "string"
+       },
+       "model": {
+        "type": "string"
+       },
+       "provider": {
+        "type": "string"
+       },
+       "providers": {
+        "items": {
+         "properties": {
+          "id": {
+           "type": "string"
+          },
+          "label": {
+           "type": "string"
+          }
+         },
+         "required": [
+          "id",
+          "label"
+         ],
+         "type": "object"
+        },
+        "type": "array"
+       }
+      },
+      "required": [
+       "provider",
+       "label",
+       "family",
+       "model",
+       "key_url",
+       "key",
+       "providers"
+      ],
+      "type": "object"
+     }
+    },
+    "required": [
+     "llm",
+     "jev",
+     "judge"
+    ],
+    "type": "object"
+   }
+  },
+  "ai model": {
+   "arguments": [
+    "name"
+   ],
+   "data": {
+    "properties": {
+     "jev": {
+      "properties": {
+       "by": {
+        "type": "string"
+       },
+       "enabled": {
+        "type": "boolean"
+       },
+       "key": {
+        "properties": {
+         "hint": {
+          "type": [
+           "string",
+           "null"
+          ]
+         },
+         "set": {
+          "type": "boolean"
+         },
+         "source": {
+          "enum": [
+           "saved",
+           "environment",
+           null
+          ]
+         }
+        },
+        "required": [
+         "set",
+         "source",
+         "hint"
+        ],
+        "type": "object"
+       },
+       "key_url": {
+        "type": "string"
+       },
+       "model": {
+        "type": "string"
+       },
+       "name": {
+        "type": "string"
+       }
+      },
+      "required": [
+       "name",
+       "by",
+       "model",
+       "key_url",
+       "key",
+       "enabled"
+      ],
+      "type": "object"
+     },
+     "judge": {
+      "enum": [
+       "llm",
+       "jev"
+      ]
+     },
+     "llm": {
+      "properties": {
+       "family": {
+        "type": "string"
+       },
+       "key": {
+        "properties": {
+         "hint": {
+          "type": [
+           "string",
+           "null"
+          ]
+         },
+         "set": {
+          "type": "boolean"
+         },
+         "source": {
+          "enum": [
+           "saved",
+           "environment",
+           null
+          ]
+         }
+        },
+        "required": [
+         "set",
+         "source",
+         "hint"
+        ],
+        "type": "object"
+       },
+       "key_url": {
+        "type": "string"
+       },
+       "label": {
+        "type": "string"
+       },
+       "model": {
+        "type": "string"
+       },
+       "provider": {
+        "type": "string"
+       },
+       "providers": {
+        "items": {
+         "properties": {
+          "id": {
+           "type": "string"
+          },
+          "label": {
+           "type": "string"
+          }
+         },
+         "required": [
+          "id",
+          "label"
+         ],
+         "type": "object"
+        },
+        "type": "array"
+       }
+      },
+      "required": [
+       "provider",
+       "label",
+       "family",
+       "model",
+       "key_url",
+       "key",
+       "providers"
+      ],
+      "type": "object"
+     }
+    },
+    "required": [
+     "llm",
+     "jev",
+     "judge"
+    ],
+    "type": "object"
+   }
+  },
+  "ai provider": {
+   "arguments": [
+    "name"
+   ],
+   "data": {
+    "properties": {
+     "jev": {
+      "properties": {
+       "by": {
+        "type": "string"
+       },
+       "enabled": {
+        "type": "boolean"
+       },
+       "key": {
+        "properties": {
+         "hint": {
+          "type": [
+           "string",
+           "null"
+          ]
+         },
+         "set": {
+          "type": "boolean"
+         },
+         "source": {
+          "enum": [
+           "saved",
+           "environment",
+           null
+          ]
+         }
+        },
+        "required": [
+         "set",
+         "source",
+         "hint"
+        ],
+        "type": "object"
+       },
+       "key_url": {
+        "type": "string"
+       },
+       "model": {
+        "type": "string"
+       },
+       "name": {
+        "type": "string"
+       }
+      },
+      "required": [
+       "name",
+       "by",
+       "model",
+       "key_url",
+       "key",
+       "enabled"
+      ],
+      "type": "object"
+     },
+     "judge": {
+      "enum": [
+       "llm",
+       "jev"
+      ]
+     },
+     "llm": {
+      "properties": {
+       "family": {
+        "type": "string"
+       },
+       "key": {
+        "properties": {
+         "hint": {
+          "type": [
+           "string",
+           "null"
+          ]
+         },
+         "set": {
+          "type": "boolean"
+         },
+         "source": {
+          "enum": [
+           "saved",
+           "environment",
+           null
+          ]
+         }
+        },
+        "required": [
+         "set",
+         "source",
+         "hint"
+        ],
+        "type": "object"
+       },
+       "key_url": {
+        "type": "string"
+       },
+       "label": {
+        "type": "string"
+       },
+       "model": {
+        "type": "string"
+       },
+       "provider": {
+        "type": "string"
+       },
+       "providers": {
+        "items": {
+         "properties": {
+          "id": {
+           "type": "string"
+          },
+          "label": {
+           "type": "string"
+          }
+         },
+         "required": [
+          "id",
+          "label"
+         ],
+         "type": "object"
+        },
+        "type": "array"
+       }
+      },
+      "required": [
+       "provider",
+       "label",
+       "family",
+       "model",
+       "key_url",
+       "key",
+       "providers"
+      ],
+      "type": "object"
+     }
+    },
+    "required": [
+     "llm",
+     "jev",
+     "judge"
+    ],
+    "type": "object"
+   }
+  },
+  "ai remove": {
+   "arguments": [
+    "which"
+   ],
+   "data": {
+    "properties": {
+     "jev": {
+      "properties": {
+       "by": {
+        "type": "string"
+       },
+       "enabled": {
+        "type": "boolean"
+       },
+       "key": {
+        "properties": {
+         "hint": {
+          "type": [
+           "string",
+           "null"
+          ]
+         },
+         "set": {
+          "type": "boolean"
+         },
+         "source": {
+          "enum": [
+           "saved",
+           "environment",
+           null
+          ]
+         }
+        },
+        "required": [
+         "set",
+         "source",
+         "hint"
+        ],
+        "type": "object"
+       },
+       "key_url": {
+        "type": "string"
+       },
+       "model": {
+        "type": "string"
+       },
+       "name": {
+        "type": "string"
+       }
+      },
+      "required": [
+       "name",
+       "by",
+       "model",
+       "key_url",
+       "key",
+       "enabled"
+      ],
+      "type": "object"
+     },
+     "judge": {
+      "enum": [
+       "llm",
+       "jev"
+      ]
+     },
+     "llm": {
+      "properties": {
+       "family": {
+        "type": "string"
+       },
+       "key": {
+        "properties": {
+         "hint": {
+          "type": [
+           "string",
+           "null"
+          ]
+         },
+         "set": {
+          "type": "boolean"
+         },
+         "source": {
+          "enum": [
+           "saved",
+           "environment",
+           null
+          ]
+         }
+        },
+        "required": [
+         "set",
+         "source",
+         "hint"
+        ],
+        "type": "object"
+       },
+       "key_url": {
+        "type": "string"
+       },
+       "label": {
+        "type": "string"
+       },
+       "model": {
+        "type": "string"
+       },
+       "provider": {
+        "type": "string"
+       },
+       "providers": {
+        "items": {
+         "properties": {
+          "id": {
+           "type": "string"
+          },
+          "label": {
+           "type": "string"
+          }
+         },
+         "required": [
+          "id",
+          "label"
+         ],
+         "type": "object"
+        },
+        "type": "array"
+       }
+      },
+      "required": [
+       "provider",
+       "label",
+       "family",
+       "model",
+       "key_url",
+       "key",
+       "providers"
+      ],
+      "type": "object"
+     }
+    },
+    "required": [
+     "llm",
+     "jev",
+     "judge"
+    ],
+    "type": "object"
+   }
+  },
+  "auth": {
+   "arguments": [
+    "replace",
+    "stdin"
+   ],
+   "data": {
+    "properties": {
+     "connected": {
+      "type": "boolean"
+     },
+     "documents": {
+      "type": "integer"
+     },
+     "replaced": {
+      "type": "boolean"
+     }
+    },
+    "required": [
+     "connected"
+    ],
+    "type": "object"
+   }
+  },
+  "check": {
+   "arguments": [],
+   "data": {
+    "properties": {
+     "collect": {},
+     "todo": {}
+    },
+    "required": [],
+    "type": "object"
+   }
+  },
+  "collect": {
+   "arguments": [
+    "dry_run"
+   ],
+   "data": {
+    "description": "--dry-run: the changed pages",
+    "oneOf": [
+     {
+      "properties": {
+       "actions_missing": {
+        "type": "integer"
+       },
+       "actions_new": {
+        "type": "integer"
+       },
+       "actions_updated": {
+        "type": "integer"
+       },
+       "docs_changed": {
+        "type": "integer"
+       },
+       "docs_seen": {
+        "type": "integer"
+       },
+       "errors": {
+        "items": {
+         "type": "string"
+        },
+        "type": "array"
+       },
+       "lines_judged": {
+        "type": "integer"
+       },
+       "pages_baselined": {
+        "type": "integer"
+       },
+       "pages_read": {
+        "type": "integer"
+       },
+       "pages_skipped": {
+        "type": "integer"
+       }
+      },
+      "required": [
+       "docs_seen",
+       "docs_changed",
+       "pages_read",
+       "pages_skipped",
+       "pages_baselined",
+       "lines_judged",
+       "actions_new",
+       "actions_updated",
+       "actions_missing",
+       "errors"
+      ],
+      "type": "object"
+     },
+     {
+      "items": {
+       "properties": {
+        "id": {
+         "type": "string"
+        },
+        "pages": {
+         "items": {
+          "type": "integer"
+         },
+         "type": "array"
+        },
+        "path": {
+         "type": "string"
+        }
+       },
+       "required": [
+        "path",
+        "id",
+        "pages"
+       ],
+       "type": "object"
+      },
+      "type": "array"
+     }
+    ]
+   }
+  },
+  "config check": {
+   "arguments": [],
+   "data": {
+    "properties": {
+     "ai": {
+      "properties": {
+       "jev": {
+        "properties": {
+         "by": {
+          "type": "string"
+         },
+         "enabled": {
+          "type": "boolean"
+         },
+         "key": {
+          "properties": {
+           "hint": {
+            "type": [
+             "string",
+             "null"
+            ]
+           },
+           "set": {
+            "type": "boolean"
+           },
+           "source": {
+            "enum": [
+             "saved",
+             "environment",
+             null
+            ]
+           }
+          },
+          "required": [
+           "set",
+           "source",
+           "hint"
+          ],
+          "type": "object"
+         },
+         "key_url": {
+          "type": "string"
+         },
+         "model": {
+          "type": "string"
+         },
+         "name": {
+          "type": "string"
+         }
+        },
+        "required": [
+         "name",
+         "by",
+         "model",
+         "key_url",
+         "key",
+         "enabled"
+        ],
+        "type": "object"
+       },
+       "judge": {
+        "enum": [
+         "llm",
+         "jev"
+        ]
+       },
+       "llm": {
+        "properties": {
+         "family": {
+          "type": "string"
+         },
+         "key": {
+          "properties": {
+           "hint": {
+            "type": [
+             "string",
+             "null"
+            ]
+           },
+           "set": {
+            "type": "boolean"
+           },
+           "source": {
+            "enum": [
+             "saved",
+             "environment",
+             null
+            ]
+           }
+          },
+          "required": [
+           "set",
+           "source",
+           "hint"
+          ],
+          "type": "object"
+         },
+         "key_url": {
+          "type": "string"
+         },
+         "label": {
+          "type": "string"
+         },
+         "model": {
+          "type": "string"
+         },
+         "provider": {
+          "type": "string"
+         },
+         "providers": {
+          "items": {
+           "properties": {
+            "id": {
+             "type": "string"
+            },
+            "label": {
+             "type": "string"
+            }
+           },
+           "required": [
+            "id",
+            "label"
+           ],
+           "type": "object"
+          },
+          "type": "array"
+         }
+        },
+        "required": [
+         "provider",
+         "label",
+         "family",
+         "model",
+         "key_url",
+         "key",
+         "providers"
+        ],
+        "type": "object"
+       }
+      },
+      "required": [
+       "llm",
+       "jev",
+       "judge"
+      ],
+      "type": "object"
+     },
+     "config": {
+      "type": "object"
+     },
+     "path": {
+      "type": "string"
+     },
+     "source": {
+      "properties": {
+       "connected": {
+        "type": "boolean"
+       },
+       "detail": {
+        "type": "string"
+       },
+       "device": {
+        "type": "string"
+       },
+       "label": {
+        "type": "string"
+       },
+       "mark": {
+        "type": "string"
+       },
+       "name": {
+        "type": "string"
+       }
+      },
+      "required": [
+       "name",
+       "label",
+       "mark",
+       "device",
+       "connected",
+       "detail"
+      ],
+      "type": "object"
+     }
+    },
+    "required": [
+     "path",
+     "config",
+     "source",
+     "ai"
+    ],
+    "type": "object"
+   }
+  },
+  "connect": {
+   "arguments": [
+    "replace",
+    "stdin"
+   ],
+   "data": {
+    "properties": {
+     "connected": {
+      "type": "boolean"
+     },
+     "documents": {
+      "type": "integer"
+     },
+     "replaced": {
+      "type": "boolean"
+     }
+    },
+    "required": [
+     "connected"
+    ],
+    "type": "object"
+   }
+  },
+  "events": {
+   "arguments": [
+    "follow",
+    "since"
+   ],
+   "data": {
+    "description": "--follow prints one event per line instead, each with \"v\"",
+    "properties": {
+     "cursor": {
+      "type": "integer"
+     },
+     "events": {
+      "items": {
+       "properties": {
+        "at": {
+         "type": "string"
+        },
+        "cursor": {
+         "type": "integer"
+        },
+        "type": {
+         "enum": [
+          "item.added",
+          "item.changed",
+          "item.removed",
+          "check.started",
+          "check.finished",
+          "todo.published",
+          "settings.changed",
+          "source.error"
+         ]
+        }
+       },
+       "required": [
+        "cursor",
+        "at",
+        "type"
+       ],
+       "type": "object"
+      },
+      "type": "array"
+     }
+    },
+    "required": [
+     "cursor",
+     "events"
+    ],
+    "type": "object"
+   }
+  },
+  "image line": {
+   "arguments": [
+    "anchor",
+    "doc_id",
+    "out"
+   ],
+   "data": {
+    "oneOf": [
+     {
+      "properties": {
+       "svg": {
+        "type": "string"
+       }
+      },
+      "required": [
+       "svg"
+      ],
+      "type": "object"
+     },
+     {
+      "properties": {
+       "path": {
+        "type": "string"
+       }
+      },
+      "required": [
+       "path"
+      ],
+      "type": "object"
+     }
+    ]
+   }
+  },
+  "image page": {
+   "arguments": [
+    "anchor",
+    "doc_id",
+    "out",
+    "page"
+   ],
+   "data": {
+    "oneOf": [
+     {
+      "properties": {
+       "svg": {
+        "type": "string"
+       }
+      },
+      "required": [
+       "svg"
+      ],
+      "type": "object"
+     },
+     {
+      "properties": {
+       "path": {
+        "type": "string"
+       }
+      },
+      "required": [
+       "path"
+      ],
+      "type": "object"
+     }
+    ]
+   }
+  },
+  "items": {
+   "arguments": [
+    "folder",
+    "owner",
+    "status"
+   ],
+   "data": {
+    "items": {
+     "properties": {
+      "created_at": {
+       "type": "string"
+      },
+      "edited": {
+       "type": "boolean"
+      },
+      "id": {
+       "type": "integer"
+      },
+      "origin": {
+       "type": "string"
+      },
+      "owner": {
+       "enum": [
+        "me",
+        "someone_else",
+        "unclear"
+       ]
+      },
+      "p_action": {
+       "type": "number"
+      },
+      "paper_text": {
+       "type": "string"
+      },
+      "slot": {
+       "type": [
+        "integer",
+        "null"
+       ]
+      },
+      "source": {
+       "properties": {
+        "anchor": {
+         "type": "string"
+        },
+        "doc_id": {
+         "type": "string"
+        },
+        "folder": {
+         "type": "string"
+        },
+        "name": {
+         "type": "string"
+        },
+        "page": {
+         "type": "integer"
+        }
+       },
+       "required": [
+        "doc_id",
+        "name",
+        "folder",
+        "page",
+        "anchor"
+       ],
+       "type": "object"
+      },
+      "status": {
+       "enum": [
+        "open",
+        "done"
+       ]
+      },
+      "text": {
+       "type": "string"
+      },
+      "written": {
+       "type": "boolean"
+      }
+     },
+     "required": [
+      "id",
+      "origin",
+      "text",
+      "paper_text",
+      "written",
+      "status",
+      "owner",
+      "p_action",
+      "source",
+      "edited",
+      "slot",
+      "created_at"
+     ],
+     "type": "object"
+    },
+    "type": "array"
+   }
+  },
+  "items add": {
+   "arguments": [
+    "text"
+   ],
+   "data": {
+    "properties": {
+     "created_at": {
+      "type": "string"
+     },
+     "edited": {
+      "type": "boolean"
+     },
+     "id": {
+      "type": "integer"
+     },
+     "origin": {
+      "type": "string"
+     },
+     "owner": {
+      "enum": [
+       "me",
+       "someone_else",
+       "unclear"
+      ]
+     },
+     "p_action": {
+      "type": "number"
+     },
+     "paper_text": {
+      "type": "string"
+     },
+     "slot": {
+      "type": [
+       "integer",
+       "null"
+      ]
+     },
+     "source": {
+      "properties": {
+       "anchor": {
+        "type": "string"
+       },
+       "doc_id": {
+        "type": "string"
+       },
+       "folder": {
+        "type": "string"
+       },
+       "name": {
+        "type": "string"
+       },
+       "page": {
+        "type": "integer"
+       }
+      },
+      "required": [
+       "doc_id",
+       "name",
+       "folder",
+       "page",
+       "anchor"
+      ],
+      "type": "object"
+     },
+     "status": {
+      "enum": [
+       "open",
+       "done"
+      ]
+     },
+     "text": {
+      "type": "string"
+     },
+     "written": {
+      "type": "boolean"
+     }
+    },
+    "required": [
+     "id",
+     "origin",
+     "text",
+     "paper_text",
+     "written",
+     "status",
+     "owner",
+     "p_action",
+     "source",
+     "edited",
+     "slot",
+     "created_at"
+    ],
+    "type": "object"
+   }
+  },
+  "items dismiss": {
+   "arguments": [
+    "id"
+   ],
+   "data": {
+    "description": "empty: the item is gone",
+    "type": "object"
+   }
+  },
+  "items done": {
+   "arguments": [
+    "id"
+   ],
+   "data": {
+    "properties": {
+     "created_at": {
+      "type": "string"
+     },
+     "edited": {
+      "type": "boolean"
+     },
+     "id": {
+      "type": "integer"
+     },
+     "origin": {
+      "type": "string"
+     },
+     "owner": {
+      "enum": [
+       "me",
+       "someone_else",
+       "unclear"
+      ]
+     },
+     "p_action": {
+      "type": "number"
+     },
+     "paper_text": {
+      "type": "string"
+     },
+     "slot": {
+      "type": [
+       "integer",
+       "null"
+      ]
+     },
+     "source": {
+      "properties": {
+       "anchor": {
+        "type": "string"
+       },
+       "doc_id": {
+        "type": "string"
+       },
+       "folder": {
+        "type": "string"
+       },
+       "name": {
+        "type": "string"
+       },
+       "page": {
+        "type": "integer"
+       }
+      },
+      "required": [
+       "doc_id",
+       "name",
+       "folder",
+       "page",
+       "anchor"
+      ],
+      "type": "object"
+     },
+     "status": {
+      "enum": [
+       "open",
+       "done"
+      ]
+     },
+     "text": {
+      "type": "string"
+     },
+     "written": {
+      "type": "boolean"
+     }
+    },
+    "required": [
+     "id",
+     "origin",
+     "text",
+     "paper_text",
+     "written",
+     "status",
+     "owner",
+     "p_action",
+     "source",
+     "edited",
+     "slot",
+     "created_at"
+    ],
+    "type": "object"
+   }
+  },
+  "items edit": {
+   "arguments": [
+    "id",
+    "text"
+   ],
+   "data": {
+    "properties": {
+     "created_at": {
+      "type": "string"
+     },
+     "edited": {
+      "type": "boolean"
+     },
+     "id": {
+      "type": "integer"
+     },
+     "origin": {
+      "type": "string"
+     },
+     "owner": {
+      "enum": [
+       "me",
+       "someone_else",
+       "unclear"
+      ]
+     },
+     "p_action": {
+      "type": "number"
+     },
+     "paper_text": {
+      "type": "string"
+     },
+     "slot": {
+      "type": [
+       "integer",
+       "null"
+      ]
+     },
+     "source": {
+      "properties": {
+       "anchor": {
+        "type": "string"
+       },
+       "doc_id": {
+        "type": "string"
+       },
+       "folder": {
+        "type": "string"
+       },
+       "name": {
+        "type": "string"
+       },
+       "page": {
+        "type": "integer"
+       }
+      },
+      "required": [
+       "doc_id",
+       "name",
+       "folder",
+       "page",
+       "anchor"
+      ],
+      "type": "object"
+     },
+     "status": {
+      "enum": [
+       "open",
+       "done"
+      ]
+     },
+     "text": {
+      "type": "string"
+     },
+     "written": {
+      "type": "boolean"
+     }
+    },
+    "required": [
+     "id",
+     "origin",
+     "text",
+     "paper_text",
+     "written",
+     "status",
+     "owner",
+     "p_action",
+     "source",
+     "edited",
+     "slot",
+     "created_at"
+    ],
+    "type": "object"
+   }
+  },
+  "items list": {
+   "arguments": [
+    "folder",
+    "owner",
+    "status"
+   ],
+   "data": {
+    "items": {
+     "properties": {
+      "created_at": {
+       "type": "string"
+      },
+      "edited": {
+       "type": "boolean"
+      },
+      "id": {
+       "type": "integer"
+      },
+      "origin": {
+       "type": "string"
+      },
+      "owner": {
+       "enum": [
+        "me",
+        "someone_else",
+        "unclear"
+       ]
+      },
+      "p_action": {
+       "type": "number"
+      },
+      "paper_text": {
+       "type": "string"
+      },
+      "slot": {
+       "type": [
+        "integer",
+        "null"
+       ]
+      },
+      "source": {
+       "properties": {
+        "anchor": {
+         "type": "string"
+        },
+        "doc_id": {
+         "type": "string"
+        },
+        "folder": {
+         "type": "string"
+        },
+        "name": {
+         "type": "string"
+        },
+        "page": {
+         "type": "integer"
+        }
+       },
+       "required": [
+        "doc_id",
+        "name",
+        "folder",
+        "page",
+        "anchor"
+       ],
+       "type": "object"
+      },
+      "status": {
+       "enum": [
+        "open",
+        "done"
+       ]
+      },
+      "text": {
+       "type": "string"
+      },
+      "written": {
+       "type": "boolean"
+      }
+     },
+     "required": [
+      "id",
+      "origin",
+      "text",
+      "paper_text",
+      "written",
+      "status",
+      "owner",
+      "p_action",
+      "source",
+      "edited",
+      "slot",
+      "created_at"
+     ],
+     "type": "object"
+    },
+    "type": "array"
+   }
+  },
+  "items reopen": {
+   "arguments": [
+    "id"
+   ],
+   "data": {
+    "properties": {
+     "created_at": {
+      "type": "string"
+     },
+     "edited": {
+      "type": "boolean"
+     },
+     "id": {
+      "type": "integer"
+     },
+     "origin": {
+      "type": "string"
+     },
+     "owner": {
+      "enum": [
+       "me",
+       "someone_else",
+       "unclear"
+      ]
+     },
+     "p_action": {
+      "type": "number"
+     },
+     "paper_text": {
+      "type": "string"
+     },
+     "slot": {
+      "type": [
+       "integer",
+       "null"
+      ]
+     },
+     "source": {
+      "properties": {
+       "anchor": {
+        "type": "string"
+       },
+       "doc_id": {
+        "type": "string"
+       },
+       "folder": {
+        "type": "string"
+       },
+       "name": {
+        "type": "string"
+       },
+       "page": {
+        "type": "integer"
+       }
+      },
+      "required": [
+       "doc_id",
+       "name",
+       "folder",
+       "page",
+       "anchor"
+      ],
+      "type": "object"
+     },
+     "status": {
+      "enum": [
+       "open",
+       "done"
+      ]
+     },
+     "text": {
+      "type": "string"
+     },
+     "written": {
+      "type": "boolean"
+     }
+    },
+    "required": [
+     "id",
+     "origin",
+     "text",
+     "paper_text",
+     "written",
+     "status",
+     "owner",
+     "p_action",
+     "source",
+     "edited",
+     "slot",
+     "created_at"
+    ],
+    "type": "object"
+   }
+  },
+  "library": {
+   "arguments": [],
+   "data": {
+    "properties": {
+     "documents": {
+      "items": {
+       "properties": {
+        "baseline_pages": {
+         "type": "integer"
+        },
+        "folder": {
+         "type": "string"
+        },
+        "id": {
+         "type": "string"
+        },
+        "own": {
+         "type": "boolean"
+        },
+        "path": {
+         "type": "string"
+        },
+        "read": {
+         "type": "boolean"
+        },
+        "watched": {
+         "type": "boolean"
+        }
+       },
+       "required": [
+        "path",
+        "folder",
+        "id",
+        "own",
+        "read",
+        "baseline_pages",
+        "watched"
+       ],
+       "type": "object"
+      },
+      "type": "array"
+     },
+     "folders": {
+      "items": {
+       "properties": {
+        "documents": {
+         "type": "integer"
+        },
+        "path": {
+         "type": "string"
+        },
+        "watched": {
+         "type": "boolean"
+        }
+       },
+       "required": [
+        "path",
+        "documents",
+        "watched"
+       ],
+       "type": "object"
+      },
+      "type": "array"
+     }
+    },
+    "required": [
+     "folders",
+     "documents"
+    ],
+    "type": "object"
+   }
+  },
+  "mcp": {
+   "arguments": [],
+   "data": {
+    "description": "an MCP server on stdio; no JSON output"
+   }
+  },
+  "plugins": {
+   "arguments": [],
+   "data": {
+    "properties": {
+     "chosen": {
+      "type": [
+       "string",
+       "null"
+      ]
+     },
+     "installed": {
+      "items": {
+       "properties": {
+        "chosen": {
+         "type": "boolean"
+        },
+        "label": {
+         "type": "string"
+        },
+        "module": {
+         "type": "string"
+        },
+        "name": {
+         "type": "string"
+        }
+       },
+       "required": [
+        "name",
+        "module",
+        "chosen"
+       ],
+       "type": "object"
+      },
+      "type": "array"
+     }
+    },
+    "required": [
+     "chosen",
+     "installed"
+    ],
+    "type": "object"
+   }
+  },
+  "schema": {
+   "arguments": [],
+   "data": {
+    "description": "this document",
+    "type": "object"
+   }
+  },
+  "serve": {
+   "arguments": [
+    "dev",
+    "host",
+    "no_background",
+    "no_browser",
+    "port"
+   ],
+   "data": {
+    "description": "runs until stopped; no JSON output"
+   }
+  },
+  "settings": {
+   "arguments": [],
+   "data": {
+    "properties": {
+     "action_threshold": {
+      "type": "number"
+     },
+     "from_now": {
+      "items": {
+       "type": "string"
+      },
+      "type": "array"
+     },
+     "include_others": {
+      "type": "boolean"
+     },
+     "poll_interval_s": {
+      "type": "integer"
+     },
+     "todo_enabled": {
+      "type": "boolean"
+     },
+     "todo_folder": {
+      "type": "string"
+     },
+     "todo_name": {
+      "type": "string"
+     },
+     "watch": {
+      "items": {
+       "type": "string"
+      },
+      "type": "array"
+     }
+    },
+    "required": [
+     "watch",
+     "action_threshold",
+     "poll_interval_s",
+     "include_others",
+     "todo_enabled",
+     "todo_name",
+     "todo_folder",
+     "from_now"
+    ],
+    "type": "object"
+   }
+  },
+  "settings set": {
+   "arguments": [
+    "key",
+    "value"
+   ],
+   "data": {
+    "properties": {
+     "action_threshold": {
+      "type": "number"
+     },
+     "from_now": {
+      "items": {
+       "type": "string"
+      },
+      "type": "array"
+     },
+     "include_others": {
+      "type": "boolean"
+     },
+     "poll_interval_s": {
+      "type": "integer"
+     },
+     "todo_enabled": {
+      "type": "boolean"
+     },
+     "todo_folder": {
+      "type": "string"
+     },
+     "todo_name": {
+      "type": "string"
+     },
+     "watch": {
+      "items": {
+       "type": "string"
+      },
+      "type": "array"
+     }
+    },
+    "required": [
+     "watch",
+     "action_threshold",
+     "poll_interval_s",
+     "include_others",
+     "todo_enabled",
+     "todo_name",
+     "todo_folder",
+     "from_now"
+    ],
+    "type": "object"
+   }
+  },
+  "setup": {
+   "arguments": [],
+   "data": {
+    "description": "interactive; no JSON output"
+   }
+  },
+  "setup prepare": {
+   "arguments": [],
+   "data": {
+    "properties": {
+     "complete": {
+      "type": "boolean"
+     },
+     "prepared": {
+      "items": {
+       "properties": {
+        "detail": {
+         "type": [
+          "string",
+          "null"
+         ]
+        },
+        "id": {
+         "type": "string"
+        }
+       },
+       "required": [
+        "id",
+        "detail"
+       ],
+       "type": "object"
+      },
+      "type": "array"
+     },
+     "steps": {
+      "items": {
+       "properties": {
+        "command": {
+         "type": "string"
+        },
+        "detail": {
+         "type": "string"
+        },
+        "done": {
+         "type": "boolean"
+        },
+        "id": {
+         "type": "string"
+        },
+        "optional": {
+         "type": "boolean"
+        },
+        "title": {
+         "type": "string"
+        }
+       },
+       "required": [
+        "id",
+        "title",
+        "done"
+       ],
+       "type": "object"
+      },
+      "type": "array"
+     }
+    },
+    "required": [
+     "prepared",
+     "complete",
+     "steps"
+    ],
+    "type": "object"
+   }
+  },
+  "setup status": {
+   "arguments": [],
+   "data": {
+    "properties": {
+     "complete": {
+      "type": "boolean"
+     },
+     "steps": {
+      "items": {
+       "properties": {
+        "command": {
+         "type": "string"
+        },
+        "detail": {
+         "type": "string"
+        },
+        "done": {
+         "type": "boolean"
+        },
+        "id": {
+         "type": "string"
+        },
+        "optional": {
+         "type": "boolean"
+        },
+        "title": {
+         "type": "string"
+        }
+       },
+       "required": [
+        "id",
+        "title",
+        "done"
+       ],
+       "type": "object"
+      },
+      "type": "array"
+     }
+    },
+    "required": [
+     "complete",
+     "steps"
+    ],
+    "type": "object"
+   }
+  },
+  "start": {
+   "arguments": [
+    "no_browser",
+    "no_update",
+    "port"
+   ],
+   "data": {
+    "description": "interactive; no JSON output"
+   }
+  },
+  "status": {
+   "arguments": [],
+   "data": {
+    "properties": {
+     "background": {},
+     "documents_read": {
+      "type": "integer"
+     },
+     "items": {
+      "properties": {
+       "done": {
+        "type": "integer"
+       },
+       "open": {
+        "type": "integer"
+       }
+      },
+      "required": [
+       "open",
+       "done"
+      ],
+      "type": "object"
+     },
+     "judge": {
+      "type": "string"
+     },
+     "last_collected_at": {
+      "type": [
+       "string",
+       "null"
+      ]
+     },
+     "source": {
+      "properties": {
+       "connected": {
+        "type": "boolean"
+       },
+       "detail": {
+        "type": "string"
+       },
+       "device": {
+        "type": "string"
+       },
+       "label": {
+        "type": "string"
+       },
+       "mark": {
+        "type": "string"
+       },
+       "name": {
+        "type": "string"
+       }
+      },
+      "required": [
+       "name",
+       "label",
+       "mark",
+       "device",
+       "connected",
+       "detail"
+      ],
+      "type": "object"
+     },
+     "todo": {
+      "properties": {
+       "enabled": {
+        "type": "boolean"
+       },
+       "folder": {
+        "type": "string"
+       },
+       "name": {
+        "type": "string"
+       },
+       "published_at": {
+        "type": [
+         "string",
+         "null"
+        ]
+       }
+      },
+      "required": [
+       "enabled",
+       "name",
+       "folder",
+       "published_at"
+      ],
+      "type": "object"
+     },
+     "watch": {
+      "items": {
+       "type": "string"
+      },
+      "type": "array"
+     }
+    },
+    "required": [
+     "source",
+     "judge",
+     "watch",
+     "documents_read",
+     "last_collected_at",
+     "items",
+     "todo",
+     "background"
+    ],
+    "type": "object"
+   }
+  },
+  "todo": {
+   "arguments": [
+    "force"
+   ],
+   "data": {
+    "properties": {
+     "enabled": {
+      "type": "boolean"
+     }
+    },
+    "required": [],
+    "type": "object"
+   }
+  },
+  "update": {
+   "arguments": [],
+   "data": {
+    "properties": {
+     "updated": {
+      "type": "boolean"
+     }
+    },
+    "required": [
+     "updated"
+    ],
+    "type": "object"
+   }
+  },
+  "version": {
+   "arguments": [],
+   "data": {
+    "properties": {
+     "bundled": {
+      "type": "boolean"
+     },
+     "contract": {
+      "type": "integer"
+     },
+     "contract_min": {
+      "type": "integer"
+     },
+     "python": {
+      "type": "string"
+     },
+     "source_plugin": {
+      "type": [
+       "string",
+       "null"
+      ]
+     },
+     "version": {
+      "type": "string"
+     }
+    },
+    "required": [
+     "version",
+     "contract",
+     "contract_min",
+     "source_plugin",
+     "python",
+     "bundled"
+    ],
+    "type": "object"
+   }
+  },
+  "watch": {
+   "arguments": [
+    "action",
+    "path"
+   ],
+   "data": {
+    "description": "add/remove: the settings; from-now/read-all: the documents affected",
+    "oneOf": [
+     {
+      "properties": {
+       "action_threshold": {
+        "type": "number"
+       },
+       "from_now": {
+        "items": {
+         "type": "string"
+        },
+        "type": "array"
+       },
+       "include_others": {
+        "type": "boolean"
+       },
+       "poll_interval_s": {
+        "type": "integer"
+       },
+       "todo_enabled": {
+        "type": "boolean"
+       },
+       "todo_folder": {
+        "type": "string"
+       },
+       "todo_name": {
+        "type": "string"
+       },
+       "watch": {
+        "items": {
+         "type": "string"
+        },
+        "type": "array"
+       }
+      },
+      "required": [
+       "watch",
+       "action_threshold",
+       "poll_interval_s",
+       "include_others",
+       "todo_enabled",
+       "todo_name",
+       "todo_folder",
+       "from_now"
+      ],
+      "type": "object"
+     },
+     {
+      "properties": {
+       "already_read": {
+        "items": {
+         "type": "string"
+        },
+        "type": "array"
+       },
+       "documents": {
+        "items": {
+         "type": "string"
+        },
+        "type": "array"
+       },
+       "settings": {
+        "properties": {
+         "action_threshold": {
+          "type": "number"
+         },
+         "from_now": {
+          "items": {
+           "type": "string"
+          },
+          "type": "array"
+         },
+         "include_others": {
+          "type": "boolean"
+         },
+         "poll_interval_s": {
+          "type": "integer"
+         },
+         "todo_enabled": {
+          "type": "boolean"
+         },
+         "todo_folder": {
+          "type": "string"
+         },
+         "todo_name": {
+          "type": "string"
+         },
+         "watch": {
+          "items": {
+           "type": "string"
+          },
+          "type": "array"
+         }
+        },
+        "required": [
+         "watch",
+         "action_threshold",
+         "poll_interval_s",
+         "include_others",
+         "todo_enabled",
+         "todo_name",
+         "todo_folder",
+         "from_now"
+        ],
+        "type": "object"
+       }
+      },
+      "required": [
+       "settings",
+       "documents",
+       "already_read"
+      ],
+      "type": "object"
+     }
+    ]
+   }
+  }
+ },
+ "contract": 1,
+ "errors": {
+  "busy": {
+   "exit": 4
+  },
+  "config": {
+   "exit": 2
+  },
+  "conflict": {
+   "exit": 1
+  },
+  "internal": {
+   "exit": 1
+  },
+  "interrupted": {
+   "exit": 130
+  },
+  "invalid": {
+   "exit": 1
+  },
+  "model_error": {
+   "exit": 6
+  },
+  "not_connected": {
+   "exit": 5
+  },
+  "not_found": {
+   "exit": 1
+  },
+  "not_set_up": {
+   "exit": 3
+  },
+  "usage": {
+   "exit": 2
+  }
+ },
+ "operations": {
+  "ai.get": [],
+  "ai.model": [
+   "name"
+  ],
+  "ai.provider": [
+   "name"
+  ],
+  "ai.remove_key": [
+   "which"
+  ],
+  "ai.set_key": [
+   "value",
+   "which"
+  ],
+  "check": [],
+  "collect": [],
+  "events": [
+   "limit",
+   "since"
+  ],
+  "items.add": [
+   "text"
+  ],
+  "items.edit": [
+   "dismissed",
+   "item_id",
+   "status",
+   "text"
+  ],
+  "items.list": [
+   "folder",
+   "owner",
+   "status"
+  ],
+  "library": [],
+  "line.image": [
+   "anchor",
+   "doc_id"
+  ],
+  "page.image": [
+   "anchor",
+   "doc_id",
+   "page"
+  ],
+  "pending": [
+   "fetch"
+  ],
+  "settings.get": [],
+  "settings.update": [
+   "changes"
+  ],
+  "source": [],
+  "status": [],
+  "todo.sync": [
+   "force"
+  ],
+  "watch.add": [
+   "path"
+  ],
+  "watch.from_now": [
+   "on",
+   "path"
+  ],
+  "watch.remove": [
+   "path"
+  ]
+ }
+}

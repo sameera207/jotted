@@ -1,0 +1,3248 @@
+{
+  "commands": [
+    {
+      "arguments": [],
+      "command": "setup",
+      "data": {
+        "description": "interactive; no JSON output"
+      },
+      "help": "set-up steps: status, prepare; alone, the interactive walkthrough",
+      "operations": []
+    },
+    {
+      "arguments": [],
+      "command": "setup status",
+      "data": {
+        "properties": {
+          "complete": {
+            "type": "boolean"
+          },
+          "steps": {
+            "items": {
+              "properties": {
+                "command": {
+                  "type": "string"
+                },
+                "detail": {
+                  "type": "string"
+                },
+                "done": {
+                  "type": "boolean"
+                },
+                "id": {
+                  "type": "string"
+                },
+                "optional": {
+                  "type": "boolean"
+                },
+                "title": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "id",
+                "title",
+                "done"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "complete",
+          "steps"
+        ],
+        "type": "object"
+      },
+      "help": "every setup step, done or not, and the command that does it",
+      "operations": []
+    },
+    {
+      "arguments": [],
+      "command": "setup prepare",
+      "data": {
+        "properties": {
+          "complete": {
+            "type": "boolean"
+          },
+          "prepared": {
+            "items": {
+              "properties": {
+                "detail": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "id",
+                "detail"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "steps": {
+            "items": {
+              "properties": {
+                "command": {
+                  "type": "string"
+                },
+                "detail": {
+                  "type": "string"
+                },
+                "done": {
+                  "type": "boolean"
+                },
+                "id": {
+                  "type": "string"
+                },
+                "optional": {
+                  "type": "boolean"
+                },
+                "title": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "id",
+                "title",
+                "done"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "prepared",
+          "complete",
+          "steps"
+        ],
+        "type": "object"
+      },
+      "help": "the steps that need no answer: the app folder, the source's tools",
+      "operations": []
+    },
+    {
+      "arguments": [],
+      "command": "ai",
+      "data": {
+        "properties": {
+          "jev": {
+            "properties": {
+              "by": {
+                "type": "string"
+              },
+              "enabled": {
+                "type": "boolean"
+              },
+              "key": {
+                "properties": {
+                  "hint": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "set": {
+                    "type": "boolean"
+                  },
+                  "source": {
+                    "enum": [
+                      "saved",
+                      "environment",
+                      null
+                    ]
+                  }
+                },
+                "required": [
+                  "set",
+                  "source",
+                  "hint"
+                ],
+                "type": "object"
+              },
+              "key_url": {
+                "type": "string"
+              },
+              "model": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "name",
+              "by",
+              "model",
+              "key_url",
+              "key",
+              "enabled"
+            ],
+            "type": "object"
+          },
+          "judge": {
+            "enum": [
+              "llm",
+              "jev"
+            ]
+          },
+          "llm": {
+            "properties": {
+              "family": {
+                "type": "string"
+              },
+              "key": {
+                "properties": {
+                  "hint": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "set": {
+                    "type": "boolean"
+                  },
+                  "source": {
+                    "enum": [
+                      "saved",
+                      "environment",
+                      null
+                    ]
+                  }
+                },
+                "required": [
+                  "set",
+                  "source",
+                  "hint"
+                ],
+                "type": "object"
+              },
+              "key_url": {
+                "type": "string"
+              },
+              "label": {
+                "type": "string"
+              },
+              "model": {
+                "type": "string"
+              },
+              "provider": {
+                "type": "string"
+              },
+              "providers": {
+                "items": {
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "label": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "label"
+                  ],
+                  "type": "object"
+                },
+                "type": "array"
+              }
+            },
+            "required": [
+              "provider",
+              "label",
+              "family",
+              "model",
+              "key_url",
+              "key",
+              "providers"
+            ],
+            "type": "object"
+          }
+        },
+        "required": [
+          "llm",
+          "jev",
+          "judge"
+        ],
+        "type": "object"
+      },
+      "help": "the language model and the Jev plugin: status, keys, provider, model",
+      "operations": [
+        "ai.get",
+        "ai.set_key",
+        "ai.remove_key",
+        "ai.provider",
+        "ai.model"
+      ]
+    },
+    {
+      "arguments": [
+        {
+          "enum": [
+            "llm",
+            "jev"
+          ],
+          "name": "which",
+          "positional": true,
+          "required": true
+        },
+        {
+          "flags": [
+            "--stdin"
+          ],
+          "help": "read the key from standard input instead of asking",
+          "name": "stdin",
+          "required": false,
+          "type": "boolean"
+        }
+      ],
+      "command": "ai key",
+      "data": {
+        "properties": {
+          "jev": {
+            "properties": {
+              "by": {
+                "type": "string"
+              },
+              "enabled": {
+                "type": "boolean"
+              },
+              "key": {
+                "properties": {
+                  "hint": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "set": {
+                    "type": "boolean"
+                  },
+                  "source": {
+                    "enum": [
+                      "saved",
+                      "environment",
+                      null
+                    ]
+                  }
+                },
+                "required": [
+                  "set",
+                  "source",
+                  "hint"
+                ],
+                "type": "object"
+              },
+              "key_url": {
+                "type": "string"
+              },
+              "model": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "name",
+              "by",
+              "model",
+              "key_url",
+              "key",
+              "enabled"
+            ],
+            "type": "object"
+          },
+          "judge": {
+            "enum": [
+              "llm",
+              "jev"
+            ]
+          },
+          "llm": {
+            "properties": {
+              "family": {
+                "type": "string"
+              },
+              "key": {
+                "properties": {
+                  "hint": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "set": {
+                    "type": "boolean"
+                  },
+                  "source": {
+                    "enum": [
+                      "saved",
+                      "environment",
+                      null
+                    ]
+                  }
+                },
+                "required": [
+                  "set",
+                  "source",
+                  "hint"
+                ],
+                "type": "object"
+              },
+              "key_url": {
+                "type": "string"
+              },
+              "label": {
+                "type": "string"
+              },
+              "model": {
+                "type": "string"
+              },
+              "provider": {
+                "type": "string"
+              },
+              "providers": {
+                "items": {
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "label": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "label"
+                  ],
+                  "type": "object"
+                },
+                "type": "array"
+              }
+            },
+            "required": [
+              "provider",
+              "label",
+              "family",
+              "model",
+              "key_url",
+              "key",
+              "providers"
+            ],
+            "type": "object"
+          }
+        },
+        "required": [
+          "llm",
+          "jev",
+          "judge"
+        ],
+        "type": "object"
+      },
+      "help": "check and save a key (adding Jev's turns the plugin on)",
+      "operations": [
+        "ai.get",
+        "ai.set_key",
+        "ai.remove_key",
+        "ai.provider",
+        "ai.model"
+      ]
+    },
+    {
+      "arguments": [
+        {
+          "enum": [
+            "jev"
+          ],
+          "name": "which",
+          "positional": true,
+          "required": true
+        }
+      ],
+      "command": "ai remove",
+      "data": {
+        "properties": {
+          "jev": {
+            "properties": {
+              "by": {
+                "type": "string"
+              },
+              "enabled": {
+                "type": "boolean"
+              },
+              "key": {
+                "properties": {
+                  "hint": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "set": {
+                    "type": "boolean"
+                  },
+                  "source": {
+                    "enum": [
+                      "saved",
+                      "environment",
+                      null
+                    ]
+                  }
+                },
+                "required": [
+                  "set",
+                  "source",
+                  "hint"
+                ],
+                "type": "object"
+              },
+              "key_url": {
+                "type": "string"
+              },
+              "model": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "name",
+              "by",
+              "model",
+              "key_url",
+              "key",
+              "enabled"
+            ],
+            "type": "object"
+          },
+          "judge": {
+            "enum": [
+              "llm",
+              "jev"
+            ]
+          },
+          "llm": {
+            "properties": {
+              "family": {
+                "type": "string"
+              },
+              "key": {
+                "properties": {
+                  "hint": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "set": {
+                    "type": "boolean"
+                  },
+                  "source": {
+                    "enum": [
+                      "saved",
+                      "environment",
+                      null
+                    ]
+                  }
+                },
+                "required": [
+                  "set",
+                  "source",
+                  "hint"
+                ],
+                "type": "object"
+              },
+              "key_url": {
+                "type": "string"
+              },
+              "label": {
+                "type": "string"
+              },
+              "model": {
+                "type": "string"
+              },
+              "provider": {
+                "type": "string"
+              },
+              "providers": {
+                "items": {
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "label": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "label"
+                  ],
+                  "type": "object"
+                },
+                "type": "array"
+              }
+            },
+            "required": [
+              "provider",
+              "label",
+              "family",
+              "model",
+              "key_url",
+              "key",
+              "providers"
+            ],
+            "type": "object"
+          }
+        },
+        "required": [
+          "llm",
+          "jev",
+          "judge"
+        ],
+        "type": "object"
+      },
+      "help": "turn the Jev plugin off",
+      "operations": [
+        "ai.get",
+        "ai.set_key",
+        "ai.remove_key",
+        "ai.provider",
+        "ai.model"
+      ]
+    },
+    {
+      "arguments": [
+        {
+          "name": "name",
+          "positional": true,
+          "required": true,
+          "type": "string"
+        }
+      ],
+      "command": "ai provider",
+      "data": {
+        "properties": {
+          "jev": {
+            "properties": {
+              "by": {
+                "type": "string"
+              },
+              "enabled": {
+                "type": "boolean"
+              },
+              "key": {
+                "properties": {
+                  "hint": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "set": {
+                    "type": "boolean"
+                  },
+                  "source": {
+                    "enum": [
+                      "saved",
+                      "environment",
+                      null
+                    ]
+                  }
+                },
+                "required": [
+                  "set",
+                  "source",
+                  "hint"
+                ],
+                "type": "object"
+              },
+              "key_url": {
+                "type": "string"
+              },
+              "model": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "name",
+              "by",
+              "model",
+              "key_url",
+              "key",
+              "enabled"
+            ],
+            "type": "object"
+          },
+          "judge": {
+            "enum": [
+              "llm",
+              "jev"
+            ]
+          },
+          "llm": {
+            "properties": {
+              "family": {
+                "type": "string"
+              },
+              "key": {
+                "properties": {
+                  "hint": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "set": {
+                    "type": "boolean"
+                  },
+                  "source": {
+                    "enum": [
+                      "saved",
+                      "environment",
+                      null
+                    ]
+                  }
+                },
+                "required": [
+                  "set",
+                  "source",
+                  "hint"
+                ],
+                "type": "object"
+              },
+              "key_url": {
+                "type": "string"
+              },
+              "label": {
+                "type": "string"
+              },
+              "model": {
+                "type": "string"
+              },
+              "provider": {
+                "type": "string"
+              },
+              "providers": {
+                "items": {
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "label": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "label"
+                  ],
+                  "type": "object"
+                },
+                "type": "array"
+              }
+            },
+            "required": [
+              "provider",
+              "label",
+              "family",
+              "model",
+              "key_url",
+              "key",
+              "providers"
+            ],
+            "type": "object"
+          }
+        },
+        "required": [
+          "llm",
+          "jev",
+          "judge"
+        ],
+        "type": "object"
+      },
+      "help": "choose the LLM adapter (anthropic)",
+      "operations": [
+        "ai.get",
+        "ai.set_key",
+        "ai.remove_key",
+        "ai.provider",
+        "ai.model"
+      ]
+    },
+    {
+      "arguments": [
+        {
+          "name": "name",
+          "positional": true,
+          "required": true,
+          "type": "string"
+        }
+      ],
+      "command": "ai model",
+      "data": {
+        "properties": {
+          "jev": {
+            "properties": {
+              "by": {
+                "type": "string"
+              },
+              "enabled": {
+                "type": "boolean"
+              },
+              "key": {
+                "properties": {
+                  "hint": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "set": {
+                    "type": "boolean"
+                  },
+                  "source": {
+                    "enum": [
+                      "saved",
+                      "environment",
+                      null
+                    ]
+                  }
+                },
+                "required": [
+                  "set",
+                  "source",
+                  "hint"
+                ],
+                "type": "object"
+              },
+              "key_url": {
+                "type": "string"
+              },
+              "model": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "name",
+              "by",
+              "model",
+              "key_url",
+              "key",
+              "enabled"
+            ],
+            "type": "object"
+          },
+          "judge": {
+            "enum": [
+              "llm",
+              "jev"
+            ]
+          },
+          "llm": {
+            "properties": {
+              "family": {
+                "type": "string"
+              },
+              "key": {
+                "properties": {
+                  "hint": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "set": {
+                    "type": "boolean"
+                  },
+                  "source": {
+                    "enum": [
+                      "saved",
+                      "environment",
+                      null
+                    ]
+                  }
+                },
+                "required": [
+                  "set",
+                  "source",
+                  "hint"
+                ],
+                "type": "object"
+              },
+              "key_url": {
+                "type": "string"
+              },
+              "label": {
+                "type": "string"
+              },
+              "model": {
+                "type": "string"
+              },
+              "provider": {
+                "type": "string"
+              },
+              "providers": {
+                "items": {
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "label": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "label"
+                  ],
+                  "type": "object"
+                },
+                "type": "array"
+              }
+            },
+            "required": [
+              "provider",
+              "label",
+              "family",
+              "model",
+              "key_url",
+              "key",
+              "providers"
+            ],
+            "type": "object"
+          }
+        },
+        "required": [
+          "llm",
+          "jev",
+          "judge"
+        ],
+        "type": "object"
+      },
+      "help": "choose the model; it has to read images",
+      "operations": [
+        "ai.get",
+        "ai.set_key",
+        "ai.remove_key",
+        "ai.provider",
+        "ai.model"
+      ]
+    },
+    {
+      "arguments": [],
+      "command": "plugins",
+      "data": {
+        "properties": {
+          "chosen": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "installed": {
+            "items": {
+              "properties": {
+                "chosen": {
+                  "type": "boolean"
+                },
+                "label": {
+                  "type": "string"
+                },
+                "module": {
+                  "type": "string"
+                },
+                "name": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "name",
+                "module",
+                "chosen"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "chosen",
+          "installed"
+        ],
+        "type": "object"
+      },
+      "help": "installed source plugins, and which one is chosen",
+      "operations": []
+    },
+    {
+      "arguments": [
+        {
+          "default": "open",
+          "enum": [
+            "open",
+            "done",
+            "all"
+          ],
+          "flags": [
+            "--status"
+          ],
+          "name": "status",
+          "required": false
+        },
+        {
+          "enum": [
+            "mine",
+            "others"
+          ],
+          "flags": [
+            "--owner"
+          ],
+          "name": "owner",
+          "required": false
+        },
+        {
+          "flags": [
+            "--folder"
+          ],
+          "help": "only items from documents in this folder",
+          "name": "folder",
+          "required": false,
+          "type": "string"
+        }
+      ],
+      "command": "items",
+      "data": {
+        "items": {
+          "properties": {
+            "created_at": {
+              "type": "string"
+            },
+            "edited": {
+              "type": "boolean"
+            },
+            "id": {
+              "type": "integer"
+            },
+            "origin": {
+              "type": "string"
+            },
+            "owner": {
+              "enum": [
+                "me",
+                "someone_else",
+                "unclear"
+              ]
+            },
+            "p_action": {
+              "type": "number"
+            },
+            "paper_text": {
+              "type": "string"
+            },
+            "slot": {
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "source": {
+              "properties": {
+                "anchor": {
+                  "type": "string"
+                },
+                "doc_id": {
+                  "type": "string"
+                },
+                "folder": {
+                  "type": "string"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "page": {
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "doc_id",
+                "name",
+                "folder",
+                "page",
+                "anchor"
+              ],
+              "type": "object"
+            },
+            "status": {
+              "enum": [
+                "open",
+                "done"
+              ]
+            },
+            "text": {
+              "type": "string"
+            },
+            "written": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "id",
+            "origin",
+            "text",
+            "paper_text",
+            "written",
+            "status",
+            "owner",
+            "p_action",
+            "source",
+            "edited",
+            "slot",
+            "created_at"
+          ],
+          "type": "object"
+        },
+        "type": "array"
+      },
+      "help": "the to-do list: list, add, edit, tick, dismiss",
+      "operations": [
+        "items.list",
+        "items.add",
+        "items.edit"
+      ]
+    },
+    {
+      "arguments": [
+        {
+          "default": "open",
+          "enum": [
+            "open",
+            "done",
+            "all"
+          ],
+          "flags": [
+            "--status"
+          ],
+          "name": "status",
+          "required": false
+        },
+        {
+          "enum": [
+            "mine",
+            "others"
+          ],
+          "flags": [
+            "--owner"
+          ],
+          "name": "owner",
+          "required": false
+        },
+        {
+          "flags": [
+            "--folder"
+          ],
+          "help": "only items from documents in this folder",
+          "name": "folder",
+          "required": false,
+          "type": "string"
+        }
+      ],
+      "command": "items list",
+      "data": {
+        "items": {
+          "properties": {
+            "created_at": {
+              "type": "string"
+            },
+            "edited": {
+              "type": "boolean"
+            },
+            "id": {
+              "type": "integer"
+            },
+            "origin": {
+              "type": "string"
+            },
+            "owner": {
+              "enum": [
+                "me",
+                "someone_else",
+                "unclear"
+              ]
+            },
+            "p_action": {
+              "type": "number"
+            },
+            "paper_text": {
+              "type": "string"
+            },
+            "slot": {
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "source": {
+              "properties": {
+                "anchor": {
+                  "type": "string"
+                },
+                "doc_id": {
+                  "type": "string"
+                },
+                "folder": {
+                  "type": "string"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "page": {
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "doc_id",
+                "name",
+                "folder",
+                "page",
+                "anchor"
+              ],
+              "type": "object"
+            },
+            "status": {
+              "enum": [
+                "open",
+                "done"
+              ]
+            },
+            "text": {
+              "type": "string"
+            },
+            "written": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "id",
+            "origin",
+            "text",
+            "paper_text",
+            "written",
+            "status",
+            "owner",
+            "p_action",
+            "source",
+            "edited",
+            "slot",
+            "created_at"
+          ],
+          "type": "object"
+        },
+        "type": "array"
+      },
+      "help": "list items (the default)",
+      "operations": [
+        "items.list",
+        "items.add",
+        "items.edit"
+      ]
+    },
+    {
+      "arguments": [
+        {
+          "many": true,
+          "name": "text",
+          "positional": true,
+          "required": true,
+          "type": "string"
+        }
+      ],
+      "command": "items add",
+      "data": {
+        "properties": {
+          "created_at": {
+            "type": "string"
+          },
+          "edited": {
+            "type": "boolean"
+          },
+          "id": {
+            "type": "integer"
+          },
+          "origin": {
+            "type": "string"
+          },
+          "owner": {
+            "enum": [
+              "me",
+              "someone_else",
+              "unclear"
+            ]
+          },
+          "p_action": {
+            "type": "number"
+          },
+          "paper_text": {
+            "type": "string"
+          },
+          "slot": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "source": {
+            "properties": {
+              "anchor": {
+                "type": "string"
+              },
+              "doc_id": {
+                "type": "string"
+              },
+              "folder": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "page": {
+                "type": "integer"
+              }
+            },
+            "required": [
+              "doc_id",
+              "name",
+              "folder",
+              "page",
+              "anchor"
+            ],
+            "type": "object"
+          },
+          "status": {
+            "enum": [
+              "open",
+              "done"
+            ]
+          },
+          "text": {
+            "type": "string"
+          },
+          "written": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "origin",
+          "text",
+          "paper_text",
+          "written",
+          "status",
+          "owner",
+          "p_action",
+          "source",
+          "edited",
+          "slot",
+          "created_at"
+        ],
+        "type": "object"
+      },
+      "help": "add an item of yours",
+      "operations": [
+        "items.list",
+        "items.add",
+        "items.edit"
+      ]
+    },
+    {
+      "arguments": [
+        {
+          "name": "id",
+          "positional": true,
+          "required": true,
+          "type": "integer"
+        },
+        {
+          "many": true,
+          "name": "text",
+          "positional": true,
+          "required": true,
+          "type": "string"
+        }
+      ],
+      "command": "items edit",
+      "data": {
+        "properties": {
+          "created_at": {
+            "type": "string"
+          },
+          "edited": {
+            "type": "boolean"
+          },
+          "id": {
+            "type": "integer"
+          },
+          "origin": {
+            "type": "string"
+          },
+          "owner": {
+            "enum": [
+              "me",
+              "someone_else",
+              "unclear"
+            ]
+          },
+          "p_action": {
+            "type": "number"
+          },
+          "paper_text": {
+            "type": "string"
+          },
+          "slot": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "source": {
+            "properties": {
+              "anchor": {
+                "type": "string"
+              },
+              "doc_id": {
+                "type": "string"
+              },
+              "folder": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "page": {
+                "type": "integer"
+              }
+            },
+            "required": [
+              "doc_id",
+              "name",
+              "folder",
+              "page",
+              "anchor"
+            ],
+            "type": "object"
+          },
+          "status": {
+            "enum": [
+              "open",
+              "done"
+            ]
+          },
+          "text": {
+            "type": "string"
+          },
+          "written": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "origin",
+          "text",
+          "paper_text",
+          "written",
+          "status",
+          "owner",
+          "p_action",
+          "source",
+          "edited",
+          "slot",
+          "created_at"
+        ],
+        "type": "object"
+      },
+      "help": "change an item's text",
+      "operations": [
+        "items.list",
+        "items.add",
+        "items.edit"
+      ]
+    },
+    {
+      "arguments": [
+        {
+          "name": "id",
+          "positional": true,
+          "required": true,
+          "type": "integer"
+        }
+      ],
+      "command": "items done",
+      "data": {
+        "properties": {
+          "created_at": {
+            "type": "string"
+          },
+          "edited": {
+            "type": "boolean"
+          },
+          "id": {
+            "type": "integer"
+          },
+          "origin": {
+            "type": "string"
+          },
+          "owner": {
+            "enum": [
+              "me",
+              "someone_else",
+              "unclear"
+            ]
+          },
+          "p_action": {
+            "type": "number"
+          },
+          "paper_text": {
+            "type": "string"
+          },
+          "slot": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "source": {
+            "properties": {
+              "anchor": {
+                "type": "string"
+              },
+              "doc_id": {
+                "type": "string"
+              },
+              "folder": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "page": {
+                "type": "integer"
+              }
+            },
+            "required": [
+              "doc_id",
+              "name",
+              "folder",
+              "page",
+              "anchor"
+            ],
+            "type": "object"
+          },
+          "status": {
+            "enum": [
+              "open",
+              "done"
+            ]
+          },
+          "text": {
+            "type": "string"
+          },
+          "written": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "origin",
+          "text",
+          "paper_text",
+          "written",
+          "status",
+          "owner",
+          "p_action",
+          "source",
+          "edited",
+          "slot",
+          "created_at"
+        ],
+        "type": "object"
+      },
+      "help": "mark an item done",
+      "operations": [
+        "items.list",
+        "items.add",
+        "items.edit"
+      ]
+    },
+    {
+      "arguments": [
+        {
+          "name": "id",
+          "positional": true,
+          "required": true,
+          "type": "integer"
+        }
+      ],
+      "command": "items reopen",
+      "data": {
+        "properties": {
+          "created_at": {
+            "type": "string"
+          },
+          "edited": {
+            "type": "boolean"
+          },
+          "id": {
+            "type": "integer"
+          },
+          "origin": {
+            "type": "string"
+          },
+          "owner": {
+            "enum": [
+              "me",
+              "someone_else",
+              "unclear"
+            ]
+          },
+          "p_action": {
+            "type": "number"
+          },
+          "paper_text": {
+            "type": "string"
+          },
+          "slot": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "source": {
+            "properties": {
+              "anchor": {
+                "type": "string"
+              },
+              "doc_id": {
+                "type": "string"
+              },
+              "folder": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "page": {
+                "type": "integer"
+              }
+            },
+            "required": [
+              "doc_id",
+              "name",
+              "folder",
+              "page",
+              "anchor"
+            ],
+            "type": "object"
+          },
+          "status": {
+            "enum": [
+              "open",
+              "done"
+            ]
+          },
+          "text": {
+            "type": "string"
+          },
+          "written": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "origin",
+          "text",
+          "paper_text",
+          "written",
+          "status",
+          "owner",
+          "p_action",
+          "source",
+          "edited",
+          "slot",
+          "created_at"
+        ],
+        "type": "object"
+      },
+      "help": "mark an item open again",
+      "operations": [
+        "items.list",
+        "items.add",
+        "items.edit"
+      ]
+    },
+    {
+      "arguments": [
+        {
+          "name": "id",
+          "positional": true,
+          "required": true,
+          "type": "integer"
+        }
+      ],
+      "command": "items dismiss",
+      "data": {
+        "description": "empty: the item is gone",
+        "type": "object"
+      },
+      "help": "not an action: take it off the list (deletes one added here)",
+      "operations": [
+        "items.list",
+        "items.add",
+        "items.edit"
+      ]
+    },
+    {
+      "arguments": [],
+      "command": "library",
+      "data": {
+        "properties": {
+          "documents": {
+            "items": {
+              "properties": {
+                "baseline_pages": {
+                  "type": "integer"
+                },
+                "folder": {
+                  "type": "string"
+                },
+                "id": {
+                  "type": "string"
+                },
+                "own": {
+                  "type": "boolean"
+                },
+                "path": {
+                  "type": "string"
+                },
+                "read": {
+                  "type": "boolean"
+                },
+                "watched": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "path",
+                "folder",
+                "id",
+                "own",
+                "read",
+                "baseline_pages",
+                "watched"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "folders": {
+            "items": {
+              "properties": {
+                "documents": {
+                  "type": "integer"
+                },
+                "path": {
+                  "type": "string"
+                },
+                "watched": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "path",
+                "documents",
+                "watched"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "folders",
+          "documents"
+        ],
+        "type": "object"
+      },
+      "help": "list your device's folders and which are watched",
+      "operations": [
+        "library"
+      ]
+    },
+    {
+      "arguments": [
+        {
+          "enum": [
+            "add",
+            "remove",
+            "from-now",
+            "read-all"
+          ],
+          "name": "action",
+          "positional": true,
+          "required": true
+        },
+        {
+          "help": "folder or document path, e.g. '/Meeting notes'",
+          "name": "path",
+          "positional": true,
+          "required": true,
+          "type": "string"
+        }
+      ],
+      "command": "watch",
+      "data": {
+        "description": "add/remove: the settings; from-now/read-all: the documents affected",
+        "oneOf": [
+          {
+            "properties": {
+              "action_threshold": {
+                "type": "number"
+              },
+              "from_now": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "include_others": {
+                "type": "boolean"
+              },
+              "poll_interval_s": {
+                "type": "integer"
+              },
+              "todo_enabled": {
+                "type": "boolean"
+              },
+              "todo_folder": {
+                "type": "string"
+              },
+              "todo_name": {
+                "type": "string"
+              },
+              "watch": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              }
+            },
+            "required": [
+              "watch",
+              "action_threshold",
+              "poll_interval_s",
+              "include_others",
+              "todo_enabled",
+              "todo_name",
+              "todo_folder",
+              "from_now"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "already_read": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "documents": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "settings": {
+                "properties": {
+                  "action_threshold": {
+                    "type": "number"
+                  },
+                  "from_now": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  },
+                  "include_others": {
+                    "type": "boolean"
+                  },
+                  "poll_interval_s": {
+                    "type": "integer"
+                  },
+                  "todo_enabled": {
+                    "type": "boolean"
+                  },
+                  "todo_folder": {
+                    "type": "string"
+                  },
+                  "todo_name": {
+                    "type": "string"
+                  },
+                  "watch": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  }
+                },
+                "required": [
+                  "watch",
+                  "action_threshold",
+                  "poll_interval_s",
+                  "include_others",
+                  "todo_enabled",
+                  "todo_name",
+                  "todo_folder",
+                  "from_now"
+                ],
+                "type": "object"
+              }
+            },
+            "required": [
+              "settings",
+              "documents",
+              "already_read"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "help": "watch or stop watching a folder (also in the web app)",
+      "operations": [
+        "watch.add",
+        "watch.remove",
+        "watch.from_now"
+      ]
+    },
+    {
+      "arguments": [],
+      "command": "settings",
+      "data": {
+        "properties": {
+          "action_threshold": {
+            "type": "number"
+          },
+          "from_now": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "include_others": {
+            "type": "boolean"
+          },
+          "poll_interval_s": {
+            "type": "integer"
+          },
+          "todo_enabled": {
+            "type": "boolean"
+          },
+          "todo_folder": {
+            "type": "string"
+          },
+          "todo_name": {
+            "type": "string"
+          },
+          "watch": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "watch",
+          "action_threshold",
+          "poll_interval_s",
+          "include_others",
+          "todo_enabled",
+          "todo_name",
+          "todo_folder",
+          "from_now"
+        ],
+        "type": "object"
+      },
+      "help": "show or change settings (also in the web app)",
+      "operations": [
+        "settings.get",
+        "settings.update"
+      ]
+    },
+    {
+      "arguments": [
+        {
+          "name": "key",
+          "positional": true,
+          "required": true,
+          "type": "string"
+        },
+        {
+          "help": "JSON (true, 0.8, [\"/A\"]) or plain text",
+          "name": "value",
+          "positional": true,
+          "required": true,
+          "type": "string"
+        }
+      ],
+      "command": "settings set",
+      "data": {
+        "properties": {
+          "action_threshold": {
+            "type": "number"
+          },
+          "from_now": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "include_others": {
+            "type": "boolean"
+          },
+          "poll_interval_s": {
+            "type": "integer"
+          },
+          "todo_enabled": {
+            "type": "boolean"
+          },
+          "todo_folder": {
+            "type": "string"
+          },
+          "todo_name": {
+            "type": "string"
+          },
+          "watch": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "watch",
+          "action_threshold",
+          "poll_interval_s",
+          "include_others",
+          "todo_enabled",
+          "todo_name",
+          "todo_folder",
+          "from_now"
+        ],
+        "type": "object"
+      },
+      "help": "set one: e.g. todo_enabled true, action_threshold 0.8",
+      "operations": [
+        "settings.get",
+        "settings.update"
+      ]
+    },
+    {
+      "arguments": [
+        {
+          "flags": [
+            "--dry-run"
+          ],
+          "help": "only show which documents and pages changed",
+          "name": "dry_run",
+          "required": false,
+          "type": "boolean"
+        }
+      ],
+      "command": "collect",
+      "data": {
+        "description": "--dry-run: the changed pages",
+        "oneOf": [
+          {
+            "properties": {
+              "actions_missing": {
+                "type": "integer"
+              },
+              "actions_new": {
+                "type": "integer"
+              },
+              "actions_updated": {
+                "type": "integer"
+              },
+              "docs_changed": {
+                "type": "integer"
+              },
+              "docs_seen": {
+                "type": "integer"
+              },
+              "errors": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "lines_judged": {
+                "type": "integer"
+              },
+              "pages_baselined": {
+                "type": "integer"
+              },
+              "pages_read": {
+                "type": "integer"
+              },
+              "pages_skipped": {
+                "type": "integer"
+              }
+            },
+            "required": [
+              "docs_seen",
+              "docs_changed",
+              "pages_read",
+              "pages_skipped",
+              "pages_baselined",
+              "lines_judged",
+              "actions_new",
+              "actions_updated",
+              "actions_missing",
+              "errors"
+            ],
+            "type": "object"
+          },
+          {
+            "items": {
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "pages": {
+                  "items": {
+                    "type": "integer"
+                  },
+                  "type": "array"
+                },
+                "path": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "path",
+                "id",
+                "pages"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          }
+        ]
+      },
+      "help": "read what changed in watched folders and update the to-do list",
+      "operations": [
+        "collect",
+        "pending"
+      ]
+    },
+    {
+      "arguments": [
+        {
+          "flags": [
+            "--force"
+          ],
+          "help": "republish even if nothing changed",
+          "name": "force",
+          "required": false,
+          "type": "boolean"
+        }
+      ],
+      "command": "todo",
+      "data": {
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          }
+        },
+        "required": [],
+        "type": "object"
+      },
+      "help": "read ticks from, and republish, the To-do document",
+      "operations": [
+        "todo.sync"
+      ]
+    },
+    {
+      "arguments": [],
+      "command": "check",
+      "data": {
+        "properties": {
+          "collect": {},
+          "todo": {}
+        },
+        "required": [],
+        "type": "object"
+      },
+      "help": "collect and update the To-do document now",
+      "operations": [
+        "check"
+      ]
+    },
+    {
+      "arguments": [],
+      "command": "status",
+      "data": {
+        "properties": {
+          "background": {},
+          "documents_read": {
+            "type": "integer"
+          },
+          "items": {
+            "properties": {
+              "done": {
+                "type": "integer"
+              },
+              "open": {
+                "type": "integer"
+              }
+            },
+            "required": [
+              "open",
+              "done"
+            ],
+            "type": "object"
+          },
+          "judge": {
+            "type": "string"
+          },
+          "last_collected_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "source": {
+            "properties": {
+              "connected": {
+                "type": "boolean"
+              },
+              "detail": {
+                "type": "string"
+              },
+              "device": {
+                "type": "string"
+              },
+              "label": {
+                "type": "string"
+              },
+              "mark": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "name",
+              "label",
+              "mark",
+              "device",
+              "connected",
+              "detail"
+            ],
+            "type": "object"
+          },
+          "todo": {
+            "properties": {
+              "enabled": {
+                "type": "boolean"
+              },
+              "folder": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "published_at": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "enabled",
+              "name",
+              "folder",
+              "published_at"
+            ],
+            "type": "object"
+          },
+          "watch": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "source",
+          "judge",
+          "watch",
+          "documents_read",
+          "last_collected_at",
+          "items",
+          "todo",
+          "background"
+        ],
+        "type": "object"
+      },
+      "help": "what Jotted reads, judges and publishes, and when it last did",
+      "operations": [
+        "status",
+        "source"
+      ]
+    },
+    {
+      "arguments": [
+        {
+          "name": "doc_id",
+          "positional": true,
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "page",
+          "positional": true,
+          "required": true,
+          "type": "integer"
+        },
+        {
+          "flags": [
+            "--anchor"
+          ],
+          "help": "the line to highlight",
+          "name": "anchor",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "flags": [
+            "-o",
+            "--out"
+          ],
+          "help": "write to this file instead of standard output",
+          "name": "out",
+          "required": false,
+          "type": "string"
+        }
+      ],
+      "command": "image page",
+      "data": {
+        "oneOf": [
+          {
+            "properties": {
+              "svg": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "svg"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "path": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "path"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "help": "a page, with a line highlighted",
+      "operations": [
+        "page.image",
+        "line.image"
+      ]
+    },
+    {
+      "arguments": [
+        {
+          "name": "doc_id",
+          "positional": true,
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "anchor",
+          "positional": true,
+          "required": true,
+          "type": "string"
+        },
+        {
+          "flags": [
+            "-o",
+            "--out"
+          ],
+          "help": "write to this file instead of standard output",
+          "name": "out",
+          "required": false,
+          "type": "string"
+        }
+      ],
+      "command": "image line",
+      "data": {
+        "oneOf": [
+          {
+            "properties": {
+              "svg": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "svg"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "path": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "path"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "help": "one handwritten line",
+      "operations": [
+        "page.image",
+        "line.image"
+      ]
+    },
+    {
+      "arguments": [
+        {
+          "flags": [
+            "--since"
+          ],
+          "help": "the cursor of the last event you saw",
+          "name": "since",
+          "required": false,
+          "type": "integer"
+        },
+        {
+          "flags": [
+            "--follow"
+          ],
+          "help": "keep printing changes as they happen, one per line",
+          "name": "follow",
+          "required": false,
+          "type": "boolean"
+        }
+      ],
+      "command": "events",
+      "data": {
+        "description": "--follow prints one event per line instead, each with \"v\"",
+        "properties": {
+          "cursor": {
+            "type": "integer"
+          },
+          "events": {
+            "items": {
+              "properties": {
+                "at": {
+                  "type": "string"
+                },
+                "cursor": {
+                  "type": "integer"
+                },
+                "type": {
+                  "enum": [
+                    "item.added",
+                    "item.changed",
+                    "item.removed",
+                    "check.started",
+                    "check.finished",
+                    "todo.published",
+                    "settings.changed",
+                    "source.error"
+                  ]
+                }
+              },
+              "required": [
+                "cursor",
+                "at",
+                "type"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "cursor",
+          "events"
+        ],
+        "type": "object"
+      },
+      "help": "changes since a cursor; --follow keeps printing them",
+      "operations": [
+        "events"
+      ]
+    },
+    {
+      "arguments": [
+        {
+          "flags": [
+            "--host"
+          ],
+          "help": "default: server.host",
+          "name": "host",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "flags": [
+            "--port"
+          ],
+          "help": "default: server.port; 0 picks a free one",
+          "name": "port",
+          "required": false,
+          "type": "integer"
+        },
+        {
+          "flags": [
+            "--no-browser"
+          ],
+          "help": "don't open the browser",
+          "name": "no_browser",
+          "required": false,
+          "type": "boolean"
+        },
+        {
+          "flags": [
+            "--dev"
+          ],
+          "help": "use Flask's development server",
+          "name": "dev",
+          "required": false,
+          "type": "boolean"
+        },
+        {
+          "flags": [
+            "--no-background"
+          ],
+          "help": "don't check or write to the device in the background",
+          "name": "no_background",
+          "required": false,
+          "type": "boolean"
+        }
+      ],
+      "command": "serve",
+      "data": {
+        "description": "runs until stopped; no JSON output"
+      },
+      "help": "run the web app, background checking and the CLI's fast path",
+      "operations": []
+    },
+    {
+      "arguments": [
+        {
+          "flags": [
+            "--port"
+          ],
+          "help": "default: server.port",
+          "name": "port",
+          "required": false,
+          "type": "integer"
+        },
+        {
+          "flags": [
+            "--no-browser"
+          ],
+          "help": "don't open the browser",
+          "name": "no_browser",
+          "required": false,
+          "type": "boolean"
+        },
+        {
+          "flags": [
+            "--no-update"
+          ],
+          "help": "don't check GitHub for a newer version",
+          "name": "no_update",
+          "required": false,
+          "type": "boolean"
+        }
+      ],
+      "command": "start",
+      "data": {
+        "description": "interactive; no JSON output"
+      },
+      "help": "set up anything missing, then open the app (start here)",
+      "operations": []
+    },
+    {
+      "arguments": [],
+      "command": "update",
+      "data": {
+        "properties": {
+          "updated": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "updated"
+        ],
+        "type": "object"
+      },
+      "help": "update Jotted to the latest version on GitHub",
+      "operations": []
+    },
+    {
+      "arguments": [],
+      "command": "version",
+      "data": {
+        "properties": {
+          "bundled": {
+            "type": "boolean"
+          },
+          "contract": {
+            "type": "integer"
+          },
+          "contract_min": {
+            "type": "integer"
+          },
+          "python": {
+            "type": "string"
+          },
+          "source_plugin": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "version": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "version",
+          "contract",
+          "contract_min",
+          "source_plugin",
+          "python",
+          "bundled"
+        ],
+        "type": "object"
+      },
+      "help": "release and contract versions",
+      "operations": []
+    },
+    {
+      "arguments": [],
+      "command": "schema",
+      "data": {
+        "description": "this document",
+        "type": "object"
+      },
+      "help": "every command: its arguments, options and the shape of its data",
+      "operations": []
+    },
+    {
+      "arguments": [],
+      "command": "mcp",
+      "data": {
+        "description": "an MCP server on stdio; no JSON output"
+      },
+      "help": "serve Jotted's operations as MCP tools on stdio (for agents)",
+      "operations": []
+    },
+    {
+      "arguments": [],
+      "command": "config check",
+      "data": {
+        "properties": {
+          "ai": {
+            "properties": {
+              "jev": {
+                "properties": {
+                  "by": {
+                    "type": "string"
+                  },
+                  "enabled": {
+                    "type": "boolean"
+                  },
+                  "key": {
+                    "properties": {
+                      "hint": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "set": {
+                        "type": "boolean"
+                      },
+                      "source": {
+                        "enum": [
+                          "saved",
+                          "environment",
+                          null
+                        ]
+                      }
+                    },
+                    "required": [
+                      "set",
+                      "source",
+                      "hint"
+                    ],
+                    "type": "object"
+                  },
+                  "key_url": {
+                    "type": "string"
+                  },
+                  "model": {
+                    "type": "string"
+                  },
+                  "name": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "name",
+                  "by",
+                  "model",
+                  "key_url",
+                  "key",
+                  "enabled"
+                ],
+                "type": "object"
+              },
+              "judge": {
+                "enum": [
+                  "llm",
+                  "jev"
+                ]
+              },
+              "llm": {
+                "properties": {
+                  "family": {
+                    "type": "string"
+                  },
+                  "key": {
+                    "properties": {
+                      "hint": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "set": {
+                        "type": "boolean"
+                      },
+                      "source": {
+                        "enum": [
+                          "saved",
+                          "environment",
+                          null
+                        ]
+                      }
+                    },
+                    "required": [
+                      "set",
+                      "source",
+                      "hint"
+                    ],
+                    "type": "object"
+                  },
+                  "key_url": {
+                    "type": "string"
+                  },
+                  "label": {
+                    "type": "string"
+                  },
+                  "model": {
+                    "type": "string"
+                  },
+                  "provider": {
+                    "type": "string"
+                  },
+                  "providers": {
+                    "items": {
+                      "properties": {
+                        "id": {
+                          "type": "string"
+                        },
+                        "label": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "label"
+                      ],
+                      "type": "object"
+                    },
+                    "type": "array"
+                  }
+                },
+                "required": [
+                  "provider",
+                  "label",
+                  "family",
+                  "model",
+                  "key_url",
+                  "key",
+                  "providers"
+                ],
+                "type": "object"
+              }
+            },
+            "required": [
+              "llm",
+              "jev",
+              "judge"
+            ],
+            "type": "object"
+          },
+          "config": {
+            "type": "object"
+          },
+          "path": {
+            "type": "string"
+          },
+          "source": {
+            "properties": {
+              "connected": {
+                "type": "boolean"
+              },
+              "detail": {
+                "type": "string"
+              },
+              "device": {
+                "type": "string"
+              },
+              "label": {
+                "type": "string"
+              },
+              "mark": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "name",
+              "label",
+              "mark",
+              "device",
+              "connected",
+              "detail"
+            ],
+            "type": "object"
+          }
+        },
+        "required": [
+          "path",
+          "config",
+          "source",
+          "ai"
+        ],
+        "type": "object"
+      },
+      "help": "validate config.toml and print resolved values",
+      "operations": []
+    },
+    {
+      "arguments": [
+        {
+          "flags": [
+            "--stdin"
+          ],
+          "help": "read the one-time code from standard input",
+          "name": "stdin",
+          "required": false,
+          "type": "boolean"
+        },
+        {
+          "flags": [
+            "--replace"
+          ],
+          "help": "replace the current connection",
+          "name": "replace",
+          "required": false,
+          "type": "boolean"
+        }
+      ],
+      "command": "connect",
+      "data": {
+        "properties": {
+          "connected": {
+            "type": "boolean"
+          },
+          "documents": {
+            "type": "integer"
+          },
+          "replaced": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "connected"
+        ],
+        "type": "object"
+      },
+      "help": "connect your reMarkable with a one-time code",
+      "operations": []
+    },
+    {
+      "arguments": [
+        {
+          "flags": [
+            "--stdin"
+          ],
+          "help": "read the one-time code from standard input",
+          "name": "stdin",
+          "required": false,
+          "type": "boolean"
+        },
+        {
+          "flags": [
+            "--replace"
+          ],
+          "help": "replace the current connection",
+          "name": "replace",
+          "required": false,
+          "type": "boolean"
+        }
+      ],
+      "command": "auth",
+      "data": {
+        "properties": {
+          "connected": {
+            "type": "boolean"
+          },
+          "documents": {
+            "type": "integer"
+          },
+          "replaced": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "connected"
+        ],
+        "type": "object"
+      },
+      "deprecated": "use `connect`",
+      "help": "Get a one-time code at https://my.remarkable.com/device/desktop/connect (sign in, then connect a desktop app).",
+      "hidden": true,
+      "operations": []
+    }
+  ],
+  "contract": 1,
+  "contract_min": 1,
+  "envelope": {
+    "error": {
+      "error": {
+        "code": "string",
+        "message": "string",
+        "retry": "boolean?",
+        "step": "string?"
+      },
+      "ok": false,
+      "v": "integer"
+    },
+    "ok": {
+      "data": "the command's data",
+      "ok": true,
+      "v": "integer"
+    }
+  },
+  "errors": {
+    "busy": {
+      "exit": 4
+    },
+    "config": {
+      "exit": 2
+    },
+    "conflict": {
+      "exit": 1
+    },
+    "internal": {
+      "exit": 1
+    },
+    "interrupted": {
+      "exit": 130
+    },
+    "invalid": {
+      "exit": 1
+    },
+    "model_error": {
+      "exit": 6
+    },
+    "not_connected": {
+      "exit": 5
+    },
+    "not_found": {
+      "exit": 1
+    },
+    "not_set_up": {
+      "exit": 3
+    },
+    "usage": {
+      "exit": 2
+    }
+  },
+  "global_options": [
+    {
+      "flags": [
+        "--json"
+      ],
+      "help": "print one JSON envelope (for scripts and other apps)",
+      "name": "json",
+      "required": false,
+      "type": "boolean"
+    },
+    {
+      "flags": [
+        "--local"
+      ],
+      "help": "do the work in this process, even when `jotted serve` runs",
+      "name": "local",
+      "required": false,
+      "type": "boolean"
+    }
+  ],
+  "operations": {
+    "ai.get": {
+      "doc": "",
+      "params": {}
+    },
+    "ai.model": {
+      "doc": "Choose the model. It reads handwriting, so it has to read images.",
+      "params": {
+        "name": {
+          "type": "str"
+        }
+      }
+    },
+    "ai.provider": {
+      "doc": "Choose the LLM adapter. Its model goes back to config.toml's until `ai.model` sets one.",
+      "params": {
+        "name": {
+          "type": "str"
+        }
+      }
+    },
+    "ai.remove_key": {
+      "doc": "Turn the Jev plugin off. The LLM's key can be replaced but not removed: nothing works without it.",
+      "params": {
+        "which": {
+          "type": "str"
+        }
+      }
+    },
+    "ai.set_key": {
+      "doc": "Check a key with its provider, then save it. Turning Jev on is adding its key.",
+      "params": {
+        "value": {
+          "type": "str"
+        },
+        "which": {
+          "type": "str"
+        }
+      }
+    },
+    "check": {
+      "doc": "Check now: in the background when a scheduler runs (the web server), else right here.",
+      "params": {}
+    },
+    "collect": {
+      "doc": "Read what changed in the watched documents now.",
+      "params": {}
+    },
+    "events": {
+      "doc": "Changes after cursor `since` (without one: the last few), and the cursor to pass\nnext time. Every process's changes are here: the server's, the CLI's, an agent's.",
+      "params": {
+        "limit": {
+          "default": 1000,
+          "type": "int"
+        },
+        "since": {
+          "default": null,
+          "type": "int | None"
+        }
+      }
+    },
+    "items.add": {
+      "doc": "",
+      "params": {
+        "text": {
+          "type": "str"
+        }
+      }
+    },
+    "items.edit": {
+      "doc": "Change an item's text or status, or dismiss it (not an action; or delete one added here).\nReturns the item, or {} once dismissed.",
+      "params": {
+        "dismissed": {
+          "default": null,
+          "type": "bool | None"
+        },
+        "item_id": {
+          "type": "int"
+        },
+        "status": {
+          "default": null,
+          "type": "str | None"
+        },
+        "text": {
+          "default": null,
+          "type": "str | None"
+        }
+      }
+    },
+    "items.list": {
+      "doc": "",
+      "params": {
+        "folder": {
+          "default": null,
+          "type": "str | None"
+        },
+        "owner": {
+          "default": null,
+          "type": "str | None"
+        },
+        "status": {
+          "default": null,
+          "type": "str | None"
+        }
+      }
+    },
+    "library": {
+      "doc": "Folders and documents for the watch picker, with what each watch would cover.",
+      "params": {}
+    },
+    "line.image": {
+      "doc": "One handwritten line as SVG.",
+      "params": {
+        "anchor": {
+          "type": "str"
+        },
+        "doc_id": {
+          "type": "str"
+        }
+      }
+    },
+    "page.image": {
+      "doc": "A source page as SVG, with the line `anchor` highlighted.",
+      "params": {
+        "anchor": {
+          "default": null,
+          "type": "str | None"
+        },
+        "doc_id": {
+          "type": "str"
+        },
+        "page": {
+          "type": "int"
+        }
+      }
+    },
+    "pending": {
+      "doc": "What the next collection would read: changed documents and, with `fetch`, their\nchanged pages (downloads only; nothing is read or judged).",
+      "params": {
+        "fetch": {
+          "default": false,
+          "type": "bool"
+        }
+      }
+    },
+    "settings.get": {
+      "doc": "",
+      "params": {}
+    },
+    "settings.update": {
+      "doc": "",
+      "params": {
+        "changes": {
+          "type": "dict"
+        }
+      }
+    },
+    "source": {
+      "doc": "",
+      "params": {}
+    },
+    "status": {
+      "doc": "",
+      "params": {}
+    },
+    "todo.sync": {
+      "doc": "Read ticks and new items from the To-do document, then republish it if needed.",
+      "params": {
+        "force": {
+          "default": false,
+          "type": "bool"
+        }
+      }
+    },
+    "watch.add": {
+      "doc": "",
+      "params": {
+        "path": {
+          "type": "str"
+        }
+      }
+    },
+    "watch.from_now": {
+      "doc": "Skip (on) or read again (off) what is already written in the documents at `path`\n(a document, or every document in a folder now). Returns the settings, the documents\naffected, and those already read in full, where there is nothing left to skip.",
+      "params": {
+        "on": {
+          "default": true,
+          "type": "bool"
+        },
+        "path": {
+          "type": "str"
+        }
+      }
+    },
+    "watch.remove": {
+      "doc": "",
+      "params": {
+        "path": {
+          "type": "str"
+        }
+      }
+    }
+  },
+  "version": "0.1.0"
+}

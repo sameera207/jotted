@@ -9,7 +9,8 @@ ends rely on.
 Each public operation is registered in `OPERATIONS` with `@operation`; a test checks
 that every one is reachable from the CLI, and every web route maps to one.
 
-Errors are `ApiError`s with a message for the person and an HTTP-like status.
+Errors are `ApiError`s with a message for the person, a `code` for programs (the CLI's
+--json contract, `jotted.contract`) and an HTTP-like status.
 """
 
 from __future__ import annotations
@@ -31,27 +32,60 @@ log = logging.getLogger("jotted")
 OPERATIONS: dict[str, str] = {}  # operation name -> method name
 
 SOURCE_WAIT_S = 60  # how long a request waits for the source to be free
+RECENT_EVENTS = 50  # `events` without a cursor
 
 
 class ApiError(Exception):
+    """An operation couldn't be done. `message` is for the person; `code` is for programs
+    (see `jotted.contract`); `status` is the HTTP status the web server answers with."""
     status = 400
+    code = "invalid"
 
 
 class Invalid(ApiError):
     status = 400
+    code = "invalid"
 
 
 class NotFound(ApiError):
     status = 404
+    code = "not_found"
 
 
 class Conflict(ApiError):
     status = 409
+    code = "conflict"
+
+
+class SourceBusy(Conflict):
+    """Another job (maybe another Jotted process) holds the device."""
+    code = "busy"
+    retry = True
+
+
+class NotSetUp(ApiError):
+    """A setup step is missing; `step` names it (`jotted setup status`)."""
+    status = 409
+    code = "not_set_up"
+
+    def __init__(self, message: str, step: str):
+        super().__init__(message)
+        self.step = step
 
 
 class Unavailable(ApiError):
     """The source or a model failed, or couldn't be reached."""
     status = 502
+    code = "not_connected"
+
+
+class ModelFailed(Unavailable):
+    """No key, a rejected key, or the model failed."""
+    code = "model_error"
+
+
+class KeyRejected(ModelFailed):
+    status = 400
 
 
 def operation(name: str) -> Callable:
@@ -105,9 +139,17 @@ class Jotted:
     (the web server schedules an update; the CLI leaves it to `jotted todo` or the server)."""
 
     def __init__(self, app: App, scheduler: Scheduler | None = None, on_change: Callable[[], None] | None = None):
-        self.app, self.cfg, self.repo = app, app.cfg, app.repo
+        self.app = app
         self.scheduler = scheduler
         self._on_change = on_change or (lambda: None)
+
+    @property
+    def cfg(self) -> Config:  # the App's, which `ai.provider`/`ai.model` replace in place
+        return self.app.cfg
+
+    @property
+    def repo(self):
+        return self.app.repo
 
     @classmethod
     def open(cls, cfg: Config, **kw: Any) -> "Jotted":
@@ -117,11 +159,20 @@ class Jotted:
         """Run `fn` holding the source lock; turn source and model failures into ApiErrors."""
         try:
             with self.app.lock.held(wait, what):
+                self._require_source()
                 return fn()
         except Busy as e:
-            raise Conflict(str(e)) from e
+            raise SourceBusy(str(e)) from e
+        except llm.ModelError as e:
+            raise ModelFailed(str(e)) from e
         except SYNC_ERRORS as e:
             raise Unavailable(str(e)) from e
+
+    def _require_source(self) -> None:
+        """NotSetUp, naming the step, if the source plugin's setup isn't finished."""
+        for step in getattr(self.app.plugin, "setup_steps", lambda: [])():
+            if not step.optional and not step.check(self.cfg)["done"]:
+                raise NotSetUp(f"{step.title}: not set up yet. Run `jotted {step.command}`", step=step.id)
 
     # ------------------------------------------------------------ the to-do list
 
@@ -293,6 +344,20 @@ class Jotted:
         p = self.app.plugin
         return {"name": p.NAME, "label": p.LABEL, "mark": p.MARK, "device": p.DEVICE, **p.describe()}
 
+    # ------------------------------------------------------------ what changed
+
+    @operation("events")
+    def events(self, since: int | None = None, limit: int = 1000) -> dict:
+        """Changes after cursor `since` (without one: the last few), and the cursor to pass
+        next time. Every process's changes are here: the server's, the CLI's, an agent's."""
+        if since is not None and (not isinstance(since, int) or since < 0):
+            raise Invalid("since must be a cursor from an earlier event")
+        if since is None:
+            since = max(0, self.repo.last_cursor() - RECENT_EVENTS)
+        found = self.repo.events(since, limit)
+        # Nothing new: the latest cursor, or a lower one if `since` came from a database since replaced.
+        return {"cursor": found[-1]["cursor"] if found else min(since, self.repo.last_cursor()), "events": found}
+
     # ------------------------------------------------------------ where an item came from
 
     @operation("page.image")
@@ -350,6 +415,31 @@ class Jotted:
             "judge": "jev" if classify.jev_enabled(cfg) else "llm",
         }
 
+    @operation("ai.provider")
+    def set_provider(self, name: str) -> dict:
+        """Choose the LLM adapter. Its model goes back to config.toml's until `ai.model` sets one."""
+        if name not in llm.PROVIDERS:
+            raise Invalid(f"no LLM provider {name!r}; available: {', '.join(sorted(llm.PROVIDERS))}")
+        if name != self.cfg.llm.provider:
+            self.repo.save_ai_choice(provider=name, model=None)
+            self.app.reload()
+        return self.ai()
+
+    @operation("ai.model")
+    def set_model(self, name: str) -> dict:
+        """Choose the model. It reads handwriting, so it has to read images."""
+        name = name.strip() if isinstance(name, str) else ""
+        if not name:
+            raise Invalid("Name a model")
+        cls = llm.llm_class(self.cfg.llm)
+        reads_images = getattr(cls, "reads_images", None)
+        if reads_images and not reads_images(name):
+            raise Invalid(f"{name} isn't a {cls.LABEL} model that reads images, which Jotted needs "
+                          "to read handwriting")
+        self.repo.save_ai_choice(model=name)
+        self.app.reload()
+        return self.ai()
+
     @operation("ai.set_key")
     def set_key(self, which: str, value: str) -> dict:
         """Check a key with its provider, then save it. Turning Jev on is adding its key."""
@@ -367,8 +457,8 @@ class Jotted:
             else:
                 os.environ[name] = previous
             if "rejected" in str(e):
-                raise Invalid(f"{e}. Check it was copied in full.") from e
-            raise Unavailable(f"{e}. The key wasn't saved.") from e
+                raise KeyRejected(f"{e}. Check it was copied in full.") from e
+            raise ModelFailed(f"{e}. The key wasn't saved.") from e
         keys.save(self.cfg, name, value)
         log.info("%s key saved", cls.LABEL)
         return self.ai()

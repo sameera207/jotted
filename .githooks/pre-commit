@@ -1,0 +1,8 @@
+#!/bin/sh
+# Keep the documents downstream agents and apps read in step with the CLI:
+# docs/cli-contract.md, docs/schema.json and the contract baseline (scripts/contract_docs.py).
+# Stops the commit if a change would break the contract without a new contract version.
+# Enable once per clone: git config core.hooksPath .githooks
+set -e
+uv run --quiet python scripts/contract_docs.py
+git add docs/cli-contract.md docs/schema.json tests/contract/

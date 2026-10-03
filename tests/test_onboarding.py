@@ -231,6 +231,7 @@ def test_a_failed_reconnect_keeps_the_old_connection(world, home):
 
 def test_start_opens_settings_first_and_reuses_a_running_app(world, home, monkeypatch):
     opened, served, real_serve = [], [], cli._serve
+    monkeypatch.setattr(cli, "can_prompt", lambda args: True)  # a person at a terminal
     monkeypatch.setattr("builtins.input", lambda prompt="": {"y": "y"}.get("y"))  # rmapi: yes
     monkeypatch.setattr(onboarding.ConsoleUI, "ask", lambda self, p: "ABCD1234")
     keys_iter = iter(["good-a", "good-t"])
@@ -290,6 +291,7 @@ def update_world(monkeypatch):
 
 def test_start_updates_and_reruns_when_github_is_ahead(update_world, monkeypatch):
     update_world["head"] = "b" * 40
+    monkeypatch.setattr(cli, "can_prompt", lambda args: True)
     reran = []
     monkeypatch.setattr(cli, "_rerun", lambda: reran.append(True) or (_ for _ in ()).throw(SystemExit(0)))
     with pytest.raises(SystemExit):

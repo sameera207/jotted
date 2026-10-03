@@ -1,37 +1,52 @@
-"""Jotted command line: the whole product from a terminal, over `api.Jotted`.
+"""Jotted command line: the product's one public interface, over `api.Jotted`.
 
-Every operation the web app offers is a command here too (a test keeps it so), and every
-command takes --json to print the operation's result for scripts and other front ends.
-Commands only parse arguments and show results; the work happens in `jotted.api`.
+Every operation is a command here (a test keeps it so), and everything else (the desktop
+app, `jotted mcp`, scripts) is a wrapper that runs `jotted --json …` and reads the
+envelope `jotted.contract` defines. With --json, stdout carries exactly one JSON document;
+logs and progress go to stderr. Prompts appear only in a terminal without --json; every
+secret can come on stdin (--stdin) instead.
+
+Most commands are one operation (`Call`): when `jotted serve` is running they are handed
+to it (`jotted.fastpath`), else run here; the output is the same either way. Commands only
+parse arguments and show results; the work happens in `jotted.api`.
 """
 
 from __future__ import annotations
 
 import argparse
-import getpass
+import contextlib
+import io
 import json
 import logging
 import os
 import sys
+import traceback
+from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any, Callable
 
 from rich.console import Console
-from rich.logging import RichHandler
 from rich.markup import escape
-from rich.table import Table
 
-from . import keys, plugins, selfupdate
-from .config import Config, ConfigError, load, resolve_path
+from . import contract
+from .config import Config
+from .contract import UsageError
+from .ui import can_prompt, read_secret
 
 log = logging.getLogger("jotted")
 console = Console()
+errors = Console(stderr=True)
+
+BUNDLED_VAR = "JOTTED_BUNDLED"  # set by the desktop app: it updates its own copy
 
 
 def _setup_logging(level: str) -> None:
+    from rich.logging import RichHandler
+
     logging.basicConfig(
         level=level.upper(),
         format="%(message)s",
-        handlers=[RichHandler(console=Console(stderr=True), show_time=False, show_path=False)],
+        handlers=[RichHandler(console=errors, show_time=False, show_path=False)],
         force=True,
     )
     if level.upper() != "DEBUG":  # per-request lines from the HTTP clients are noise at INFO
@@ -41,7 +56,25 @@ def _setup_logging(level: str) -> None:
         logging.getLogger("rmscene").setLevel(logging.ERROR)
 
 
-# ---------------------------------------------------------------- output
+# ---------------------------------------------------------------- what a command returns
+
+
+@dataclass
+class Call:
+    """A command that is one api operation, run here or by a running `jotted serve`."""
+    op: str
+    kwargs: dict = field(default_factory=dict)
+    render: Callable[[Any], None] | None = None  # show the result to a person
+    then: Callable[[Any], Any] | None = None  # the operation's result -> the command's (runs here)
+    status: str | None = None  # spinner text while it runs here; also turns on progress
+
+
+@dataclass
+class Done:
+    """A command that did its work itself (setup, version, schema...)."""
+    data: Any
+    render: Callable[[Any], None] | None = None
+
 
 def uses(*ops: str):
     """Mark a command with the api operations it offers (checked by the parity test)."""
@@ -57,13 +90,40 @@ def _jotted(cfg: Config):
     return Jotted.open(cfg)
 
 
-def _emit(args: argparse.Namespace, data, render) -> int:
-    """--json prints the operation's result as it is; otherwise `render` shows it to a person."""
+def _progress(args: argparse.Namespace, status) -> Callable[[str], None]:
     if args.json:
-        print(json.dumps(data, indent=2, ensure_ascii=False, default=str))
+        return lambda m: print(json.dumps({"v": contract.CONTRACT, "progress": m}), file=sys.stderr, flush=True)
+    return lambda m: status.update(escape(m)) if status else None
+
+
+def _run_call(cfg: Config, args: argparse.Namespace, call: Call) -> Any:
+    envelope = None
+    if not args.local:
+        from . import fastpath
+
+        envelope = fastpath.send(cfg, call.op, call.kwargs)
+    if envelope is not None:
+        if not envelope.get("ok"):
+            raise contract.Failed(envelope)
+        data = envelope["data"]
     else:
-        render()
-    return 0
+        from .api import OPERATIONS
+
+        jotted = _jotted(cfg)
+        fn = getattr(jotted, OPERATIONS[call.op])
+        if call.status and not args.json:
+            with console.status(call.status) as status:
+                data = fn(**call.kwargs, **({"progress": _progress(args, status)} if call.op == "collect" else {}))
+        else:
+            data = fn(**call.kwargs, **({"progress": _progress(args, None)} if call.op == "collect" else {}))
+    return call.then(data) if call.then else data
+
+
+def _print_json(obj: Any) -> None:
+    print(json.dumps(obj, indent=2, ensure_ascii=False, default=str))
+
+
+# ---------------------------------------------------------------- showing results
 
 
 def _label(item: dict) -> str:
@@ -76,6 +136,8 @@ def _label(item: dict) -> str:
 
 
 def _items_table(items: list[dict]) -> None:
+    from rich.table import Table
+
     if not items:
         console.print("[dim]Nothing here.[/dim]")
         return
@@ -90,46 +152,51 @@ def _items_table(items: list[dict]) -> None:
     console.print(table)
 
 
-# ---------------------------------------------------------------- commands
+def _show_settings(settings: dict) -> None:
+    width = max(len(k) for k in settings)
+    for k, v in settings.items():
+        console.print(f"{k:<{width}}  {json.dumps(v)}", highlight=False)
 
 
-def cmd_config_check(cfg: Config, args: argparse.Namespace) -> int:
-    console.print(f"[green]OK[/green] {cfg.source}")
-    for section, values in cfg.as_dict().items():
-        console.print(f"\n[bold]\\[{section}][/bold]")
-        width = max(len(k) for k in values)
-        for k, v in values.items():
-            console.print(f"  {k:<{width}} = {json.dumps(v)}", highlight=False)
-    console.print()
-    jotted = _jotted(cfg)
-    src = jotted.source()
-    console.print(f"Source: {src['label']} ({src['detail']})")
-    ai = jotted.ai()
-    console.print(f"LLM: {ai['llm']['label']} {ai['llm']['model']}, key "
-                  + ("set" if ai["llm"]["key"]["set"] else "[yellow]not set (run jotted setup)[/yellow]"))
-    console.print(f"Jev plugin: {'on' if ai['jev']['enabled'] else 'off'}")
-    return 0
+def _show_ai(ai: dict) -> None:
+    m, j = ai["llm"], ai["jev"]
+    key = m["key"]
+    console.print(f"LLM:  {m['family']} by {m['label']} ({m['model']}), adapter “{m['provider']}”; key "
+                  + (f"{key['hint']} ({key['source']})" if key["set"] else "[yellow]not set[/yellow]"))
+    console.print(f"Jev:  {'on (' + j['model'] + '), judging actions and owners' if j['enabled'] else 'off'}")
+    console.print(f"Judging actions: {'Jev' if ai['judge'] == 'jev' else m['family']}")
+
+
+def _show_steps(status: dict) -> None:
+    for s in status["steps"]:
+        mark = "[green]✓[/green]" if s["done"] else ("[dim]·[/dim]" if s.get("optional") else "[yellow]✗[/yellow]")
+        detail = f" [dim]{escape(s['detail'])}[/dim]" if s.get("detail") else ""
+        todo = f"  → jotted {escape(s['command'])}" if not s["done"] and s.get("command") else ""
+        console.print(f"{mark} {escape(s['title'])}{' (optional)' if s.get('optional') else ''}{detail}{todo}")
+    console.print("\n[green]Set up.[/green]" if status["complete"] else "\n[yellow]Not set up yet.[/yellow]")
+
+
+# ---------------------------------------------------------------- the to-do list
 
 
 @uses("items.list", "items.add", "items.edit")
-def cmd_items(cfg: Config, args: argparse.Namespace) -> int:
-    jotted = _jotted(cfg)
+def cmd_items(cfg: Config, args: argparse.Namespace) -> Call:
     action = args.items_command or "list"
     if action == "list":
-        status = None if args.status == "all" else args.status
-        items = jotted.items(status=status, owner=args.owner, folder=args.folder)
-        return _emit(args, items, lambda: _items_table(items))
+        return Call("items.list", {"status": None if args.status == "all" else args.status, "owner": args.owner,
+                                   "folder": args.folder}, _items_table)
     if action == "add":
-        item = jotted.add_item(" ".join(args.text))
-        return _emit(args, item, lambda: console.print(
+        return Call("items.add", {"text": " ".join(args.text)}, lambda item: console.print(
             f"Added #{item['id']}: {escape(item['text'])}. [dim]It reaches the To-do document on the next "
             "check (`jotted todo` now).[/dim]"))
     changes = {"edit": {"text": " ".join(getattr(args, "text", []) or [])}, "done": {"status": "done"},
                "reopen": {"status": "open"}, "dismiss": {"dismissed": True}}[action]
-    item = jotted.edit_item(args.id, **changes)
-    return _emit(args, item, lambda: console.print(
+    return Call("items.edit", {"item_id": args.id, **changes}, lambda item: console.print(
         f"#{args.id} removed from the list." if action == "dismiss" else
         f"#{item['id']} {'✓ ' if item['status'] == 'done' else ''}{escape(item['text'])}"))
+
+
+# ---------------------------------------------------------------- what is read
 
 
 def _value(text: str):
@@ -141,44 +208,32 @@ def _value(text: str):
 
 
 @uses("settings.get", "settings.update")
-def cmd_settings(cfg: Config, args: argparse.Namespace) -> int:
-    jotted = _jotted(cfg)
+def cmd_settings(cfg: Config, args: argparse.Namespace) -> Call:
     if args.settings_command == "set":
-        settings = jotted.update_settings({args.key: _value(args.value)})
-    else:
-        settings = jotted.settings()
-
-    def show():
-        width = max(len(k) for k in settings)
-        for k, v in settings.items():
-            console.print(f"{k:<{width}}  {json.dumps(v)}", highlight=False)
-    return _emit(args, settings, show)
+        return Call("settings.update", {"changes": {args.key: _value(args.value)}}, _show_settings)
+    return Call("settings.get", {}, _show_settings)
 
 
 @uses("watch.add", "watch.remove", "watch.from_now")
-def cmd_watch(cfg: Config, args: argparse.Namespace) -> int:
-    jotted = _jotted(cfg)
+def cmd_watch(cfg: Config, args: argparse.Namespace) -> Call:
     if args.action in ("add", "remove"):
-        settings = (jotted.watch if args.action == "add" else jotted.unwatch)(args.path)
-        return _emit(args, settings, lambda: console.print(
-            "Watching: " + (", ".join(settings["watch"]) or "[dim]nothing[/dim]")))
-    with console.status("Listing the library…"):
-        result = jotted.from_now(args.path, on=args.action == "from-now")
+        return Call(f"watch.{args.action}", {"path": args.path}, lambda s: console.print(
+            "Watching: " + (", ".join(s["watch"]) or "[dim]nothing[/dim]")))
 
-    def show():
+    def show(result: dict) -> None:
         if result["already_read"]:
             console.print(f"[dim]Already read in full, so nothing is skipped: {', '.join(result['already_read'])}[/dim]")
         console.print(f"{'New writing only' if args.action == 'from-now' else 'Everything is read'} in "
                       f"{len(result['documents'])} document(s)")
-    return _emit(args, result, show)
+    return Call("watch.from_now", {"path": args.path, "on": args.action == "from-now"}, show,
+                status="Listing the library…")
 
 
 @uses("library")
-def cmd_library(cfg: Config, args: argparse.Namespace) -> int:
-    with console.status("Listing the library…"):
-        lib = _jotted(cfg).library()
+def cmd_library(cfg: Config, args: argparse.Namespace) -> Call:
+    def show(lib: dict) -> None:
+        from rich.table import Table
 
-    def show():
         table = Table(box=None, pad_edge=False, padding=(0, 2, 0, 0))
         for col in ("folder", "documents", "watched"):
             table.add_column(col)
@@ -187,59 +242,51 @@ def cmd_library(cfg: Config, args: argparse.Namespace) -> int:
         for f in lib["folders"]:
             table.add_row(f["path"], str(f["documents"]), "yes" if f["watched"] else "")
         console.print(table)
-    return _emit(args, lib, show)
+    return Call("library", {}, show, status="Listing the library…")
+
+
+# ---------------------------------------------------------------- doing the work now
 
 
 @uses("collect", "pending")
-def cmd_collect(cfg: Config, args: argparse.Namespace) -> int:
-    jotted = _jotted(cfg)
+def cmd_collect(cfg: Config, args: argparse.Namespace) -> Call:
     if args.dry_run:
-        with console.status("Checking what changed (downloads only, nothing is read)…"):
-            pending = jotted.pending(fetch=True)
-
-        def show():
+        def show_pending(pending: list) -> None:
             if not pending:
                 console.print("Nothing changed since the last collection.")
             for d in pending:
                 console.print(f"[bold]{escape(d['path'])}[/bold]: {len(d['pages'])} changed page(s) "
                               + ", ".join(str(p) for p in d["pages"]))
-        return _emit(args, pending, show)
-    with console.status("Collecting…") as status:
-        summary = jotted.collect(progress=lambda m: status.update(m))
+        return Call("pending", {"fetch": True}, show_pending,
+                    status="Checking what changed (downloads only, nothing is read)…")
 
-    def show():
+    def show(summary: dict) -> None:
         console.print(f"{summary['docs_changed']} changed document(s), {summary['pages_read']} page(s) read, "
                       f"{summary['lines_judged']} new line(s) judged, {summary['actions_new']} new action(s).")
         for e in summary["errors"]:
             console.print(f"[red]{escape(e)}[/red]")
-    _emit(args, summary, show)
-    return 0 if not summary["errors"] else 1
+    return Call("collect", {}, show, status="Collecting…")
 
 
 @uses("todo.sync")
-def cmd_todo(cfg: Config, args: argparse.Namespace) -> int:
-    with console.status("Reading ticks and publishing the To-do document…"):
-        result = _jotted(cfg).sync_todo(force=args.force)
-    return _emit(args, result, lambda: console.print(
-        f"{result.get('ticked', 0)} ticked, {result.get('written', 0)} written on paper; "
-        + ("published" if result.get("published") else "unchanged")
-        + (f"; [yellow]{result['overflow']} item(s) didn't fit[/yellow]" if result.get("overflow") else "")))
+def cmd_todo(cfg: Config, args: argparse.Namespace) -> Call:
+    return Call("todo.sync", {"force": args.force}, lambda r: console.print(
+        f"{r.get('ticked', 0)} ticked, {r.get('written', 0)} written on paper; "
+        + ("published" if r.get("published") else "unchanged")
+        + (f"; [yellow]{r['overflow']} item(s) didn't fit[/yellow]" if r.get("overflow") else "")),
+        status="Reading ticks and publishing the To-do document…")
 
 
 @uses("check")
-def cmd_check(cfg: Config, args: argparse.Namespace) -> int:
-    with console.status("Checking…"):
-        result = _jotted(cfg).check()
-    return _emit(args, result, lambda: console.print(
-        "Nothing to check: no folders watched and the To-do document is off." if not result else
-        "; ".join(f"{k}: {v}" for k, v in result.items())))
+def cmd_check(cfg: Config, args: argparse.Namespace) -> Call:
+    return Call("check", {}, lambda r: console.print(
+        "Nothing to check: no folders watched and the To-do document is off." if not r else
+        "; ".join(f"{k}: {v}" for k, v in r.items())), status="Checking…")
 
 
 @uses("status", "source")
-def cmd_status(cfg: Config, args: argparse.Namespace) -> int:
-    status = _jotted(cfg).status()
-
-    def show():
+def cmd_status(cfg: Config, args: argparse.Namespace) -> Call:
+    def show(status: dict) -> None:
         src = status["source"]
         console.print(f"Source:   {src['label']} ({src['detail']})")
         console.print(f"Judge:    {'Jev' if status['judge'] == 'jev' else 'the LLM'}")
@@ -249,49 +296,169 @@ def cmd_status(cfg: Config, args: argparse.Namespace) -> int:
         t = status["todo"]
         console.print(f"To-do:    {'on' if t['enabled'] else 'off'}"
                       + (f", “{t['name']}” in {t['folder']}, published {t['published_at'] or 'never'}" if t["enabled"] else ""))
-    return _emit(args, status, show)
+    return Call("status", {}, show)
 
 
-@uses("ai.get", "ai.set_key", "ai.remove_key")
-def cmd_ai(cfg: Config, args: argparse.Namespace) -> int:
-    jotted = _jotted(cfg)
+# ---------------------------------------------------------------- AI
+
+
+@uses("ai.get", "ai.set_key", "ai.remove_key", "ai.provider", "ai.model")
+def cmd_ai(cfg: Config, args: argparse.Namespace) -> Call:
     if args.ai_command == "key":
-        value = sys.stdin.readline() if args.stdin else getpass.getpass(f"Paste the {args.which} key, it stays hidden: ")
-        with console.status("Checking the key…"):
-            ai = jotted.set_key(args.which, value)
-    elif args.ai_command == "remove":
-        ai = jotted.remove_key(args.which)
-    else:
-        ai = jotted.ai()
+        value = read_secret(args, f"The {args.which} key")
+        return Call("ai.set_key", {"which": args.which, "value": value}, _show_ai, status="Checking the key…")
+    if args.ai_command == "remove":
+        return Call("ai.remove_key", {"which": args.which}, _show_ai)
+    if args.ai_command in ("provider", "model"):
+        return Call(f"ai.{args.ai_command}", {"name": args.name}, _show_ai)
+    return Call("ai.get", {}, _show_ai)
 
-    def show():
-        m, j = ai["llm"], ai["jev"]
-        key = m["key"]
-        console.print(f"LLM:  {m['family']} by {m['label']} ({m['model']}), adapter “{m['provider']}”; key "
-                      + (f"{key['hint']} ({key['source']})" if key["set"] else "[yellow]not set[/yellow]"))
-        console.print(f"Jev:  {'on (' + j['model'] + '), judging actions and owners' if j['enabled'] else 'off'}")
-        console.print(f"Judging actions: {'Jev' if ai['judge'] == 'jev' else m['family']}")
-    return _emit(args, ai, show)
+
+# ---------------------------------------------------------------- where an item came from
 
 
 @uses("page.image", "line.image")
-def cmd_image(cfg: Config, args: argparse.Namespace) -> int:
-    jotted = _jotted(cfg)
-    svg = (jotted.page_image(args.doc_id, args.page, args.anchor) if args.image_command == "page"
-           else jotted.line_image(args.doc_id, args.anchor))
-    if args.out:
-        Path(args.out).write_text(svg)
-        return _emit(args, {"path": args.out}, lambda: console.print(f"Written to {args.out}"))
-    sys.stdout.write(svg)
+def cmd_image(cfg: Config, args: argparse.Namespace) -> Call:
+    def then(svg: str) -> dict:
+        if args.out:
+            Path(args.out).write_text(svg)
+            return {"path": args.out}
+        return {"svg": svg}
+
+    def show(data: dict) -> None:
+        if "svg" in data:
+            sys.stdout.write(data["svg"])
+        else:
+            console.print(f"Written to {data['path']}")
+
+    if args.image_command == "page":
+        return Call("page.image", {"doc_id": args.doc_id, "page": args.page, "anchor": args.anchor}, show, then)
+    return Call("line.image", {"doc_id": args.doc_id, "anchor": args.anchor}, show, then)
+
+
+# ---------------------------------------------------------------- live updates
+
+
+def _event_line(e: dict) -> str:
+    at = e["at"][11:19]
+    if e["type"].startswith("item."):
+        item = e["item"]
+        what = f"#{item['id']}" + (f" {item['text']}" if "text" in item else "")
+        if item.get("status") == "done":
+            what += " ✓"
+    elif e["type"] == "check.finished":
+        what = f"{e['new']} new, {e['updated']} updated, {e['missing']} gone"
+    elif e["type"] == "source.error":
+        what = e["message"]
+    else:
+        what = ""
+    return f"[dim]{at}[/dim] {e['type']:<16} {escape(what)}"
+
+
+@uses("events")
+def cmd_events(cfg: Config, args: argparse.Namespace) -> Call | int:
+    if not args.follow:
+        def show(data: dict) -> None:
+            for e in data["events"]:
+                console.print(_event_line(e), highlight=False)
+            console.print(f"[dim]cursor {data['cursor']}[/dim]")
+        return Call("events", {"since": args.since}, show)
+    import time
+
+    jotted = _jotted(cfg)  # reads the events table directly: sees every process's changes
+    cursor = args.since if args.since is not None else jotted.events()["cursor"]
+    try:
+        while True:
+            found = jotted.events(since=cursor)
+            for e in found["events"]:
+                if args.json:
+                    print(json.dumps({"v": contract.CONTRACT, **e}, ensure_ascii=False, default=str), flush=True)
+                else:
+                    console.print(_event_line(e), highlight=False)
+            cursor = found["cursor"]
+            if not found["events"]:
+                time.sleep(args.interval)
+    except KeyboardInterrupt:
+        return 130
+
+
+# ---------------------------------------------------------------- setting up
+
+
+def cmd_setup(cfg: Config | None, args: argparse.Namespace) -> Done | int:
+    from . import steps
+
+    if args.setup_command == "status":
+        return Done(steps.status(steps.load_config()), _show_steps)
+    if args.setup_command == "prepare":
+        def show(data: dict) -> None:
+            for p in data["prepared"]:
+                console.print(f"[green]✓[/green] {p['id']}: {escape(p['detail'] or 'done')}")
+            if not data["prepared"]:
+                console.print("Nothing to prepare.")
+            _show_steps(data)
+        return Done(steps.prepare(), show)
+    if not can_prompt(args):
+        raise UsageError("`jotted setup` asks questions; without a terminal, use `jotted setup status` "
+                         "and run the command each step names")
+    cfg = _onboard(redo=True)
+    if cfg is None:
+        return 1
+    console.print("\n[green]All set.[/green] Run [bold]jotted start[/bold] to open the app.")
     return 0
 
 
+def cmd_plugins(cfg: Config | None, args: argparse.Namespace) -> Done:
+    from . import plugins, steps
+
+    cfg = steps.load_config()
+    chosen = cfg.plugins.source if cfg else None
+    installed = []
+    for name, target in sorted(plugins.available().items()):
+        try:
+            cls = plugins.plugin_class(name)
+            installed.append({"name": name, "label": cls.LABEL, "module": target, "chosen": name == chosen})
+        except Exception as e:  # a broken plugin is listed, not fatal
+            installed.append({"name": name, "module": target, "chosen": name == chosen, "error": str(e)})
+
+    def show(data: dict) -> None:
+        for p in data["installed"]:
+            console.print(f"{'[green]●[/green]' if p['chosen'] else '○'} {p['name']} "
+                          f"[dim]{escape(p.get('label') or p.get('error', ''))} ({p['module']})[/dim]")
+    return Done({"chosen": chosen, "installed": installed}, show)
+
+
+def cmd_config_check(cfg: Config, args: argparse.Namespace) -> Done:
+    jotted = _jotted(cfg)
+    data = {"path": str(cfg.source), "config": cfg.as_dict(), "source": jotted.source(), "ai": jotted.ai()}
+
+    def show(d: dict) -> None:
+        console.print(f"[green]OK[/green] {d['path']}")
+        for section, values in d["config"].items():
+            console.print(f"\n[bold]\\[{section}][/bold]")
+            width = max(len(k) for k in values)
+            for k, v in values.items():
+                console.print(f"  {k:<{width}} = {json.dumps(v)}", highlight=False)
+        console.print()
+        src, ai = d["source"], d["ai"]
+        console.print(f"Source: {src['label']} ({src['detail']})")
+        console.print(f"LLM: {ai['llm']['label']} {ai['llm']['model']}, key "
+                      + ("set" if ai["llm"]["key"]["set"] else "[yellow]not set (run jotted setup)[/yellow]"))
+        console.print(f"Jev plugin: {'on' if ai['jev']['enabled'] else 'off'}")
+    return Done(data, show)
+
+
+# ---------------------------------------------------------------- running
+
+
 def cmd_serve(cfg: Config, args: argparse.Namespace) -> int:
-    host, port = args.host or cfg.server.host, args.port or cfg.server.port
+    host = args.host or cfg.server.host
+    port = cfg.server.port if args.port is None else args.port
     if host not in ("127.0.0.1", "localhost", "::1"):
-        console.print(f"[yellow]Warning[/yellow]: listening on {host}; the app has no login, so anyone who can "
-                      "reach this address can read and change your tasks.")
-    return _serve(cfg, host, port, background=not args.no_background, dev=args.dev)
+        errors.print(f"[yellow]Warning[/yellow]: listening on {host}; the app has no login, so anyone who can "
+                     "reach this address can read and change your tasks.")
+    return _serve(cfg, host, port, background=not args.no_background, dev=args.dev,
+                  open_path=None if args.no_browser else "/")
 
 
 def _running_here(url: str) -> bool:
@@ -307,35 +474,46 @@ def _running_here(url: str) -> bool:
 
 def _serve(cfg: Config, host: str, port: int, *, background: bool = True, dev: bool = False,
            open_path: str | None = None) -> int:
-    """Serve the web app; with `open_path`, open the browser there once it is listening."""
+    """Serve the web app; with `open_path`, open the browser there once it is listening.
+    Port 0 picks a free one. While it runs, serve.json lets CLI commands hand it their work."""
     import socket
     import webbrowser
 
+    from . import fastpath, selfupdate
     from .server import create_app
 
-    url = f"http://{host}:{port}"
-    with socket.socket() as probe:
-        busy = probe.connect_ex((host, port)) == 0
-    if busy:
-        if _running_here(url):
-            console.print(f"Jotted is already running at [bold]{url}[/bold]")
-            if os.environ.get(selfupdate.DONE_VAR):
-                console.print("[yellow]That window still runs the old version:[/yellow] stop it with Ctrl+C, "
-                              "then run [bold]jotted start[/bold] again.")
-            if open_path is not None:
-                webbrowser.open(url + open_path)
-            return 0
-        console.print(f"[red]Port {port} is in use[/red] by another program. Try `--port {port + 1}`.")
-        return 1
-    console.print(f"Jotted at [bold]{url}[/bold]  (store: {cfg.server.db})")
+    if port:
+        with socket.socket() as probe:
+            busy = probe.connect_ex((host, port)) == 0
+        if busy:
+            url = f"http://{host}:{port}"
+            if _running_here(url):
+                console.print(f"Jotted is already running at [bold]{url}[/bold]")
+                if os.environ.get(selfupdate.DONE_VAR):
+                    console.print("[yellow]That window still runs the old version:[/yellow] stop it with Ctrl+C, "
+                                  "then run [bold]jotted start[/bold] again.")
+                if open_path is not None:
+                    webbrowser.open(url + open_path)
+                return 0
+            errors.print(f"[red]Port {port} is in use[/red] by another program. Try `--port {port + 1}`, or "
+                         "`--port 0` for any free one.")
+            return 1
     app = create_app(cfg, background=background)
     if dev:
+        console.print(f"Jotted at [bold]http://{host}:{port}[/bold]  (store: {cfg.server.db})")
         app.run(host=host, port=port, debug=False, threaded=True)
         return 0
     from waitress import create_server
 
     # One process, many threads: the background scheduler must exist exactly once.
     server = create_server(app, host=host, port=port, threads=8, ident="jotted")
+    port = int(server.effective_port)
+    url = f"http://{host}:{port}"
+    console.print(f"Jotted at [bold]{url}[/bold]  (store: {cfg.server.db})")
+    fastpath.write(cfg, host, port, app.config["token"])
+    import signal
+
+    signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))  # how an app stops it: still clean up serve.json
     if open_path is not None:
         webbrowser.open(url + open_path)
     console.print("[dim]Leave this window open while you use Jotted. Press Ctrl+C to stop.[/dim]")
@@ -344,12 +522,14 @@ def _serve(cfg: Config, host: str, port: int, *, background: bool = True, dev: b
     except KeyboardInterrupt:
         console.print("Stopped.")
     finally:
+        fastpath.remove(cfg)
         server.close()
     return 0
 
 
 def _onboard(redo: bool) -> Config | None:
     from . import onboarding
+    from .config import ConfigError
 
     try:
         return onboarding.run(onboarding.ConsoleUI(console), redo=redo)
@@ -362,13 +542,20 @@ def _onboard(redo: bool) -> Config | None:
 
 def _rerun() -> None:
     """Start this command again in the copy just installed (once: DONE_VAR stops a second update)."""
+    from . import selfupdate
+
     os.environ[selfupdate.DONE_VAR] = "1"
     os.execv(sys.argv[0], sys.argv)
 
 
-def cmd_start(args: argparse.Namespace) -> int:
+def cmd_start(cfg: Config | None, args: argparse.Namespace) -> int:
     """Update from GitHub, set up whatever is missing, then run the web app and open it in the browser."""
-    if not args.no_update and selfupdate.check(console):
+    from . import selfupdate
+
+    if not can_prompt(args):
+        raise UsageError("`jotted start` is for people at a terminal; a wrapper runs `jotted setup status`, "
+                         "then `jotted serve --no-browser`")
+    if not args.no_update and not os.environ.get(BUNDLED_VAR) and selfupdate.check(console):
         _rerun()
     cfg = _onboard(redo=False)
     if cfg is None:
@@ -378,60 +565,87 @@ def cmd_start(args: argparse.Namespace) -> int:
 
     first_time = not SqliteRepository(cfg.server.db).settings().watch  # nothing watched yet: start in Settings
     console.print()
-    return _serve(cfg, cfg.server.host, args.port or cfg.server.port,
+    return _serve(cfg, cfg.server.host, cfg.server.port if args.port is None else args.port,
                   open_path=None if args.no_browser else ("/#settings" if first_time else "/"))
 
 
-def cmd_update(args: argparse.Namespace) -> int:
+def cmd_update(cfg: Config | None, args: argparse.Namespace) -> Done:
     """Update to the latest version on GitHub now."""
-    if selfupdate.check(console, force=True):
-        console.print("Run [bold]jotted start[/bold] to use it (stop a running app first with Ctrl+C).")
-    return 0
+    from . import selfupdate
+
+    if os.environ.get(BUNDLED_VAR):
+        raise contract.Error("conflict", "This copy of Jotted comes with the Jotted app, which updates it")
+    updated = selfupdate.check(errors if args.json else console, force=True)  # says what it did
+    return Done({"updated": updated}, lambda d: console.print(
+        "Run [bold]jotted start[/bold] to use it (stop a running app first with Ctrl+C)." if d["updated"] else ""))
 
 
-def cmd_setup(args: argparse.Namespace) -> int:
-    """Go through every setup step again (change a key, reconnect the tablet)."""
-    cfg = _onboard(redo=True)
-    if cfg is None:
-        return 1
-    console.print("\n[green]All set.[/green] Run [bold]jotted start[/bold] to open the app.")
-    return 0
+def cmd_version(cfg: Config | None, args: argparse.Namespace) -> Done:
+    import platform
+
+    from . import steps
+
+    cfg = steps.load_config()
+    data = {"version": contract.release(), "contract": contract.CONTRACT, "contract_min": contract.CONTRACT_MIN,
+            "source_plugin": cfg.plugins.source if cfg else None, "python": platform.python_version(),
+            "bundled": bool(os.environ.get(BUNDLED_VAR))}
+    return Done(data, lambda d: console.print(
+        f"jotted {d['version']} (contract {d['contract']}, accepts {d['contract_min']}+; "
+        f"source {d['source_plugin'] or 'not set up'}; Python {d['python']})", highlight=False))
 
 
-# ---------------------------------------------------------------- entry point
+def cmd_schema(cfg: Config | None, args: argparse.Namespace) -> Done:
+    from . import schema
+
+    return Done(schema.build(build_parser()), lambda d: _print_json(d))
+
+
+def cmd_mcp(cfg: Config | None, args: argparse.Namespace) -> int:
+    from . import mcp
+
+    return mcp.serve()
+
+
+# ---------------------------------------------------------------- the command line
+
+
+class Parser(argparse.ArgumentParser):
+    """Bad arguments raise UsageError, so --json still prints an envelope."""
+
+    def error(self, message: str):
+        raise UsageError(f"{self.prog}: {message}")
 
 
 def build_parser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(prog="jotted", description="Turn handwritten notes into a to-do list.")
-    p.add_argument("--json", action="store_true", help="print results as JSON (for scripts and other apps)")
-    sub = p.add_subparsers(dest="command", required=True)
+    p = Parser(prog="jotted", description="Turn handwritten notes into a to-do list.")
+    p.add_argument("--json", action="store_true", help="print one JSON envelope (for scripts and other apps)")
+    p.add_argument("--local", action="store_true", help="do the work in this process, even when `jotted serve` runs")
+    sub = p.add_subparsers(dest="command", required=True, metavar="COMMAND")
 
-    def command(name: str, func, help: str, **kw) -> argparse.ArgumentParser:
+    def command(name: str, func, help: str, no_config: bool = False, **kw) -> argparse.ArgumentParser:
         c = sub.add_parser(name, help=help, **kw)
-        c.set_defaults(func=func)
+        c.set_defaults(func=func, no_config=no_config)
         return c
 
-    # setting up and running
-    st = command("start", cmd_start, "set up anything missing, then open the app (start here)")
-    st.add_argument("--port", type=int, help="default: server.port")
-    st.add_argument("--no-browser", action="store_true", help="don't open the browser")
-    st.add_argument("--no-update", action="store_true", help="don't check GitHub for a newer version")
-    st.set_defaults(no_config=True)
-    command("setup", cmd_setup, "go through setup again: reconnect your device, change API keys").set_defaults(
-        no_config=True)
-    command("update", cmd_update, "update Jotted to the latest version on GitHub").set_defaults(no_config=True)
-    sv = command("serve", cmd_serve, "run the local web app (and check your device in the background)")
-    sv.add_argument("--host", help="default: server.host")
-    sv.add_argument("--port", type=int, help="default: server.port")
-    sv.add_argument("--dev", action="store_true", help="use Flask's development server")
-    sv.add_argument("--no-background", action="store_true", help="don't check or write to the device in the background")
-    cfg_p = sub.add_parser("config", help="configuration commands")
-    cfg_sub = cfg_p.add_subparsers(dest="config_command", required=True)
-    cfg_sub.add_parser("check", help="validate config.toml and print resolved values").set_defaults(func=cmd_config_check)
+    # setting up
+    st = command("setup", cmd_setup, "set-up steps: status, prepare; alone, the interactive walkthrough",
+                 no_config=True)
+    st_sub = st.add_subparsers(dest="setup_command", metavar="STEP")
+    st_sub.add_parser("status", help="every setup step, done or not, and the command that does it")
+    st_sub.add_parser("prepare", help="the steps that need no answer: the app folder, the source's tools")
+    ai = command("ai", cmd_ai, "the language model and the Jev plugin: status, keys, provider, model")
+    ai_sub = ai.add_subparsers(dest="ai_command", metavar="ACTION")
+    k = ai_sub.add_parser("key", help="check and save a key (adding Jev's turns the plugin on)")
+    k.add_argument("which", choices=["llm", "jev"])
+    k.add_argument("--stdin", action="store_true", help="read the key from standard input instead of asking")
+    ai_sub.add_parser("remove", help="turn the Jev plugin off").add_argument("which", choices=["jev"])
+    ai_sub.add_parser("provider", help="choose the LLM adapter (anthropic)").add_argument("name")
+    ai_sub.add_parser("model", help="choose the model; it has to read images").add_argument("name")
+    command("plugins", cmd_plugins, "installed source plugins, and which one is chosen", no_config=True)
 
     # the to-do list
     it = command("items", cmd_items, "the to-do list: list, add, edit, tick, dismiss")
-    it_sub = it.add_subparsers(dest="items_command")
+    it_sub = it.add_subparsers(dest="items_command", metavar="ACTION")
     for c in (it, it_sub.add_parser("list", help="list items (the default)")):
         c.add_argument("--status", choices=["open", "done", "all"], default="open")
         c.add_argument("--owner", choices=["mine", "others"])
@@ -445,17 +659,17 @@ def build_parser() -> argparse.ArgumentParser:
         it_sub.add_parser(name, help=help).add_argument("id", type=int)
 
     # what is read
-    se = command("settings", cmd_settings, "show or change settings (also in the web app)")
-    se_sub = se.add_subparsers(dest="settings_command")
-    ss = se_sub.add_parser("set", help="set one: e.g. todo_enabled true, action_threshold 0.8")
-    ss.add_argument("key")
-    ss.add_argument("value", help="JSON (true, 0.8, [\"/A\"]) or plain text")
+    command("library", cmd_library, "list your device's folders and which are watched")
     wa = command("watch", cmd_watch, "watch or stop watching a folder (also in the web app)",
                  description="from-now: skip what is already written in the documents at PATH (a "
                              "folder means the documents in it now); read-all undoes it.")
     wa.add_argument("action", choices=["add", "remove", "from-now", "read-all"])
     wa.add_argument("path", help="folder or document path, e.g. '/Meeting notes'")
-    command("library", cmd_library, "list your device's folders and which are watched")
+    se = command("settings", cmd_settings, "show or change settings (also in the web app)")
+    se_sub = se.add_subparsers(dest="settings_command", metavar="ACTION")
+    ss = se_sub.add_parser("set", help="set one: e.g. todo_enabled true, action_threshold 0.8")
+    ss.add_argument("key")
+    ss.add_argument("value", help="JSON (true, 0.8, [\"/A\"]) or plain text")
 
     # doing the work now (`jotted serve` does it in the background)
     co = command("collect", cmd_collect, "read what changed in watched folders and update the to-do list")
@@ -465,17 +679,9 @@ def build_parser() -> argparse.ArgumentParser:
     command("check", cmd_check, "collect and update the To-do document now")
     command("status", cmd_status, "what Jotted reads, judges and publishes, and when it last did")
 
-    # AI
-    ai = command("ai", cmd_ai, "the language model and the Jev plugin: status and keys")
-    ai_sub = ai.add_subparsers(dest="ai_command")
-    k = ai_sub.add_parser("key", help="check and save a key (adding Jev's turns the plugin on)")
-    k.add_argument("which", choices=["llm", "jev"])
-    k.add_argument("--stdin", action="store_true", help="read the key from standard input instead of asking")
-    ai_sub.add_parser("remove", help="turn the Jev plugin off").add_argument("which", choices=["jev"])
-
     # where an item came from
     im = command("image", cmd_image, "draw a source page or line as SVG")
-    im_sub = im.add_subparsers(dest="image_command", required=True)
+    im_sub = im.add_subparsers(dest="image_command", required=True, metavar="WHAT")
     pg = im_sub.add_parser("page", help="a page, with a line highlighted")
     pg.add_argument("doc_id")
     pg.add_argument("page", type=int)
@@ -486,40 +692,124 @@ def build_parser() -> argparse.ArgumentParser:
     for c in (pg, ln):
         c.add_argument("-o", "--out", help="write to this file instead of standard output")
 
-    # the source plugins' own commands (reMarkable: auth)
+    # live updates
+    ev = command("events", cmd_events, "changes since a cursor; --follow keeps printing them")
+    ev.add_argument("--since", type=int, help="the cursor of the last event you saw")
+    ev.add_argument("--follow", action="store_true", help="keep printing changes as they happen, one per line")
+    ev.add_argument("--interval", type=float, default=1.0, help=argparse.SUPPRESS)
+
+    # running and the rest
+    sv = command("serve", cmd_serve, "run the web app, background checking and the CLI's fast path")
+    sv.add_argument("--host", help="default: server.host")
+    sv.add_argument("--port", type=int, help="default: server.port; 0 picks a free one")
+    sv.add_argument("--no-browser", action="store_true", help="don't open the browser")
+    sv.add_argument("--dev", action="store_true", help="use Flask's development server")
+    sv.add_argument("--no-background", action="store_true", help="don't check or write to the device in the background")
+    sa = command("start", cmd_start, "set up anything missing, then open the app (start here)", no_config=True)
+    sa.add_argument("--port", type=int, help="default: server.port")
+    sa.add_argument("--no-browser", action="store_true", help="don't open the browser")
+    sa.add_argument("--no-update", action="store_true", help="don't check GitHub for a newer version")
+    command("update", cmd_update, "update Jotted to the latest version on GitHub", no_config=True)
+    command("version", cmd_version, "release and contract versions", no_config=True)
+    command("schema", cmd_schema, "every command: its arguments, options and the shape of its data",
+            no_config=True)
+    command("mcp", cmd_mcp, "serve Jotted's operations as MCP tools on stdio (for agents)", no_config=True)
+    cfg_p = sub.add_parser("config", help="configuration commands")
+    cfg_sub = cfg_p.add_subparsers(dest="config_command", required=True, metavar="ACTION")
+    cfg_sub.add_parser("check", help="validate config.toml and print resolved values").set_defaults(
+        func=cmd_config_check, no_config=False)
+
+    # the source plugins' own commands (reMarkable: connect)
+    from . import plugins
+
     for name in plugins.available():
         try:
             plugins.plugin_class(name).cli(sub)
         except Exception as e:  # a broken plugin must not take the CLI down
             print(f"warning: source plugin {name!r} failed to load: {e}", file=sys.stderr)
+
+    _json_anywhere(p)
     return p
 
 
-def main(argv: list[str] | None = None) -> int:
-    args = build_parser().parse_args(argv)
-    if getattr(args, "no_config", False):  # start and setup make the config when there is none
-        return args.func(args)
-    try:
-        cfg = load()
-        keys.load_into_env(cfg)
-    except ConfigError as e:
-        console.print(f"[red]Config error:[/red] {e}")
-        console.print(f"[dim](config path: {resolve_path()}; set JOTTED_CONFIG to use another)[/dim]")
-        return 2
-    _setup_logging(cfg.logging.level)
-    from .api import ApiError
-    from .app import SYNC_ERRORS
+def _json_anywhere(parser: argparse.ArgumentParser) -> None:
+    """Let --json come after the command too (`jotted items --json`)."""
+    for action in parser._actions:
+        if isinstance(action, argparse._SubParsersAction):
+            for child in set(action.choices.values()):
+                child.add_argument("--json", action="store_true", default=argparse.SUPPRESS, help=argparse.SUPPRESS)
+                _json_anywhere(child)
 
+
+def _load_config() -> Config:
+    from . import keys
+    from .config import load
+
+    cfg = load()
+    keys.load_into_env(cfg)
+    _setup_logging(cfg.logging.level)
+    return cfg
+
+
+def _execute(args: argparse.Namespace) -> int:
+    if getattr(args, "deprecated", None):
+        errors.print(f"[yellow]`jotted {args.command}` is now `jotted {args.deprecated}`[/yellow]; "
+                     "the old name goes in the next release.")
+    cfg = None if getattr(args, "no_config", False) else _load_config()
+    out = args.func(cfg, args)
+    if isinstance(out, int):  # serve, start, events --follow, mcp: they print their own output
+        return out
+    if isinstance(out, Call):
+        data, render = _run_call(cfg, args, out), out.render
+    elif isinstance(out, Done):
+        data, render = out.data, out.render
+    else:  # a plugin's command: its data, and render(data, console) from its parser
+        plugin_render = getattr(args, "render", None)
+        data, render = out, (lambda d: plugin_render(d, console)) if plugin_render else None
+    if args.json:
+        _print_json(contract.ok(data))
+    elif render:
+        render(data)
+    else:
+        _print_json(data)
+    return 0
+
+
+def _show_error(envelope: dict, json_out: bool) -> int:
+    if json_out:
+        _print_json(envelope)
+    else:
+        err = envelope["error"]
+        errors.print(f"[red]Error:[/red] {escape(err['message'])}")
+        if err["code"] == "config":
+            from .config import resolve_path
+
+            errors.print(f"[dim](config path: {resolve_path()}; set JOTTED_CONFIG to use another)[/dim]")
+    return contract.exit_code(envelope)
+
+
+def main(argv: list[str] | None = None) -> int:
+    argv = sys.argv[1:] if argv is None else list(argv)
+    json_out = "--json" in argv
     try:
-        return args.func(cfg, args)
-    except (ApiError, *SYNC_ERRORS, FileNotFoundError) as e:
-        if getattr(args, "json", False):
-            print(json.dumps({"error": str(e), "status": getattr(e, "status", 500)}))
-        else:
-            console.print(f"[red]Error:[/red] {escape(str(e))}")
-        return 1
-    except KeyboardInterrupt:
-        return 130
+        args = build_parser().parse_args(argv)
+        json_out = args.json
+        return _execute(args)
+    except SystemExit:  # --help
+        raise
+    except BaseException as e:  # noqa: BLE001 - every failure becomes an envelope and an exit code
+        envelope = contract.error_of(e)
+        if envelope["error"]["code"] == "internal":
+            traceback.print_exc(file=sys.stderr)
+        return _show_error(envelope, json_out)
+
+
+def invoke(argv: list[str]) -> dict:
+    """Run a command with --json in this process and return its envelope (`jotted mcp`, tests)."""
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out):
+        main(["--json", *argv])
+    return json.loads(out.getvalue())
 
 
 if __name__ == "__main__":

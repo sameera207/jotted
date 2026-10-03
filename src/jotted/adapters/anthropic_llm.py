@@ -99,6 +99,12 @@ class AnthropicLLM:
     LABEL = "Anthropic"
     MODEL_FAMILY = "Claude"
     KEY_URL = "https://console.anthropic.com/settings/keys"
+    KEY_ENV = "ANTHROPIC_API_KEY"
+
+    @staticmethod
+    def reads_images(model: str) -> bool:
+        """Every Claude model reads images."""
+        return model.startswith("claude-")
 
     def __init__(self, cfg: LLMConfig):
         self.cfg = cfg

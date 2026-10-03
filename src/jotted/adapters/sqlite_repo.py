@@ -13,7 +13,7 @@ import sqlite3
 import uuid
 from contextlib import contextmanager
 from dataclasses import asdict, fields
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from ..core.model import DocInfo, Judgment, PageInfo, Settings, SourceLine, TodoEntry, WrittenItem
@@ -121,11 +121,51 @@ CREATE TABLE IF NOT EXISTS todo_meta (
     key   TEXT PRIMARY KEY,
     value TEXT
 );
+CREATE TABLE IF NOT EXISTS events (
+    cursor INTEGER PRIMARY KEY AUTOINCREMENT,
+    at     TEXT NOT NULL,  -- 2026-10-03T04:12:09Z
+    type   TEXT NOT NULL,  -- item.added, settings.changed... (`jotted events`)
+    data   TEXT NOT NULL   -- JSON object, merged into the event
+);
+CREATE INDEX IF NOT EXISTS events_at ON events (at);
 """
+
+EVENTS_KEPT_S = 7 * 24 * 3600  # a week
+PRUNE_EVERY = 500  # events between prunes
 
 
 def _bbox(b) -> str:
     return json.dumps([round(v, 1) for v in b])
+
+
+def _stamp(dt: datetime) -> str:
+    return dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+class _Changes:
+    """Items a transaction touches: each gets an event for what changed, in that transaction.
+    Call it with an item's id before changing it (`new(id)` after adding one)."""
+
+    def __init__(self, repo: "SqliteRepository", db):
+        self.repo, self.db = repo, db
+        self.before: dict[int, dict | None] = {}
+
+    def __call__(self, item_id: int) -> None:
+        if item_id not in self.before:
+            self.before[item_id] = self.repo._item_in(self.db, item_id)
+
+    def new(self, item_id: int) -> None:
+        self.before.setdefault(item_id, None)
+
+    def emit(self) -> None:
+        for item_id, before in self.before.items():
+            after = self.repo._item_in(self.db, item_id)
+            if before is None and after is not None:
+                self.repo._event(self.db, "item.added", item=after)
+            elif before is not None and after is None:
+                self.repo._event(self.db, "item.removed", item={"id": item_id})
+            elif before != after:
+                self.repo._event(self.db, "item.changed", item=after)
 
 
 class SqliteRepository:
@@ -216,6 +256,21 @@ class SqliteRepository:
 
     # ------------------------------------------------------------ settings
 
+    AI_KEYS = {"provider": "llm.provider", "model": "llm.model"}  # beside the settings, not in them
+
+    def ai_choice(self) -> dict:
+        """The LLM provider and model chosen with `jotted ai provider`/`ai model`, if any."""
+        with self.db() as db:
+            rows = {r["key"]: json.loads(r["value"]) for r in db.execute(
+                "SELECT * FROM settings WHERE key IN (?, ?)", tuple(self.AI_KEYS.values()))}
+        return {k: rows.get(v) for k, v in self.AI_KEYS.items()}
+
+    def save_ai_choice(self, **choice: str | None) -> None:
+        with self.db() as db:
+            for k, v in choice.items():
+                db.execute("INSERT INTO settings (key, value) VALUES (?, ?) "
+                           "ON CONFLICT (key) DO UPDATE SET value = excluded.value", (self.AI_KEYS[k], json.dumps(v)))
+
     def settings(self) -> Settings:
         with self.db() as db:
             stored = {r["key"]: json.loads(r["value"]) for r in db.execute("SELECT * FROM settings")}
@@ -229,6 +284,7 @@ class SqliteRepository:
             for k, v in asdict(settings).items():
                 db.execute("INSERT INTO settings (key, value) VALUES (?, ?) "
                            "ON CONFLICT (key) DO UPDATE SET value = excluded.value", (k, json.dumps(v)))
+            self._event(db, "settings.changed", settings=asdict(settings))
 
     # ------------------------------------------------------------ collection state
 
@@ -238,7 +294,10 @@ class SqliteRepository:
         return row["marker"] if row else None
 
     def save_doc(self, doc: DocInfo, page_count: int) -> None:
-        with self.db() as db:
+        with self._tracked() as (db, changes):
+            for r in db.execute("SELECT id FROM actions WHERE doc_id = ? AND (doc_name != ? OR folder != ?)",
+                                (doc.id, doc.name, doc.folder)).fetchall():
+                changes(r["id"])  # renamed or moved on the device
             db.execute(
                 """INSERT INTO source_docs (source, id, name, folder, marker, page_count, collected_at)
                    VALUES (?, ?, ?, ?, ?, ?, ?)
@@ -301,7 +360,7 @@ class SqliteRepository:
                   judgments: dict[str, Judgment], threshold: float) -> tuple[int, int, int]:
         stamp, paper_at = now(), to_utc(doc.modified)
         added = updated = missing = 0
-        with self.db() as db:
+        with self._tracked() as (db, changes):
             db.execute(
                 """INSERT INTO source_pages (doc_id, page_id, idx, hash) VALUES (?, ?, ?, ?)
                    ON CONFLICT (doc_id, page_id) DO UPDATE SET idx = excluded.idx, hash = excluded.hash""",
@@ -330,13 +389,14 @@ class SqliteRepository:
                 is_action = p_action is not None and p_action >= threshold and text and not ln.drawing
                 if action is None:
                     if is_action:
-                        db.execute(
+                        cur = db.execute(
                             """INSERT INTO actions (source, doc_id, doc_name, folder, page_id, page_index, anchor, bbox,
                                  text, paper_text, owner, p_action, text_changed_at, status_changed_at, created_at,
                                  updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                             (doc.source, doc.id, doc.name, doc.folder, page.id, page.index, ln.anchor, _bbox(ln.bbox),
                              text, text, owner or "unclear", p_action, paper_at, paper_at, stamp, stamp),
                         )
+                        changes.new(cur.lastrowid)
                         added += 1
                     continue
                 fields_: dict = {"page_id": page.id, "page_index": page.index, "bbox": _bbox(ln.bbox), "missing": 0}
@@ -349,6 +409,7 @@ class SqliteRepository:
                         if paper_at > action["text_changed_at"]:
                             fields_.update(text=text, text_changed_at=paper_at)
                     updated += 1
+                changes(action["id"])
                 self._update(db, "actions", action["id"], fields_, stamp)
 
             stored = db.execute("SELECT anchor FROM source_lines WHERE doc_id = ? AND page_id = ?",
@@ -361,6 +422,7 @@ class SqliteRepository:
                 gone = db.execute("SELECT id FROM actions WHERE doc_id = ? AND anchor = ? AND missing = 0",
                                   (doc.id, row["anchor"])).fetchone()
                 if gone:
+                    changes(gone["id"])
                     self._update(db, "actions", gone["id"], {"missing": 1}, stamp)
                     missing += 1
         return added, updated, missing
@@ -375,19 +437,10 @@ class SqliteRepository:
 
     def items(self, status: str | None = None, owner: str | None = None, folder: str | None = None) -> list[dict]:
         """Every item on the list, for the web app."""
-        out: list[dict] = []
         with self.db() as db:
             slots = {r["item_id"]: r["slot"] for r in db.execute("SELECT * FROM todo_slots")}
-            for r in db.execute("SELECT * FROM actions WHERE dismissed = 0 AND missing = 0 ORDER BY created_at, id"):
-                out.append({
-                    "id": r["id"], "origin": r["source"], "text": r["text"], "paper_text": r["paper_text"],
-                    "written": bool(r["written"]), "bbox": json.loads(r["bbox"]) if r["bbox"] else None,
-                    "status": r["status"], "owner": r["owner"], "p_action": round(r["p_action"], 2),
-                    "source": {"doc_id": r["doc_id"], "name": r["doc_name"], "folder": r["folder"],
-                               "page": r["page_index"], "anchor": r["anchor"]},
-                    "edited": r["source"] != "web" and r["text"] != r["paper_text"], "slot": slots.get(r["id"]),
-                    "created_at": r["created_at"],
-                })
+            out = [self._item_dict(r, slots.get(r["id"])) for r in db.execute(
+                "SELECT * FROM actions WHERE dismissed = 0 AND missing = 0 ORDER BY created_at, id")]
         if status:
             out = [i for i in out if i["status"] == status]
         if owner == "mine":
@@ -398,6 +451,26 @@ class SqliteRepository:
             f = "/" + folder.strip("/")
             out = [i for i in out if (i["source"]["folder"] + "/").startswith(f.rstrip("/") + "/")]
         return out
+
+    @staticmethod
+    def _item_dict(r, slot: int | None) -> dict:
+        return {
+            "id": r["id"], "origin": r["source"], "text": r["text"], "paper_text": r["paper_text"],
+            "written": bool(r["written"]), "bbox": json.loads(r["bbox"]) if r["bbox"] else None,
+            "status": r["status"], "owner": r["owner"], "p_action": round(r["p_action"], 2),
+            "source": {"doc_id": r["doc_id"], "name": r["doc_name"], "folder": r["folder"],
+                       "page": r["page_index"], "anchor": r["anchor"]},
+            "edited": r["source"] != "web" and r["text"] != r["paper_text"], "slot": slot,
+            "created_at": r["created_at"],
+        }
+
+    def _item_in(self, db, item_id: int) -> dict | None:
+        """An item as `items` lists it, inside a transaction; None if it isn't on the list."""
+        r = db.execute("SELECT * FROM actions WHERE id = ? AND dismissed = 0 AND missing = 0", (item_id,)).fetchone()
+        if r is None:
+            return None
+        slot = db.execute("SELECT slot FROM todo_slots WHERE item_id = ?", (item_id,)).fetchone()
+        return self._item_dict(r, slot["slot"] if slot else None)
 
     def item(self, item_id: int) -> dict:
         found = next((i for i in self.items() if i["id"] == item_id), None)
@@ -411,13 +484,14 @@ class SqliteRepository:
         if not text:
             raise ValueError("The item is empty")
         stamp = now()
-        with self.db() as db:
+        with self._tracked() as (db, changes):
             cur = db.execute(
                 """INSERT INTO actions (source, doc_id, doc_name, folder, page_id, page_index, anchor, text,
                      paper_text, owner, p_action, text_changed_at, status_changed_at, created_at, updated_at)
                    VALUES ('web', ?, '', '', '', 0, ?, ?, ?, 'me', 1.0, ?, ?, ?, ?)""",
                 (WEB_DOC, uuid.uuid4().hex, text, text, stamp, stamp, stamp, stamp),
             )
+            changes.new(cur.lastrowid)
             self._web_changed(db, stamp)
         return int(cur.lastrowid)
 
@@ -429,10 +503,11 @@ class SqliteRepository:
     def edit_action(self, action_id: int, *, text: str | None = None, status: str | None = None,
                     dismissed: bool | None = None) -> dict:
         stamp = now()
-        with self.db() as db:
+        with self._tracked() as (db, changes):
             row = db.execute("SELECT * FROM actions WHERE id = ?", (action_id,)).fetchone()
             if row is None:
                 raise KeyError(action_id)
+            changes(action_id)
             values: dict = {}
             if text is not None and text.strip() and text.strip() != row["text"]:
                 values.update(text=text.strip(), text_changed_at=stamp)
@@ -518,13 +593,15 @@ class SqliteRepository:
         # Short of rows: done items on rows without ink leave, and their rows are reused.
         releasable = [e for e in placed if e.done and e.slot not in inked]
         released = releasable[:max(0, len(waiting) - len(free))]
-        with self.db() as db:
+        with self._tracked() as (db, changes):
             for e in released:
+                changes(e.item_id)
                 db.execute("DELETE FROM todo_slots WHERE slot = ?", (e.slot,))
                 free.append(e.slot)
                 e.slot = None
             free.sort()
             for e, slot in zip(waiting, free):
+                changes(e.item_id)
                 db.execute("INSERT INTO todo_slots (slot, kind, item_id) VALUES (?, 'action', ?)", (slot, e.item_id))
                 e.slot = slot
         return sorted((e for e in entries if e.slot is not None), key=lambda e: e.slot), max(0, len(waiting) - len(free))
@@ -541,7 +618,7 @@ class SqliteRepository:
         settings = self.settings()
         stamp = now()
         added = 0
-        with self.db() as db:
+        with self._tracked() as (db, changes):
             for w in items:
                 if db.execute("SELECT 1 FROM todo_slots WHERE slot = ?", (w.slot,)).fetchone():
                     continue  # taken meanwhile
@@ -555,6 +632,7 @@ class SqliteRepository:
                 )
                 if not cur.rowcount:
                     continue
+                changes.new(cur.lastrowid)
                 # Its line, so the web app can show the handwriting like any collected action.
                 db.execute("INSERT OR IGNORE INTO source_pages (doc_id, page_id, idx, hash) VALUES (?, ?, ?, '')",
                            (doc_id, w.page_id, w.page_index))
@@ -574,11 +652,12 @@ class SqliteRepository:
         counts once: re-opening the item on the web afterwards is not undone by the old tick."""
         stamp = now()
         changed = 0
-        with self.db() as db:
+        with self._tracked() as (db, changes):
             for slot in sorted(ticked_slots):
                 row = db.execute("SELECT * FROM todo_slots WHERE slot = ? AND ticked = 0", (slot,)).fetchone()
                 if row is None:
                     continue
+                changes(row["item_id"])
                 db.execute("UPDATE todo_slots SET ticked = 1 WHERE slot = ?", (slot,))
                 db.execute("UPDATE actions SET status = 'done', status_changed_at = ?, updated_at = ? "
                            "WHERE id = ? AND status = 'open'", (stamp, stamp, row["item_id"]))
@@ -602,7 +681,42 @@ class SqliteRepository:
             for k, v in (("fingerprint", self._fingerprint(entries)), ("published_at", now())):
                 db.execute("INSERT INTO todo_meta (key, value) VALUES (?, ?) "
                            "ON CONFLICT (key) DO UPDATE SET value = excluded.value", (k, v))
+            self._event(db, "todo.published", items=len(entries))
 
     def todo_meta(self) -> dict:
         with self.db() as db:
             return {r["key"]: r["value"] for r in db.execute("SELECT * FROM todo_meta")}
+
+    # ------------------------------------------------------------ events
+
+    @contextmanager
+    def _tracked(self):
+        """A transaction whose item changes are written as events in it."""
+        with self.db() as db:
+            changes = _Changes(self, db)
+            yield db, changes
+            changes.emit()
+
+    def _event(self, db, type_: str, **data) -> None:
+        cur = db.execute("INSERT INTO events (at, type, data) VALUES (?, ?, ?)",
+                         (_stamp(datetime.now(UTC)), type_, json.dumps(data, default=str)))
+        if cur.lastrowid % PRUNE_EVERY == 0:
+            cutoff = _stamp(datetime.now(UTC) - timedelta(seconds=EVENTS_KEPT_S))
+            db.execute("DELETE FROM events WHERE at < ?", (cutoff,))
+
+    def add_event(self, type_: str, **data) -> None:
+        """An event with no change of its own here (a check started, the source failed)."""
+        with self.db() as db:
+            self._event(db, type_, **data)
+
+    def events(self, since: int | None = None, limit: int = 1000) -> list[dict]:
+        """Events after cursor `since`, oldest first: {cursor, at, type, **data}."""
+        with self.db() as db:
+            rows = db.execute("SELECT * FROM events WHERE cursor > ? ORDER BY cursor LIMIT ?",
+                              (since or 0, limit)).fetchall()
+        return [{"cursor": r["cursor"], "at": r["at"], "type": r["type"], **json.loads(r["data"])} for r in rows]
+
+    def last_cursor(self) -> int:
+        with self.db() as db:
+            row = db.execute("SELECT MAX(cursor) AS c FROM events").fetchone()
+        return row["c"] or 0

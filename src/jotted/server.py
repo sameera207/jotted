@@ -4,8 +4,9 @@ Each route parses its input, calls one operation and returns its result as JSON;
 product logic lives here. Runs on this machine only (127.0.0.1 by default). Reading
 from and writing to the source run in the background (`app.Scheduler`).
 
-Other front ends (a desktop app) can use the same JSON API. Two guards keep other web
-pages out:
+`POST /api/op/<operation>` runs any operation for the CLI's fast path (`jotted.fastpath`)
+and answers with the CLI's own envelope. This API is internal: the public contract is
+the `jotted` command. Two guards keep other web pages out:
 - the Host header must name this machine, so a site can't reach the API through DNS
   rebinding;
 - every request that changes something carries the install's token in `X-Jotted-Token`.
@@ -16,6 +17,7 @@ pages out:
 from __future__ import annotations
 
 import hmac
+import inspect
 import logging
 import os
 import secrets
@@ -25,7 +27,8 @@ from typing import Callable
 
 from flask import Flask, Response, jsonify, request
 
-from .api import ApiError, Jotted
+from . import contract
+from .api import OPERATIONS, ApiError, Jotted
 from .app import App, Scheduler
 from .config import Config
 
@@ -97,6 +100,35 @@ def create_app(cfg: Config, background: bool = True, app_: App | None = None) ->
     flask.config["scheduler"] = scheduler
     jotted = Jotted(core, scheduler=scheduler, on_change=scheduler.push_soon if cfg.server.auto_push else None)
     flask.config["jotted"] = jotted
+
+    # The CLI's fast path (`jotted.fastpath`): any operation, answered with the CLI's envelope.
+    # This Jotted has no scheduler, so each operation answers exactly as in the CLI's own process.
+    ops = Jotted(core, on_change=jotted._on_change)
+    rechecks = {"settings.update", "watch.add", "watch.remove", "watch.from_now"}
+
+    @flask.post("/api/op/<name>")
+    def run_operation(name: str):
+        method = OPERATIONS.get(name)
+        if method is None:
+            return jsonify(contract.fail("usage", f"no operation {name!r}")), 404
+        fn = getattr(ops, method)
+        kwargs = body()
+        try:
+            inspect.signature(fn).bind(**kwargs)
+        except TypeError as e:
+            return jsonify(contract.fail("usage", f"{name}: {e}")), 400
+        try:
+            envelope = contract.ok(fn(**kwargs))
+        except Exception as e:  # noqa: BLE001 - every failure goes back as an envelope
+            envelope = contract.error_of(e)
+            if envelope["error"]["code"] == "internal":
+                log.exception("operation %s failed", name)
+        else:
+            if name in rechecks:
+                scheduler.poll_now()  # pick up new folders without waiting for the next round
+        return jsonify(envelope)
+
+    run_operation.operation = "*"  # every operation (the architecture test knows)
 
     def route(method: str, rule: str, op: str) -> Callable:
         """Register a route that calls the operation `op` (checked against api.OPERATIONS)."""

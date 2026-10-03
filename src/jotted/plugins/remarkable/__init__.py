@@ -2,7 +2,7 @@
 
 Everything specific to reMarkable lives here: rmapi (`cloud`, `rmapi_install`), .rm pages
 (`rmfile`), the library (`library`), the printed To-do document (`todo_document`), page
-drawing (`page`), setup and `jotted auth` (`setup`), and the [rmapi], [strokes] and
+drawing (`page`), setup and `jotted connect` (`setup`), and the [rmapi], [strokes] and
 [template] config sections (`settings`).
 """
 
@@ -12,7 +12,7 @@ import argparse
 from typing import Any
 
 from ...config import Config
-from ...ui import UI
+from ...steps import Step
 from .. import BBox, Host
 from . import page, settings, setup
 from .library import RemarkableLibrary
@@ -47,15 +47,15 @@ class RemarkablePlugin:
         strokes = self.source().page_strokes(doc_id, page_id)
         return page.render_svg(strokes, self.cfg.template.scale, highlight=highlight, crop=crop)
 
-    def setup(self, ui: UI, redo: bool) -> bool:
-        return setup.run(ui, self.cfg, redo)
+    @classmethod
+    def setup_steps(cls) -> list[Step]:
+        return setup.steps()
 
     @classmethod
     def cli(cls, sub: argparse._SubParsersAction) -> None:
-        sub.add_parser("auth", help="connect to the reMarkable cloud with a one-time code").set_defaults(
-            func=setup.cmd_auth)
+        setup.cli(sub)
 
     def describe(self) -> dict[str, Any]:
         token = self.cfg.rmapi.token_file
         return {"connected": token.exists(),
-                "detail": "connected through rmapi" if token.exists() else "not connected: run `jotted auth`"}
+                "detail": "connected through rmapi" if token.exists() else "not connected: run `jotted connect`"}

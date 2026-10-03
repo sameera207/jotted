@@ -30,7 +30,7 @@ from ..core.ports import DocumentSource, TodoPublisher
 if TYPE_CHECKING:
     from ..config import Config
     from ..ink.reader import InkReader
-    from ..ui import UI
+    from ..steps import Step
 
 GROUP = "jotted.sources"
 BUILTIN = {"remarkable": "jotted.plugins.remarkable:RemarkablePlugin"}
@@ -68,13 +68,18 @@ class SourcePlugin(Protocol):
         """A page as SVG for the web app (`highlight`/`crop` in the plugin's own units, as its
         SourceLines gave them); None if it can't be drawn."""
 
-    def setup(self, ui: "UI", redo: bool) -> bool:
-        """Setup steps (install tools, connect an account). True if it changed config.toml."""
+    @classmethod
+    def setup_steps(cls) -> list["Step"]:
+        """Its setup steps (install tools, connect an account), ids prefixed with its NAME:
+        each with a check, the command that completes it, and its interactive form."""
 
     @classmethod
     def cli(cls, sub: argparse._SubParsersAction) -> None:
-        """Add its own subcommands; each sets `func(cfg, args) -> int`. A classmethod: the
-        command line is built before any config is read."""
+        """Add its own subcommands; each sets `func(cfg, args)`, returning its result as JSON
+        data (and `render(data, console)` to show it to a person), raising errors with a
+        contract `code` (`jotted.ui.SetupError` will do). Secrets come through
+        `jotted.ui.read_secret`, never a bare prompt. A classmethod: the command line is built
+        before any config is read."""
 
     def describe(self) -> dict[str, Any]:
         """For the web app and `jotted status`: {connected: bool, detail: str}."""

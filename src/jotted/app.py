@@ -16,7 +16,7 @@ from . import plugins
 from .adapters.action_judge import ModelActionJudge
 from .adapters.sqlite_repo import SqliteRepository
 from .aicache import AICache
-from .config import Config
+from .config import Config, with_llm
 from .core import service
 from .core.ports import DocumentSource, SourceError, TodoPublisher
 from .ink.reader import InkReader
@@ -36,13 +36,24 @@ class App:
     source: DocumentSource
     judge: ModelActionJudge
     lock: SourceLock
+    base: Config | None = field(default=None, repr=False)  # config.toml as loaded, before `effective`
 
     @classmethod
     def build(cls, cfg: Config) -> "App":
+        base = cfg
+        repo = SqliteRepository(cfg.server.db)
+        cfg = effective(cfg, repo)
         cache = AICache(cfg.paths.cache_dir / "ai")
         plugin = plugins.plugin_class(cfg.plugins.source)(cfg, plugins.Host(ink=InkReader(cfg, cache)))
-        return cls(cfg=cfg, repo=SqliteRepository(cfg.server.db), plugin=plugin, source=plugin.source(),
-                   judge=ModelActionJudge(cfg, cache), lock=lock_for(cfg))
+        return cls(cfg=cfg, repo=repo, plugin=plugin, source=plugin.source(),
+                   judge=ModelActionJudge(cfg, cache), lock=lock_for(cfg), base=base)
+
+    def reload(self) -> None:
+        """Pick up a new LLM choice: rebuild what holds the config, in place (the scheduler
+        keeps this App) and keeping the lock."""
+        fresh = App.build(self.base or self.cfg)
+        for name in ("cfg", "repo", "plugin", "source", "judge"):
+            setattr(self, name, getattr(fresh, name))
 
     def todo_document(self) -> TodoPublisher | None:
         s = self.repo.settings()
@@ -54,7 +65,21 @@ class App:
         return {doc_id} if doc_id else set()
 
     def collect(self, progress=lambda _: None):
-        return service.collect(self.source, self.judge, self.repo, exclude=self.own_doc_ids(), progress=progress)
+        """Read what changed, with check.started/check.finished events around it (and
+        source.error for what failed), so `jotted events` sees checks from any process."""
+        self.repo.add_event("check.started")
+        try:
+            summary = service.collect(self.source, self.judge, self.repo, exclude=self.own_doc_ids(),
+                                      progress=progress)
+        except SYNC_ERRORS as e:
+            self.repo.add_event("source.error", message=str(e))
+            raise
+        for message in summary.errors:
+            self.repo.add_event("source.error", message=message)
+        self.repo.add_event("check.finished", new=summary.actions_new, updated=summary.actions_updated,
+                            missing=summary.actions_missing, pages_read=summary.pages_read,
+                            errors=len(summary.errors))
+        return summary
 
     def sync_todo(self, force: bool = False) -> dict:
         if not self.repo.settings().todo_enabled:
@@ -62,11 +87,20 @@ class App:
         doc = self.todo_document()
         if doc is None:
             return {"enabled": False, "unsupported": True}
-        result = service.sync_todo(self.repo, doc, force=force)
+        try:
+            result = service.sync_todo(self.repo, doc, force=force)
+        except SYNC_ERRORS as e:
+            self.repo.add_event("source.error", message=str(e))
+            raise
         doc_id = doc.document_id()
         if doc_id:  # remember it so the collector never reads it
             self.repo.set_todo_doc_id(doc_id)
         return result
+
+
+def effective(cfg: Config, repo: SqliteRepository | None = None) -> Config:
+    """config.toml with the choices saved in the database applied (the LLM's provider and model)."""
+    return with_llm(cfg, **(repo or SqliteRepository(cfg.server.db)).ai_choice())
 
 
 def lock_for(cfg: Config) -> SourceLock:
