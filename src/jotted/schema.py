@@ -112,7 +112,8 @@ DATA: dict[str, dict] = {
     "mcp": {"description": "an MCP server on stdio; no JSON output"},
     "claude connect": CLAUDE_CHANGE, "claude disconnect": CLAUDE_CHANGE,
     "claude status": _obj({"configured": BOOL, "config_path": STR, "command": NSTR, "command_exists": BOOL,
-                           "matches_current": BOOL, "admin": BOOL}),
+                           "matches_current": BOOL, "admin": BOOL, "installed": BOOL,
+                           "env": {"type": "object", "description": "the entry's environment variables"}}),
     "config check": _obj({"path": STR, "config": {"type": "object"}, "source": SOURCE, "ai": AI}),
 }
 

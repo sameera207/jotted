@@ -199,7 +199,7 @@ echo '[{"text": "Send Dana the estimate", "source": {"kind": "gdoc", "key": "1Ab
 
 ### An MCP connector
 
-`jotted mcp` is already an MCP server on stdio. For Claude Desktop, `jotted claude connect` sets it up (a desktop app passes its bundled binary with `--command PATH`); `claude status` says whether it is connected and whether that binary still exists, and `claude disconnect` removes it. Each backs up Claude Desktop's settings first and changes only the `jotted` entry. Any other client:
+`jotted mcp` is already an MCP server on stdio. For Claude Desktop, `jotted claude connect` sets it up (a desktop app passes its bundled binary with `--command PATH`); `claude status` says whether Claude Desktop is installed (`installed`), whether it is connected, and whether that binary still exists, and `claude disconnect` removes it. Each backs up Claude Desktop's settings first and changes only the `jotted` entry. Claude Desktop starts `jotted mcp` without your environment, so `connect` writes `JOTTED_CONFIG`, `JOTTED_HOME` and `JOTTED_BUNDLED` into the entry's `env` when they are set; an app that bundles `jotted` runs `connect` with them as it runs its own copy. Any other client:
 
 ```json
 {"mcpServers": {"jotted": {"command": "/absolute/path/to/jotted", "args": ["mcp"]}}}
@@ -848,7 +848,7 @@ Whether Claude Desktop runs Jotted, and whether that copy still exists.
 jotted claude status
 ```
 
-`data`: `{configured: boolean, config_path: string, command: string \| null, command_exists: boolean, matches_current: boolean, admin: boolean}`
+`data`: `{configured: boolean, config_path: string, command: string \| null, command_exists: boolean, matches_current: boolean, admin: boolean, installed: boolean, env: object}`
 
 ### `jotted claude disconnect`
 

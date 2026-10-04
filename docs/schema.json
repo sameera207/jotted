@@ -3920,6 +3920,13 @@
           "configured": {
             "type": "boolean"
           },
+          "env": {
+            "description": "the entry's environment variables",
+            "type": "object"
+          },
+          "installed": {
+            "type": "boolean"
+          },
           "matches_current": {
             "type": "boolean"
           }
@@ -3930,7 +3937,9 @@
           "command",
           "command_exists",
           "matches_current",
-          "admin"
+          "admin",
+          "installed",
+          "env"
         ],
         "type": "object"
       },

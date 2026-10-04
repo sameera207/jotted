@@ -19,6 +19,7 @@ from .. import config
 from ..contract import Error
 
 NAME = "jotted"  # the key under mcpServers
+BUNDLED_VAR = "JOTTED_BUNDLED"  # set by an app that ships its own jotted (the Jotted app)
 PATH_VAR = "JOTTED_CLAUDE_CONFIG"  # use another config file (tests, a second profile)
 
 
@@ -88,11 +89,16 @@ def _write(path: Path, data: dict) -> str | None:
 
 
 def entry(command: str, admin: bool = False) -> dict:
-    """The mcpServers entry. JOTTED_CONFIG goes with it when it is set, since Claude Desktop
-    starts `jotted mcp` without this shell's environment."""
+    """The mcpServers entry. Claude Desktop starts `jotted mcp` without this environment, so
+    what decides which data it uses (JOTTED_CONFIG, JOTTED_HOME) and whether it is an app's
+    bundled copy (JOTTED_BUNDLED) goes with it, when set."""
     out: dict = {"command": command, "args": ["mcp", "--admin"] if admin else ["mcp"]}
-    if os.environ.get(config.ENV_VAR):
-        out["env"] = {config.ENV_VAR: str(Path(os.environ[config.ENV_VAR]).absolute())}
+    env = {name: str(Path(os.environ[name]).expanduser().absolute())
+           for name in (config.ENV_VAR, config.HOME_VAR) if os.environ.get(name)}
+    if os.environ.get(BUNDLED_VAR):
+        env[BUNDLED_VAR] = os.environ[BUNDLED_VAR]
+    if env:
+        out["env"] = env
     return out
 
 
@@ -125,10 +131,13 @@ def status() -> dict:
     data = _read(path) if path.is_file() else None
     found = (data or {}).get("mcpServers", {}).get(NAME)
     command = found.get("command") if isinstance(found, dict) else None
+    env = found.get("env") if isinstance(found, dict) else None
     return {"configured": found is not None, "config_path": str(path), "command": command,
             "command_exists": bool(command) and _executable(command),
             "matches_current": _same(command, current_command()),
-            "admin": isinstance(found, dict) and "--admin" in (found.get("args") or [])}
+            "admin": isinstance(found, dict) and "--admin" in (found.get("args") or []),
+            "installed": path.parent.is_dir(),  # Claude Desktop's settings folder: it has been run here
+            "env": env if isinstance(env, dict) else {}}
 
 
 def disconnect() -> dict:

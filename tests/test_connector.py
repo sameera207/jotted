@@ -323,6 +323,26 @@ def test_connect_dry_run_and_a_moved_binary(cfg, capsys, desktop):
     assert status["configured"] and not status["command_exists"]
 
 
+def test_connect_carries_what_decides_the_data_and_the_bundled_copy(cfg, capsys, desktop, monkeypatch, tmp_path):
+    path, binary = desktop
+    monkeypatch.setenv("JOTTED_HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("JOTTED_BUNDLED", "1")
+    env = data(capsys, "claude", "connect", "--command", str(binary))["entry"]["env"]
+    assert env == {"JOTTED_CONFIG": str(cfg.source), "JOTTED_HOME": str(tmp_path / "home"), "JOTTED_BUNDLED": "1"}
+    status = data(capsys, "claude", "status")
+    assert status["env"] == env and status["installed"]
+    monkeypatch.delenv("JOTTED_BUNDLED")
+    again = data(capsys, "claude", "connect", "--command", str(binary))
+    assert again["changed"] and "JOTTED_BUNDLED" not in again["entry"]["env"]  # what's set now wins
+
+
+def test_status_says_whether_claude_desktop_is_installed(cfg, capsys, tmp_path, monkeypatch):
+    monkeypatch.setenv(claude_desktop.PATH_VAR, str(tmp_path / "nowhere" / "claude_desktop_config.json"))
+    status = data(capsys, "claude", "status")
+    conforms(status, schema.DATA["claude status"])
+    assert not status["installed"] and not status["configured"] and status["env"] == {}
+
+
 def test_connect_needs_claude_desktop(cfg, capsys, tmp_path, monkeypatch):
     monkeypatch.setenv(claude_desktop.PATH_VAR, str(tmp_path / "nowhere" / "claude_desktop_config.json"))
     code, err = error(capsys, "claude", "connect", "--command", sys.executable)
