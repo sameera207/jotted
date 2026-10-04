@@ -1763,7 +1763,8 @@
           "existing",
           "dismissed",
           "invalid",
-          "conflict"
+          "conflict",
+          "internal"
          ]
         }
        },

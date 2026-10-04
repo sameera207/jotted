@@ -327,3 +327,71 @@ def test_connect_needs_claude_desktop(cfg, capsys, tmp_path, monkeypatch):
     monkeypatch.setenv(claude_desktop.PATH_VAR, str(tmp_path / "nowhere" / "claude_desktop_config.json"))
     code, err = error(capsys, "claude", "connect", "--command", sys.executable)
     assert err["code"] == "config" and "Claude Desktop" in err["message"]
+
+
+# ---------------------------------------------------------------- found in review
+
+
+def _hide(cfg, item_id: int) -> None:
+    """The item's line is gone from its page (erased, or no longer read as an action)."""
+    with sqlite3.connect(cfg.server.db) as db:
+        db.execute("UPDATE actions SET missing = 1 WHERE id = ?", (item_id,))
+
+
+def test_a_source_key_whose_line_is_gone_is_found_not_a_crash(cfg, capsys, monkeypatch):
+    item = data(capsys, "items", "add", "Send", "the", "estimate", *GDOC)
+    _hide(cfg, item["id"])
+    again = data(capsys, "items", "add", "Send", "the", "estimate", *GDOC)
+    assert not again["created"] and again["id"] == item["id"]
+    batch = [{"text": "Send the estimate", "source": {"kind": "gdoc", "key": "doc1#h.x7q"}},
+             {"text": "Book the room", "source": {"kind": "gcal", "key": "evt-1"}}]
+    result = data(capsys, "items", "add-batch", "--stdin", "--propose", stdin=json.dumps(batch),
+                  monkeypatch=monkeypatch)
+    assert [r["outcome"] for r in result["results"]] == ["existing", "created"]
+    assert items(capsys) == []  # the hidden one stays off the list; the new one waits as a proposal
+
+
+def test_one_item_failing_unexpectedly_doesnt_stop_a_batch(cfg, capsys, monkeypatch):
+    real = api.Jotted._add
+
+    def flaky(self, text, *rest):
+        if text == "boom":
+            raise RuntimeError("disk on fire")
+        return real(self, text, *rest)
+
+    monkeypatch.setattr(api.Jotted, "_add", flaky)
+    batch = [{"text": "boom"}, {"text": "Fine"}]
+    result = data(capsys, "items", "add-batch", "--stdin", stdin=json.dumps(batch), monkeypatch=monkeypatch)
+    conforms(result, schema.DATA["items add-batch"])
+    assert [r["outcome"] for r in result["results"]] == ["internal", "created"]
+    assert "disk on fire" in result["results"][0]["error"]["message"]
+
+
+def test_the_same_source_key_added_at_once_by_many_processes(tmp_path):
+    import threading
+
+    path = tmp_path / "db.sqlite"
+    SqliteRepository(path)
+    start = threading.Barrier(8)
+    outcomes, failures = [], []
+
+    def add():
+        repo = SqliteRepository(path)  # its own connections, as another process would have
+        start.wait()
+        try:
+            outcomes.append(repo.add_item("Send it", origin="agent", source={"kind": "gdoc", "key": "k"})[1])
+        except Exception as e:  # noqa: BLE001 - the test reports it
+            failures.append(repr(e))
+
+    threads = [threading.Thread(target=add) for _ in range(8)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert failures == [] and sorted(outcomes) == ["created"] + ["existing"] * 7
+
+
+def test_a_repeated_id_is_accepted_once_not_skipped(cfg, capsys):
+    item = data(capsys, "items", "add", "A", "--propose", "--source-kind", "chat", "--source-key", "1")
+    result = data(capsys, "items", "accept", str(item["id"]), str(item["id"]))
+    assert result == {"accepted": [item["id"]], "skipped": []}

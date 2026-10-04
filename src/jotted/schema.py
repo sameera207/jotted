@@ -76,7 +76,7 @@ DATA: dict[str, dict] = {
                                                              "chosen": BOOL}, required=["name", "module", "chosen"]))}),
     "items": _arr(ITEM), "items list": _arr(ITEM), "items get": ITEM, "items add": ADDED,
     "items add-batch": _obj({"results": _arr(_obj({
-        "index": INT, "outcome": {"enum": ["created", "existing", "dismissed", "invalid", "conflict"]},
+        "index": INT, "outcome": {"enum": ["created", "existing", "dismissed", "invalid", "conflict", "internal"]},
         "id": INT, "error": _obj({"code": STR, "message": STR})}, required=["index", "outcome"]))}),
     "items accept": _obj({"accepted": _arr(INT), "skipped": _arr(_obj({
         "id": INT, "reason": {"enum": ["not_found", "not_proposed"]}}))}),

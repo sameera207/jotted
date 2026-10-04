@@ -299,7 +299,7 @@ class Jotted:
             raise Invalid(str(e)) from e
         except StateConflict as e:
             raise Conflict(str(e)) from e
-        return self.repo.item(item_id), outcome
+        return self.repo.item(item_id, missing_too=True), outcome
 
     @operation("items.add")
     def add_item(self, text: str, owner: str | None = None, owner_name: str | None = None,
@@ -316,7 +316,7 @@ class Jotted:
     def add_items(self, items: list, propose: bool = False, agent: bool = False) -> dict:
         """Up to 100 items, each as `items.add` takes it ({text, owner, owner_name, source, propose}).
         Each stands alone: one that fails doesn't stop the others. Returns an outcome per item:
-        created, existing, dismissed, or invalid/conflict with its error."""
+        created, existing, dismissed, or invalid/conflict/internal with its error."""
         if not isinstance(items, list) or not all(isinstance(i, dict) for i in items):
             raise Invalid("items must be a list of objects")
         if len(items) > MAX_BATCH:
@@ -331,6 +331,11 @@ class Jotted:
                                           bool(propose or it.get("propose")), agent)
             except ApiError as e:
                 results.append({"index": n, "outcome": e.code, "error": {"code": e.code, "message": str(e)}})
+                continue
+            except Exception as e:  # noqa: BLE001 - a bug in one item mustn't hide what happened to the others
+                log.exception("items.add_batch: item %d failed", n)
+                results.append({"index": n, "outcome": "internal",
+                                "error": {"code": "internal", "message": f"Unexpected error: {e}"}})
                 continue
             results.append({"index": n, "outcome": "existing" if outcome == "updated" else outcome, "id": item["id"]})
         if any(r["outcome"] == "created" for r in results):

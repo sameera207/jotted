@@ -2066,7 +2066,8 @@
                     "existing",
                     "dismissed",
                     "invalid",
-                    "conflict"
+                    "conflict",
+                    "internal"
                   ]
                 }
               },
@@ -4439,7 +4440,7 @@
       }
     },
     "items.add_batch": {
-      "doc": "Up to 100 items, each as `items.add` takes it ({text, owner, owner_name, source, propose}).\nEach stands alone: one that fails doesn't stop the others. Returns an outcome per item:\ncreated, existing, dismissed, or invalid/conflict with its error.",
+      "doc": "Up to 100 items, each as `items.add` takes it ({text, owner, owner_name, source, propose}).\nEach stands alone: one that fails doesn't stop the others. Returns an outcome per item:\ncreated, existing, dismissed, or invalid/conflict/internal with its error.",
       "params": {
         "agent": {
           "default": false,

@@ -538,10 +538,12 @@ class SqliteRepository:
         slot = db.execute("SELECT slot FROM todo_slots WHERE item_id = ?", (item_id,)).fetchone()
         return self._item_dict(r, slot["slot"] if slot else None)
 
-    def item(self, item_id: int) -> dict:
-        """One item in any status, dismissed ones included; KeyError if there is none."""
+    def item(self, item_id: int, *, missing_too: bool = False) -> dict:
+        """One item in any status, dismissed ones included; KeyError if there is none. An item
+        whose line is gone from its page counts only with `missing_too` (a source key still finds it)."""
         with self.db() as db:
-            r = db.execute(self.SELECT_ITEMS + " WHERE a.id = ? AND a.missing = 0", (item_id,)).fetchone()
+            r = db.execute(self.SELECT_ITEMS + " WHERE a.id = ? AND (a.missing = 0 OR ?)",
+                           (item_id, missing_too)).fetchone()
             slot = db.execute("SELECT slot FROM todo_slots WHERE item_id = ?", (item_id,)).fetchone()
         if r is None:
             raise KeyError(item_id)
@@ -560,6 +562,8 @@ class SqliteRepository:
         kind, key = source.get("kind"), source.get("key")
         stamp = now()
         with self._tracked() as (db, changes):
+            # Look and add under the write lock: another process adding the same key waits, then finds it.
+            db.execute("BEGIN IMMEDIATE")
             if key:
                 row = db.execute("SELECT * FROM actions WHERE source_kind = ? AND source_key = ?",
                                  (kind, key)).fetchone()
@@ -638,13 +642,13 @@ class SqliteRepository:
                 ids = [r["id"] for r in db.execute(
                     "SELECT id FROM actions WHERE proposed = 1 AND dismissed = 0 AND missing = 0 "
                     "AND (? IS NULL OR source_kind = ?) ORDER BY created_at, id", (source_kind, source_kind))]
-            for item_id in ids:
+            for item_id in dict.fromkeys(ids):  # once each: a repeated id isn't a second, failed accept
                 row = db.execute("SELECT * FROM actions WHERE id = ? AND missing = 0", (item_id,)).fetchone()
                 if row is None:
                     skipped.append({"id": item_id, "reason": "not_found"})
                 elif not row["proposed"] or row["dismissed"]:
                     skipped.append({"id": item_id, "reason": "not_proposed"})
-                elif item_id not in accepted:
+                else:
                     changes(item_id)
                     self._update(db, "actions", item_id, {"proposed": 0, "status": "open",
                                                           "status_changed_at": stamp}, stamp)
